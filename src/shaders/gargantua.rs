@@ -98,6 +98,12 @@ impl BlackHole<'_> {
             }
             let previous = photon.pos;
             let r = previous.length();
+            // Saliendo, fuera de la esfera de fotones, el radio solo crece:
+            // pasada la envoltura ya no queda gas que cruzar, y la direccion
+            // final al cielo ya salio de la tabla.
+            if r > self.outer + 1.0 && previous.dot(photon.vel) > 0.0 {
+                break;
+            }
             let step = if r > 40.0 && previous.dot(photon.vel) < 0.0 {
                 photon
                     .step_length()
