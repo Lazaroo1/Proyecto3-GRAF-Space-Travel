@@ -11,7 +11,12 @@ use crate::tweaks::Tweaks;
 pub struct Hud {
     pub help: bool,
     pub stats: bool,
+    /// Segundos desde que se abrio la ventana (para la intro).
+    pub age: f32,
 }
+
+/// Segundos que dura el titulo al empezar.
+const INTRO: f32 = 7.0;
 
 const FONT: i32 = 18;
 const LINE: i32 = 21;
@@ -22,6 +27,26 @@ const MARKER: Color = Color::new(255, 214, 120, 220);
 pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &Tweaks) {
     let width = d.get_screen_width();
     let height = d.get_screen_height();
+
+    // Intro: el titulo aparece y se desvanece en los primeros segundos.
+    if hud.age < INTRO {
+        let fade = (hud.age / 1.2).min(1.0) * ((INTRO - hud.age) / 2.0).min(1.0);
+        let alpha = |a: f32| (a * fade * 255.0) as u8;
+        let title = "OCASO";
+        let size = height / 6;
+        let w = d.measure_text(title, size);
+        d.draw_text(title, (width - w) / 2, height / 3 - size / 2, size, Color::new(255, 190, 140, alpha(1.0)));
+        let lines = [
+            "Una estrella moribunda late como un corazon.",
+            "En quince minutos colapsa y nace Gargantua.",
+            "F1: controles",
+        ];
+        for (i, line) in lines.iter().enumerate() {
+            let w = d.measure_text(line, 22);
+            let y = height / 3 + size / 2 + 20 + i as i32 * 30;
+            d.draw_text(line, (width - w) / 2, y, 22, Color::new(236, 226, 214, alpha(0.85)));
+        }
+    }
 
     if hud.stats {
         let s = &app.stats;
