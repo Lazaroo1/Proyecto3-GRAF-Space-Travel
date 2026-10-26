@@ -90,12 +90,22 @@ pub struct Instance {
 
 /// Unidades del modelo por cada repeticion de la textura del casco.
 pub const WRECK_UV_SIZE: f32 = 7.0;
+/// Altura del coral en todos sus niveles de detalle (el shader la usa para
+/// el degradado de color).
+pub const CORAL_TOP: f32 = 12.9;
+/// Radio del casco de los naufragios: el modelo se arma con el casco
+/// apoyado en `y = 0`.
+const HULL: f32 = 3.2;
 
 // Colores de vertice: algunos shaders los usan como marcas.
 const STONE: Vec3 = Vec3::new(0.0, 0.0, 0.0);
 const GLYPH_FACE: Vec3 = Vec3::new(0.0, 0.0, 1.0);
 const STEM: Vec3 = Vec3::new(0.72, 0.66, 0.6);
 const CAP: Vec3 = Vec3::new(0.36, 0.05, 0.3);
+/// Bulbos del coral (el verde en 0 marca la punta que brilla).
+const TIP: Vec3 = Vec3::new(1.0, 0.0, 1.0);
+/// Paredes de adentro del casco: el shader las oscurece con el rojo.
+const INSIDE: Vec3 = Vec3::new(0.15, 1.0, 1.0);
 
 /// Ejes de una caja girada `angle` alrededor de z.
 fn tilted(angle: f32) -> [Vec3; 3] {
@@ -116,8 +126,9 @@ fn monolith(detail: usize) -> Mesh {
     }
     if detail >= 2 {
         // Escombros al pie.
-        b.cuboid(Vec3::new(1.9, 0.35, 0.9), tilted(0.5), Vec3::new(0.5, 0.35, 0.35));
-        b.cuboid(Vec3::new(-1.7, 0.3, -0.7), tilted(-0.4), Vec3::new(0.35, 0.3, 0.5));
+        // El suelo queda en y = 0.8 (el monolito se hunde eso).
+        b.cuboid(Vec3::new(1.9, 1.0, 0.9), tilted(0.5), Vec3::new(0.5, 0.35, 0.35));
+        b.cuboid(Vec3::new(-1.7, 0.95, -0.7), tilted(-0.4), Vec3::new(0.35, 0.3, 0.5));
     }
     b.build()
 }
@@ -179,10 +190,15 @@ fn coral_branch(b: &mut MeshBuilder, origin: Vec3, dir: Vec3, length: f32, radiu
     b.tube(&path, &radii, segments);
     let end = path[3];
     if depth == 0 {
-        // Bulbo en la punta (el shader lo hace brillar por su altura).
+        // Bulbo en la punta: el color lo marca para que brille.
+        b.color(TIP);
         b.ellipsoid(end, Vec3::splat(radius * 1.7), 3, segments, false);
+        b.color(Vec3::ONE);
         return;
     }
+    // Nudo que cierra la union con las ramas hijas (sin el, el tubo abierto
+    // dejaria ver a traves).
+    b.ellipsoid(end, Vec3::splat(radius * 0.7), 2, segments, false);
     let branches = 3 + (hash_u32(seed) % 2) as usize;
     for k in 0..branches {
         let h = hash_u32(seed.wrapping_add(k as u32 * 7919));
@@ -228,7 +244,14 @@ fn wreck(detail: usize) -> Mesh {
     // Casco principal: un cilindro acostado de 16 unidades, partido. De
     // lejos basta un prisma de seis caras.
     let (segments, smooth) = if detail == 0 { (6, false) } else { (12, true) };
-    b.frustum(Vec3::new(-11.2, 0.0, 0.0), Vec3::X, 16.0, 3.2, 2.7, segments, smooth, (true, false));
+    b.frustum(Vec3::new(-11.2, 0.0, 0.0), Vec3::X, 16.0, HULL, 2.7, segments, smooth, (true, false));
+    // El extremo partido esta abierto: por dentro, una pared oscura que mira
+    // hacia adentro, para que no se vea a traves del casco.
+    let inside = b.mark();
+    b.color(INSIDE);
+    b.frustum(Vec3::new(-2.0, 0.0, 0.0), Vec3::X, 6.8, HULL * 0.92, 2.7 * 0.92, segments, smooth, (true, false));
+    b.flip(inside);
+    b.color(Vec3::ONE);
     if detail >= 1 {
         // La nariz se partio y quedo torcida a un lado.
         let nose_axis = Vec3::new(1.0, 0.18, 0.35).normalize();
@@ -239,13 +262,33 @@ fn wreck(detail: usize) -> Mesh {
         b.cuboid(Vec3::new(-8.8, -1.9, 3.05), fin, Vec3::new(2.25, 1.3, 0.2));
     }
     if detail >= 2 {
-        // Escombros y una antena doblada.
+        // Escombros (apoyados donde quedaria el suelo) y una antena doblada.
         b.cuboid(Vec3::new(2.4, -2.25, -4.15), tilted(0.7), Vec3::new(1.1, 0.65, 0.8));
         b.cuboid(Vec3::new(-4.0, -2.4, 4.5), tilted(-0.5), Vec3::new(0.8, 0.8, 0.95));
         let antenna = Vec3::new(0.2, 1.0, 0.1).normalize();
         b.frustum(Vec3::new(-1.6, 2.55, 0.0), antenna, 3.85, 0.24, 0.13, 4, false, (false, false));
     }
-    b.build()
+    let mut mesh = b.build();
+    // Armado alrededor del eje del casco; se sube para que la base quede en
+    // y = 0, como los demas modelos (asi `sink` hunde lo que dice).
+    for p in &mut mesh.positions {
+        p.y += HULL;
+    }
+    mesh.update_bounds();
+    mesh
+}
+
+/// Escala `mesh` desde el origen para que su punto mas alto quede en `top`.
+fn fit_height(mut mesh: Mesh, top: f32) -> Mesh {
+    let current = mesh.positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+    if current > 0.0 {
+        let k = top / current;
+        for p in &mut mesh.positions {
+            *p = *p * k;
+        }
+        mesh.update_bounds();
+    }
+    mesh
 }
 
 /// Los seis modelos, en el orden de `PropKind::ALL`.
@@ -261,9 +304,14 @@ pub fn build_models() -> Vec<PropModel> {
                 PropKind::Spike => spikes(detail),
                 PropKind::Wreck => wreck(detail),
             };
-            PropModel {
-                lods: [make(2), make(1), make(0)],
+            let mut lods = [make(2), make(1), make(0)];
+            if kind == PropKind::Coral {
+                // Con menos ramas el coral queda mas bajo: los niveles burdos
+                // se estiran a la altura del fino para que no cambie de tamano
+                // al pasar de uno a otro.
+                lods = lods.map(|m| fit_height(m, CORAL_TOP));
             }
+            PropModel { lods }
         })
         .collect()
 }

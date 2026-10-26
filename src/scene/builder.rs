@@ -105,13 +105,20 @@ impl MeshBuilder {
 
     /// Triangulo plano.
     pub fn triangle(&mut self, p0: Vec3, p1: Vec3, p2: Vec3) {
+        self.triangle_framed(p0, p1, p2, p0, (p1 - p0).normalize());
+    }
+
+    /// Triangulo plano cuyo uv (en modo `uv_world`) se mide desde `origin`
+    /// con `tangent` como eje u. Los triangulos de una tapa comparten ese
+    /// marco y la textura sigue de uno al otro sin cortes.
+    fn triangle_framed(&mut self, p0: Vec3, p1: Vec3, p2: Vec3, origin: Vec3, tangent: Vec3) {
         let normal = (p1 - p0).cross(p2 - p0).normalize();
-        let tangent = (p1 - p0).normalize();
+        let tangent = (tangent - normal * tangent.dot(normal)).normalize();
         let bitangent = normal.cross(tangent);
         let t = Vec4::new(tangent.x, tangent.y, tangent.z, 1.0);
-        let uv0 = self.planar_uv(p0, p0, tangent, bitangent, Vec2::new(0.0, 0.0));
-        let uv1 = self.planar_uv(p1, p0, tangent, bitangent, Vec2::new(1.0, 0.0));
-        let uv2 = self.planar_uv(p2, p0, tangent, bitangent, Vec2::new(0.5, 1.0));
+        let uv0 = self.planar_uv(p0, origin, tangent, bitangent, Vec2::new(0.0, 0.0));
+        let uv1 = self.planar_uv(p1, origin, tangent, bitangent, Vec2::new(1.0, 0.0));
+        let uv2 = self.planar_uv(p2, origin, tangent, bitangent, Vec2::new(0.5, 1.0));
         let a = self.vertex(p0, normal, uv0, t);
         let b = self.vertex(p1, normal, uv1, t);
         let c = self.vertex(p2, normal, uv2, t);
@@ -161,9 +168,11 @@ impl MeshBuilder {
         let slope = (r0 - r1) / height;
         if smooth {
             let first = self.mesh.positions.len() as u32;
-            // En unidades del mundo: u a lo largo de la circunferencia media.
+            // En unidades del mundo: u a lo largo de la circunferencia media,
+            // con un numero entero de repeticiones para que la textura cierre
+            // sin costura donde la vuelta empieza y termina.
             let (u_span, v_span) = match self.uv_world {
-                Some(size) => (std::f32::consts::PI * (r0 + r1) / size, height / size),
+                Some(size) => ((std::f32::consts::PI * (r0 + r1) / size).round().max(1.0), height / size),
                 None => (1.0, 1.0),
             };
             for i in 0..=segments {
@@ -194,12 +203,12 @@ impl MeshBuilder {
         }
         if caps.0 {
             for i in 0..segments {
-                self.triangle(base, ring(i + 1, r0, base), ring(i, r0, base));
+                self.triangle_framed(base, ring(i + 1, r0, base), ring(i, r0, base), base, u);
             }
         }
         if caps.1 && r1 > 1e-5 {
             for i in 0..segments {
-                self.triangle(top, ring(i, r1, top), ring(i + 1, r1, top));
+                self.triangle_framed(top, ring(i, r1, top), ring(i + 1, r1, top), top, u);
             }
         }
     }
@@ -294,6 +303,28 @@ impl MeshBuilder {
                 self.mesh.indices.push([a, b + 1, b]);
                 self.mesh.indices.push([a, a + 1, b + 1]);
             }
+        }
+    }
+
+    /// Cuantos vertices y triangulos hay hasta ahora (para `flip`).
+    pub fn mark(&self) -> (usize, usize) {
+        (self.mesh.positions.len(), self.mesh.indices.len())
+    }
+
+    /// Da vuelta todo lo agregado desde `mark`: las caras miran al otro
+    /// lado. Sirve para las paredes de adentro de algo abierto.
+    pub fn flip(&mut self, mark: (usize, usize)) {
+        let m = &mut self.mesh;
+        for n in &mut m.normals[mark.0..] {
+            *n = -*n;
+        }
+        // Con la normal invertida, la bitangente (n x t * w) cambiaria de
+        // lado: se corrige el signo para que v siga creciendo igual.
+        for t in &mut m.tangents[mark.0..] {
+            t.w = -t.w;
+        }
+        for tri in &mut m.indices[mark.1..] {
+            tri.swap(1, 2);
         }
     }
 

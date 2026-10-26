@@ -258,6 +258,7 @@ mod tests {
         let textures = super::super::Textures::generate();
         let u = Uniforms {
             time: 0.0,
+            beat: 0.0,
             sun_pos: Vec3::new(1000.0, 200.0, -3000.0),
             sun_radius: 300.0,
             sun_light: Vec3::new(1.5, 0.8, 0.4),

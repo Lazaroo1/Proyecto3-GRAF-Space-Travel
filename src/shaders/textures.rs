@@ -23,6 +23,8 @@ pub struct Texel {
 /// Un nivel de la piramide de mipmaps.
 struct Level {
     size: usize,
+    /// `size - 1`: los lados son potencias de dos y repetir es enmascarar.
+    mask: i32,
     /// Normal en el espacio tangente (en los niveles chicos, el promedio de
     /// las normales que cubre: se acorta donde el relieve se cancela).
     normals: Vec<Vec3>,
@@ -31,15 +33,18 @@ struct Level {
 }
 
 impl Level {
-    /// Interpolacion bilineal con repeticion.
+    /// Interpolacion bilineal con repeticion. Como el lado es potencia de
+    /// dos, repetir es quedarse con los bits bajos del indice (tambien para
+    /// los negativos), sin divisiones.
     fn bilinear(&self, uv: Vec2) -> (Vec3, Vec2) {
         let n = self.size as f32;
-        let x = uv.x.rem_euclid(1.0) * n - 0.5;
-        let y = uv.y.rem_euclid(1.0) * n - 0.5;
+        let x = uv.x * n - 0.5;
+        let y = uv.y * n - 0.5;
         let (x0, y0) = (x.floor(), y.floor());
         let (fx, fy) = (x - x0, y - y0);
-        let wrap = |v: f32| (v as isize).rem_euclid(self.size as isize) as usize;
-        let (xa, xb, ya, yb) = (wrap(x0), wrap(x0 + 1.0), wrap(y0), wrap(y0 + 1.0));
+        let (xi, yi) = (x0 as i32, y0 as i32);
+        let wrap = |v: i32| (v & self.mask) as usize;
+        let (xa, xb, ya, yb) = (wrap(xi), wrap(xi + 1), wrap(yi), wrap(yi + 1));
         let i = |x: usize, y: usize| y * self.size + x;
         let normal = self.normals[i(xa, ya)]
             .lerp(self.normals[i(xb, ya)], fx)
@@ -63,7 +68,12 @@ impl Level {
                 values.push(quad.iter().fold(Vec2::ZERO, |acc, &k| acc + self.values[k]) * 0.25);
             }
         }
-        Self { size, normals, values }
+        Self {
+            size,
+            mask: size as i32 - 1,
+            normals,
+            values,
+        }
     }
 }
 
@@ -107,7 +117,13 @@ impl NormalMap {
                 Vec3::new(-du * scale, -dv * scale, 1.0).normalize()
             })
             .collect();
-        let mut levels = vec![Level { size, normals, values }];
+        assert!(size.is_power_of_two(), "el lado de un mapa de normales es potencia de dos");
+        let mut levels = vec![Level {
+            size,
+            mask: size as i32 - 1,
+            normals,
+            values,
+        }];
         while levels.last().is_some_and(|l| l.size > 4) {
             let next = levels.last().map(Level::half);
             levels.extend(next);

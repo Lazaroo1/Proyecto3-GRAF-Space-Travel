@@ -8,13 +8,13 @@ use std::f64::consts::PI;
 use std::path::PathBuf;
 
 use crate::config;
-use crate::math::{smoothing, smoothstep, DMat4, DQuat, DVec3, Vec3};
+use crate::math::{smoothing, DMat4, DQuat, DVec3, Vec3};
 use crate::render::{Draw, Renderer, Stats, View};
 use crate::scene::camera::{Camera, CameraMode};
 use crate::scene::props::{self, Instance, PropKind, PropStats, PropView};
 use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
 use crate::scene::{nearest_surface, System};
-use crate::shaders::{self, AtmosphereFrame, DebugView, Material, RingInfo, SkyView, Uniforms};
+use crate::shaders::{self, heartbeat, AtmosphereFrame, DebugView, Material, PropStyle, RingInfo, SkyView, Uniforms};
 use crate::terrain::{LodSettings, TerrainStats, Viewer};
 
 /// Entrada de un frame, ya traducida de teclas y mouse.
@@ -85,7 +85,7 @@ pub const PRESETS: [Preset; 13] = [
     },
     Preset {
         name: "11_hongos",
-        shot: Shot::Landmark { body: "Jardin", kind: PropKind::Mushroom, distance: 22.0, sun: -0.12 },
+        shot: Shot::Landmark { body: "Jardin", kind: PropKind::Mushroom, distance: 22.0, sun: -0.38 },
     },
     Preset {
         name: "12_espinas",
@@ -275,6 +275,7 @@ impl App {
         let star = &self.system.bodies[0];
         let uniforms = Uniforms {
             time: t as f32,
+            beat: heartbeat(t, config::HEARTBEAT_PERIOD) as f32,
             sun_pos: (star.position(t) - camera.pos).as_vec3(),
             sun_radius: star.render_radius(t) as f32,
             sun_light,
@@ -592,24 +593,22 @@ fn prop_draws<'a>(
             let position = instance.position + instance.position.normalize() * lift as f64;
             let rot = rotation.mul(&instance.rotation.to_mat3());
             let offset = center + rotation.mul_vec(position);
-            // Cuanto del disco de la estrella asoma sobre su horizonte.
-            let to_star = star_pos - (body_pos + rotation.mul_vec(position));
-            let distance = to_star.length();
-            let up = rotation.mul_vec(instance.position.normalize());
-            let elevation = (up.dot(to_star) / distance).clamp(-1.0, 1.0).asin();
-            let disc = (star_radius / distance).min(1.0).asin();
-            let light = smoothstep(-disc as f32, disc as f32, elevation as f32);
+            let disc = (star_radius / (star_pos - body_pos).length()).min(1.0).asin() as f32;
             draws.push(Draw {
                 mesh,
                 indices: &mesh.indices,
                 local_offset: Vec3::ZERO,
                 model: DMat4::from_affine(&rot.scale(scale), offset).to_f32(),
                 normal: rot.to_f32(),
-                material: Material::Prop {
+                material: Material::Prop(PropStyle {
                     kind: instance.kind,
                     scale: scale as f32,
-                    light,
-                },
+                    planet: center.as_vec3(),
+                    // La esfera que hace sombra pasa por el suelo de este objeto:
+                    // el terreno de alrededor tapa la estrella a esa altura.
+                    occluder: instance.position.length() as f32,
+                    disc,
+                }),
                 bounds_center: (offset + rot.mul_vec(mesh.bounds_center.as_dvec3() * scale)).as_vec3(),
                 bounds_radius: mesh.bounds_radius * scale as f32,
                 tag: pick.lod as u32 + 1,

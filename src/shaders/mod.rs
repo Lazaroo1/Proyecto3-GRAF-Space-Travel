@@ -25,12 +25,12 @@ pub mod textures;
 mod vigia;
 
 use crate::math::{Perlin, Vec2, Vec3, Vec4};
-use crate::scene::props::PropKind;
 
 pub use atmosphere::{AtmosphereFrame, AtmosphereModel, AtmosphereParams, SkyView};
 pub use rings::RingInfo;
 pub use ship::ShipStyle;
 pub use sky::{shade as sky, SkyCube};
+pub use props::PropStyle;
 pub use sun::{heartbeat, SunStyle};
 pub use textures::Textures;
 
@@ -49,6 +49,9 @@ pub struct DebugView {
 pub struct Uniforms<'a> {
     /// Tiempo de simulacion en segundos.
     pub time: f32,
+    /// Latido de la estrella en este frame (0 a 1): igual para todos los
+    /// pixeles, se calcula una vez.
+    pub beat: f32,
     /// Centro de la estrella, relativo a la camara.
     pub sun_pos: Vec3,
     pub sun_radius: f32,
@@ -130,11 +133,8 @@ pub enum Material {
     Requiem,
     Cementerio,
     Ship(ShipStyle),
-    /// Un objeto de la superficie con datos de esa instancia: su escala (los
-    /// mapas de normales la usan para elegir su mipmap) y cuanto del disco de
-    /// la estrella queda sobre su horizonte (0 de noche: la sombra del
-    /// planeta, que las caras verticales no sabrian ver solas).
-    Prop { kind: PropKind, scale: f32, light: f32 },
+    /// Un objeto de la superficie, con los datos de su instancia.
+    Prop(PropStyle),
 }
 
 impl Material {
@@ -154,7 +154,7 @@ pub fn shade(material: &Material, f: &Fragment, u: &Uniforms) -> Vec3 {
         Material::Requiem => requiem::shade(f, u),
         Material::Cementerio => cementerio::shade(f, u),
         Material::Ship(style) => ship::shade(f, u, style),
-        Material::Prop { kind, scale, light } => props::shade(*kind, *scale, *light, f, u),
+        Material::Prop(style) => props::shade(style, f, u),
     }
 }
 

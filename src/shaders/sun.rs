@@ -18,7 +18,6 @@
 //! misma curva de doble golpe, como un corazon.
 
 use super::{Fragment, Uniforms};
-use crate::config::HEARTBEAT_PERIOD;
 use crate::math::blackbody::planckian_rgb;
 use crate::math::Vec3;
 
@@ -54,7 +53,7 @@ pub fn shade(f: &Fragment, u: &Uniforms, s: &SunStyle) -> Vec3 {
     let granules = u.noise.fbm(p * 14.0 + warp * 0.4 + Vec3::splat(t * 0.02), 3);
     let heat = (0.5 + 0.5 * (cells * 0.85 + granules * 0.25)).clamp(0.0, 1.0);
 
-    let pulse = heartbeat(t as f64, HEARTBEAT_PERIOD) as f32;
+    let pulse = u.beat;
     let limb = 0.25 + 0.75 * mu.powf(0.6);
     let temperature =
         s.temperature * (0.82 + 0.3 * heat) * (0.88 + 0.12 * mu) * (1.0 + 0.04 * pulse);

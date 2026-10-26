@@ -6,11 +6,25 @@
 //! con la base TBN interpolada. El nivel de mipmap sale de cuanto mide un
 //! pixel sobre la superficie: de lejos se lee el promedio, que no parpadea.
 
-use super::{heartbeat, Fragment, Uniforms};
+use super::{heartbeat, rings, Fragment, Uniforms};
 use crate::config::HEARTBEAT_PERIOD;
 use crate::math::blackbody::planckian_rgb;
 use crate::math::{smoothstep, Vec2, Vec3};
-use crate::scene::props::{PropKind, WRECK_UV_SIZE};
+use crate::scene::props::{PropKind, CORAL_TOP, WRECK_UV_SIZE};
+
+/// Datos de una instancia para su shader.
+#[derive(Clone, Copy, Debug)]
+pub struct PropStyle {
+    pub kind: PropKind,
+    /// Escala de la instancia: los mapas de normales eligen su mipmap con ella.
+    pub scale: f32,
+    /// Centro del planeta relativo a la camara y radio de la esfera que hace
+    /// sombra (la que pasa por el suelo bajo el objeto).
+    pub planet: Vec3,
+    pub occluder: f32,
+    /// Radio angular del disco de la estrella visto desde el objeto.
+    pub disc: f32,
+}
 
 /// Lado del glifo en las caras anchas del monolito (que miden 2.4 x 15), en
 /// unidades del modelo, y altura de la cara (en v) donde empieza.
@@ -32,14 +46,17 @@ struct Ctx<'a> {
     sun: Vec3,
 }
 
-pub fn shade(kind: PropKind, scale: f32, light: f32, f: &Fragment, u: &Uniforms) -> Vec3 {
+pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
+    let l = f.light_dir(u);
+    // Sombra de los anillos, igual que en el terreno de Cementerio.
+    let rings = u.ring.as_ref().map_or(1.0, |ring| rings::transmittance(ring, f.pos, l, u.noise));
     let c = Ctx {
         f,
         u,
-        scale,
-        sun: u.sun_light * light,
+        scale: style.scale,
+        sun: u.sun_light * (planet_shadow(style, f.pos, l) * rings),
     };
-    match kind {
+    match style.kind {
         PropKind::Monolith => monolith(&c),
         PropKind::Obelisk => obelisk(&c),
         PropKind::Mushroom => mushroom(&c),
@@ -66,6 +83,24 @@ fn lit(c: &Ctx, albedo: Vec3, n: Vec3, specular: f32, shininess: f32, wrap: f32)
     // El termino ambiente usa la luz completa: es el cielo, que sigue
     // iluminando un rato despues de la puesta.
     c.sun * (albedo * diffuse + Vec3::splat(spec)) + albedo * c.u.sun_light * 0.02
+}
+
+/// Cuanta luz de la estrella llega al punto `pos` sin que el planeta la
+/// tape. El rayo hacia la estrella pasa a una distancia `d` del centro: si es
+/// menor que el radio, el planeta lo corta. El borde se suaviza con el tamano
+/// del disco de la estrella proyectado a esa distancia (la penumbra). Cada
+/// pixel lo calcula: la punta de un monolito sigue al sol cuando su base ya
+/// esta de noche.
+#[inline]
+fn planet_shadow(style: &PropStyle, pos: Vec3, to_light: Vec3) -> f32 {
+    let p = pos - style.planet;
+    let along = p.dot(to_light);
+    if along >= 0.0 {
+        return 1.0;
+    }
+    let closest = (p.length_squared() - along * along).max(0.0).sqrt();
+    let soft = style.disc * -along + 0.05;
+    smoothstep(style.occluder - soft, style.occluder + soft, closest)
 }
 
 /// Cuanto mide un pixel sobre la superficie, en unidades del modelo. Visto
@@ -98,8 +133,7 @@ fn monolith(c: &Ctx) -> Vec3 {
     // Vetas de la piedra: un poco mas clara en bandas verticales irregulares.
     let veins = u.noise.fbm(Vec3::new(f.local.x * 2.0, f.local.y * 0.25, f.local.z * 2.0), 3) * 0.5 + 0.5;
     let albedo = Vec3::new(0.012, 0.010, 0.016) * ((0.7 + 0.8 * veins) * cavity);
-    let beat = heartbeat(u.time as f64, HEARTBEAT_PERIOD) as f32;
-    let emission = Vec3::new(1.0, 0.07, 0.12) * (glow * (0.5 + 1.6 * beat));
+    let emission = Vec3::new(1.0, 0.07, 0.12) * (glow * (0.5 + 1.6 * u.beat));
     lit(c, albedo, n, 0.6, 120.0, 0.0) + emission
 }
 
@@ -107,7 +141,10 @@ fn monolith(c: &Ctx) -> Vec3 {
 fn obelisk(c: &Ctx) -> Vec3 {
     let (f, u) = (c.f, c.u);
     let wear = u.noise.fbm(f.local * 0.8, 3) * 0.5 + 0.5;
-    let band = smoothstep(0.08, 0.0, (f.local.y * 0.5).fract().min(1.0 - (f.local.y * 0.5).fract()));
+    // Bandas de 0.3 unidades cada 2: de lejos se ve su promedio (8%).
+    let phase = (f.local.y * 0.5).fract();
+    let sharp = smoothstep(0.08, 0.0, phase.min(1.0 - phase));
+    let band = 0.08 + (sharp - 0.08) * smoothstep(0.5, 0.15, pixel_footprint(c));
     let albedo = Vec3::new(0.16, 0.15, 0.17) * (0.7 + 0.4 * wear) * (1.0 - 0.5 * band);
     lit(c, albedo, f.normal, 0.08, 16.0, 0.0)
 }
@@ -142,7 +179,10 @@ fn mushroom(c: &Ctx) -> Vec3 {
         // Arriba: puntos de luz en las celdas de un Worley. Cada punto late a
         // su ritmo (la segunda distancia de la celda le da una fase).
         let (f1, f2) = u.noise.cells(f.local * 1.4);
-        let dot = smoothstep(0.32, 0.16, f1);
+        // Cuando un pixel es mas grande que un punto, se ve el promedio
+        // (cada punto cubre ~18% de su celda) en vez de un brillo al azar.
+        let sharp = smoothstep(0.32, 0.16, f1);
+        let dot = 0.18 + (sharp - 0.18) * smoothstep(0.35, 0.1, pixel);
         let pulse = 0.6 + 0.4 * (u.time * 1.3 + f2 * 9.0).sin();
         Vec3::new(0.2, 1.0, 0.85) * (dot * pulse * 1.4)
     };
@@ -155,9 +195,10 @@ fn mushroom(c: &Ctx) -> Vec3 {
 /// Coral: oscuro en la base, rosado arriba, con las puntas encendidas.
 fn coral(c: &Ctx) -> Vec3 {
     let (f, u) = (c.f, c.u);
-    let height = (f.local.y / 12.0).clamp(0.0, 1.0);
+    let height = (f.local.y / CORAL_TOP).clamp(0.0, 1.0);
     let albedo = Vec3::new(0.08, 0.02, 0.09).lerp(Vec3::new(0.45, 0.14, 0.32), height);
-    let tips = smoothstep(0.6, 0.95, height);
+    // Los bulbos de las puntas vienen marcados con verde 0 en el color.
+    let tips = 1.0 - f.color.y;
     let pulse = heartbeat((u.time - height * 0.6) as f64, HEARTBEAT_PERIOD) as f32;
     let glow = Vec3::new(0.95, 0.3, 0.7).lerp(Vec3::new(0.2, 0.95, 0.9), height) * (tips * (0.3 + 1.2 * pulse));
     lit(c, albedo, f.normal, 0.15, 24.0, 0.3) + glow * u.biolum
@@ -184,5 +225,7 @@ fn wreck(c: &Ctx) -> Vec3 {
     let burn = smoothstep(0.0, 8.0, f.local.x);
     let mut albedo = Vec3::new(0.09, 0.095, 0.105).lerp(Vec3::new(0.2, 0.08, 0.035), rust * 0.8);
     albedo = albedo.lerp(Vec3::new(0.02, 0.018, 0.015), burn * 0.75) * texel.height.clamp(0.8, 1.0);
+    // Las paredes de adentro (color de vertice oscuro) casi no reciben luz.
+    albedo = albedo * f.color.x;
     lit(c, albedo, n, 0.6 * (1.0 - rust), 60.0, 0.0)
 }
