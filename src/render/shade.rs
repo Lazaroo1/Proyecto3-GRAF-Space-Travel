@@ -13,10 +13,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::pipeline::{ClipVertex, EXTRA_VERTEX, TriChunk, Varyings};
 use super::{Draw, TILE, View, VisPixel};
 use crate::math::{Vec3, smoothstep};
+use crate::shaders::gargantua::GasField;
 use crate::shaders::{self, Fragment, Uniforms};
 
 pub struct ShadeContext<'a> {
     pub global_vis: &'a [VisPixel],
+    pub gas_field: &'a GasField,
     pub chunks: &'a [TriChunk],
     pub verts: &'a [ClipVertex],
     pub draws: &'a [Draw<'a>],
@@ -50,12 +52,17 @@ pub fn shade_tile(tile: usize, vis: &[VisPixel], out: &mut [Vec3], ctx: &ShadeCo
             let (color, depth) = match (sky, ctx.uniforms.black_hole) {
                 (true, None) => (shaders::sky(dir, ctx.uniforms), f32::INFINITY),
                 // Con Gargantua el cielo se ve a traves de su lente.
-                (true, Some(hole)) => hole.sky(dir.normalize(), ctx.uniforms),
+                (true, Some(hole)) => {
+                    ctx.gas_field
+                        .sky(hole, dir.normalize(), ctx.uniforms, px, py)
+                }
                 (false, hole) => {
                     shaded += 1;
                     let (color, depth) = shade_surface(pixel.id, px, py, ctx);
                     match hole {
-                        Some(hole) => hole.surface(dir.normalize(), color, depth),
+                        Some(hole) => ctx
+                            .gas_field
+                            .surface(hole, dir.normalize(), color, depth, px, py),
                         None => (color, depth),
                     }
                 }

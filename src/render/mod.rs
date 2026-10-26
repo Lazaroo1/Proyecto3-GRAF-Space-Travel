@@ -43,6 +43,7 @@ use crate::config;
 use crate::math::{Mat3, Mat4, Vec3};
 use crate::parallel::{self, DisjointMut};
 use crate::scene::Mesh;
+use crate::shaders::gargantua::GasField;
 use crate::shaders::{Material, Uniforms};
 
 use bloom::Bloom;
@@ -176,6 +177,8 @@ pub struct Renderer {
     /// Fundido a blanco de la imagen final (el renacer del ciclo).
     pub whiteout: f32,
     particle_bins: ParticleBins,
+    /// Gas de Gargantua cada pocos pixeles; sus buffers se reutilizan.
+    gas_field: GasField,
     pub exposure: f32,
     pub p2_curve: bool,
     pub bloom_intensity: f32,
@@ -205,6 +208,7 @@ impl Renderer {
             ripple: None,
             whiteout: 0.0,
             particle_bins: ParticleBins::new(),
+            gas_field: GasField::default(),
             exposure: config::EXPOSURE,
             p2_curve: false,
             bloom_intensity: config::BLOOM_INTENSITY,
@@ -311,6 +315,12 @@ impl Renderer {
             raster_ns.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
         });
         drop(vbuf_write);
+        if let Some(hole) = uniforms.black_hole {
+            let (inv_width, inv_height) = (1.0 / width as f32, 1.0 / height as f32);
+            self.gas_field.build(hole, width, height, |x, y| {
+                view.pixel_direction(x, y, inv_width, inv_height)
+            });
+        }
         let context = shade::ShadeContext {
             chunks,
             verts,
@@ -322,6 +332,7 @@ impl Renderer {
             tiles_x,
             shaded: &shaded,
             global_vis: &self.vbuf,
+            gas_field: &self.gas_field,
         };
         let hdr = DisjointMut::new(&mut self.hdr);
         let particle_bins = &self.particle_bins;
