@@ -1,0 +1,6 @@
+# CPU con AVX2 y FMA (Intel desde 2013, AMD desde 2015): el compilador
+# vectoriza los ciclos del render con instrucciones de 256 bits y `floor`
+# deja de ser una llamada a la biblioteca de C. Para una CPU mas vieja, borrar
+# este archivo.
+[target.'cfg(target_arch = "x86_64")']
+rustflags = ["-C", "target-cpu=x86-64-v3"]
