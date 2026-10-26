@@ -8,6 +8,7 @@
 //! precision. La resta grande (objeto - camara) se hace en `f64`.
 
 pub mod blackbody;
+pub mod geodesic;
 mod mat;
 mod noise;
 mod quat;
