@@ -59,6 +59,7 @@ cargo test --release                          # 80 pruebas
 | Rebobinar el tiempo | R sostenido |
 | Saltar 30 s atrás / adelante en el ciclo | [ / ] |
 | Ir a 20 s antes del colapso | J |
+| Recorrer las vistas fijas (las mismas de `--captura`) | AvPág / RePág |
 | **Ajustes en vivo** (radio, órbita, semilla, shaders...) | T, flechas y Shift |
 | Wireframe / colores de LOD / LOD encendido | F3 / F4 / F5 |
 | Otra semilla para los objetos de la superficie | F6 |

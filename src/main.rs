@@ -146,7 +146,9 @@ fn run_window(options: &Options) -> Result<(), String> {
         stats: true,
         age: 0.0,
         hidden: false,
+        preset: None,
     };
+    let mut preset_index: Option<usize> = None;
     let mut tweaks = tweaks::Tweaks::default();
 
     // Sonido: raylib solo reproduce lo que el sintetizador genera. Si no hay
@@ -179,6 +181,25 @@ fn run_window(options: &Options) -> Result<(), String> {
         }
         if rl.is_key_pressed(KeyboardKey::KEY_F9) {
             hud.hidden = !hud.hidden;
+        }
+        // Vistas fijas en orden, para mostrar algo rapido en la demostracion.
+        let step = if rl.is_key_pressed(KeyboardKey::KEY_PAGE_DOWN) {
+            1
+        } else if rl.is_key_pressed(KeyboardKey::KEY_PAGE_UP) {
+            -1
+        } else {
+            0
+        };
+        if step != 0 {
+            let count = PRESETS.len() as i32;
+            let next = match preset_index {
+                Some(i) => (i as i32 + step).rem_euclid(count),
+                None if step > 0 => 0,
+                None => count - 1,
+            } as usize;
+            preset_index = Some(next);
+            app.apply_preset(&PRESETS[next]);
+            hud.preset = Some((PRESETS[next].name, hud.age));
         }
         if rl.is_key_pressed(KeyboardKey::KEY_Z) {
             app.settings.assist = !app.settings.assist;

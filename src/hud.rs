@@ -15,6 +15,8 @@ pub struct Hud {
     pub age: f32,
     /// Sin nada encima de la imagen (F9), para grabar o sacar fotos.
     pub hidden: bool,
+    /// Nombre de la ultima vista fija elegida y cuando se eligio.
+    pub preset: Option<(&'static str, f32)>,
 }
 
 /// Segundos que dura el titulo al empezar.
@@ -160,6 +162,13 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
         );
         d.draw_text(&label, x - w / 2, y - 28, 16, MARKER);
     }
+    if let Some((name, since)) = hud.preset {
+        if hud.age - since < 3.0 {
+            let text = format!("vista fija: {name}");
+            let w = d.measure_text(&text, 26);
+            d.draw_text(&text, (width - w) / 2, 60, 26, MARKER);
+        }
+    }
     if app.freeze.is_some() {
         let text = "FRUSTUM CONGELADO (F7): el culling y el LOD se calculan desde la camara amarilla";
         let w = d.measure_text(text, FONT);
@@ -179,7 +188,7 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
             "Q/E: alabeo   Shift: turbo   C: camara   P: foto   Tab: soltar el mouse".to_string(),
             "L: modo local   O: crucero (rodea el planeta)   V: trayectoria".to_string(),
             "T: ajustes en vivo   M: sonido".to_string(),
-            "R: rebobinar   [ ]: -30/+30 s   J: al colapso".to_string(),
+            "R: rebobinar   [ ]: -30/+30 s   J: al colapso   RePag/AvPag: vistas fijas".to_string(),
             "F3: wireframe   F4: colores de LOD   F5: LOD on/off   F6: otra semilla   F7: congelar frustum".to_string(),
             "F1: ayuda   F2: estadisticas   F9: ocultar todo   Esc: salir".to_string(),
         ];
