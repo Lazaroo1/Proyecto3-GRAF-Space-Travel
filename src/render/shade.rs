@@ -11,12 +11,11 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::pipeline::{ClipVertex, TriChunk, Varyings, EXTRA_VERTEX};
-use super::{Draw, View, VisPixel, TILE, TILE_PIXELS};
+use super::{Draw, View, VisPixel, TILE};
 use crate::math::Vec3;
 use crate::shaders::{self, Fragment, Uniforms};
 
 pub struct ShadeContext<'a> {
-    pub vbuf: &'a [VisPixel],
     pub chunks: &'a [TriChunk],
     pub verts: &'a [ClipVertex],
     pub draws: &'a [Draw<'a>],
@@ -28,8 +27,8 @@ pub struct ShadeContext<'a> {
     pub shaded: &'a AtomicU64,
 }
 
-pub fn shade_tile(tile: usize, out: &mut [Vec3], ctx: &ShadeContext) {
-    let vis = &ctx.vbuf[tile * TILE_PIXELS..(tile + 1) * TILE_PIXELS];
+/// Sombrea los pixeles visibles del tile a partir de su visibility buffer.
+pub fn shade_tile(tile: usize, vis: &[VisPixel], out: &mut [Vec3], ctx: &ShadeContext) {
     let x0 = (tile % ctx.tiles_x) * TILE;
     let y0 = (tile / ctx.tiles_x) * TILE;
     let cols = TILE.min(ctx.width - x0);

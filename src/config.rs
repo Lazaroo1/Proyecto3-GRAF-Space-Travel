@@ -13,6 +13,15 @@ pub const FOV_Y_DEGREES: f64 = 70.0;
 pub const NEAR_PLANE: f64 = 0.05;
 pub const EXPOSURE: f32 = 1.0;
 
+/// Bloom: luminancia HDR desde la que algo empieza a brillar, intensidad del
+/// halo, niveles de la piramide, radio y sigma del blur y caida entre niveles.
+pub const BLOOM_THRESHOLD: f32 = 0.9;
+pub const BLOOM_INTENSITY: f32 = 0.45;
+pub const BLOOM_LEVELS: usize = 6;
+pub const BLOOM_RADIUS: usize = 4;
+pub const BLOOM_SIGMA: f32 = 2.0;
+pub const BLOOM_FALLOFF: f32 = 0.75;
+
 /// Semilla de todo el ruido procedural: la misma semilla, el mismo sistema.
 pub const NOISE_SEED: u32 = 1337;
 
