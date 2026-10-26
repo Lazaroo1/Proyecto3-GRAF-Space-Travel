@@ -43,9 +43,13 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     let footprint = f.pos.length() * u.pixel_angle;
     let octaves = if footprint > 6.0 { 3 } else { 5 };
 
-    let swirl = 2.4 * (-x * x * 0.6).exp() + t * 0.08 * (-x * x).exp();
+    // El remolino y las corrientes oscilan en vez de acumularse: un giro
+    // diferencial proporcional al tiempo enrollaria las bandas sin fin (a los
+    // quince minutos del ciclo cada latitud estaria girada decenas de vueltas
+    // respecto a la vecina y solo quedaria ruido fino).
+    let swirl = 2.4 * (-x * x * 0.6).exp() + 1.4 * (t * 0.07).sin() * (-x * x).exp();
     let q = rotate_about(p, eye, swirl);
-    let shift = (q.y * 6.0).sin() * 0.05 * t;
+    let shift = (q.y * 6.0).sin() * 0.9 * (t * 0.045).sin();
     let (s, c) = shift.sin_cos();
     let qr = Vec3::new(q.x * c - q.z * s, q.y, q.x * s + q.z * c);
     let turbulence = u.noise.fbm(Vec3::new(qr.x * 2.2, qr.y * 9.0, qr.z * 2.2 + t * 0.01), octaves);
