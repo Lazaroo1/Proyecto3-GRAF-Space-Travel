@@ -344,13 +344,21 @@ fn trace(observer: f32, s: f32, row: &mut [f32]) -> Path {
         vx += h / 6.0 * (ax1 + 2.0 * ax2 + 2.0 * ax3 + ax4);
         vy += h / 6.0 * (ay1 + 2.0 * ay2 + 2.0 * ay3 + ay4);
         // Angulos desenrollados: se suma el giro de este paso.
+        let phi_old = phi;
         phi += (old_x * y - old_y * x).atan2(old_x * x + old_y * y);
         heading += (old_vx * vy - old_vy * vx).atan2(old_vx * vx + old_vy * vy);
-        // Muestras de r en los angulos de la grilla que se cruzaron.
+        // Muestras de r en los angulos de la grilla que se cruzaron en este
+        // paso, interpoladas entre su principio y su final.
         let r_new = (x * x + y * y).sqrt();
         closest = closest.min(r_new);
-        while next < row.len() && (next as f64) * (PHI_MAX as f64) / ((row.len() - 1) as f64) <= phi {
-            row[next] = r_new as f32;
+        let span = phi - phi_old;
+        while next < row.len() {
+            let grid = (next as f64) * (PHI_MAX as f64) / ((row.len() - 1) as f64);
+            if grid > phi {
+                break;
+            }
+            let k = if span > 1e-12 { ((grid - phi_old) / span).clamp(0.0, 1.0) } else { 1.0 };
+            row[next] = (r + (r_new - r) * k) as f32;
             next += 1;
         }
     }

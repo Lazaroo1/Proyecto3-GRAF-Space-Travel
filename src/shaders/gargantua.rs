@@ -279,8 +279,11 @@ impl BlackHole<'_> {
         if cos_s < self.cone_cos {
             return (color, depth);
         }
+        // Solo cuentan los cruces del disco que estan antes de la superficie;
+        // si ademas la superficie esta detras del agujero y el rayo cae, la
+        // sombra la oculta.
         let beyond = depth * cos_s > distance;
-        let traced = self.trace(dir, if beyond { f32::INFINITY } else { depth });
+        let traced = self.trace(dir, depth);
         let background = if beyond && traced.captured { Vec3::ZERO } else { color };
         (traced.light + background * traced.transmittance, depth.min(traced.depth))
     }
