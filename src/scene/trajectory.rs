@@ -39,8 +39,9 @@ pub struct Prediction {
     pub impact: Option<DVec3>,
 }
 
-/// Integra la caida libre de la nave desde el instante `t`.
-pub fn predict(ship: &ShipState, bodies: &[Body], t: f64) -> Prediction {
+/// Integra la caida libre de la nave desde el instante `t`, con o sin
+/// gravedad (G la apaga).
+pub fn predict(ship: &ShipState, bodies: &[Body], t: f64, gravity: bool) -> Prediction {
     let mut frame = ship.frame;
     let (mut pos, mut vel) = (ship.rel_pos, ship.rel_vel);
     let mut time = t;
@@ -54,23 +55,28 @@ pub fn predict(ship: &ShipState, bodies: &[Body], t: f64) -> Prediction {
         let body = &bodies[frame];
         // Euler semi-implicito, igual que la fisica.
         let r2 = pos.length_squared();
-        if body.mu > 0.0 && r2 > 0.0 {
+        if gravity && body.mu > 0.0 && r2 > 0.0 {
             vel += pos * (-body.mu / (r2 * r2.sqrt()) * DT);
         }
         pos += vel * DT;
         time += DT;
 
         // Choque: primero una prueba barata contra la altura maxima posible.
-        if let Some(field) = &body.surface {
-            let top = body.radius + field.height_range().1 as f64;
-            let r = pos.length();
-            if r < top && r < body.radius + body.surface_height(pos, time) {
-                impact = Some(pos);
-                if let Some(leg) = legs.last_mut() {
-                    leg.points.push(pos);
-                }
-                break;
+        // La estrella no tiene terreno: se choca con su esfera.
+        let r = pos.length();
+        let hit = match &body.surface {
+            Some(field) => {
+                let top = body.radius + field.height_range().1 as f64;
+                r < top && r < body.radius + body.surface_height(pos, time)
             }
+            None => r < body.radius,
+        };
+        if hit {
+            impact = Some(pos);
+            if let Some(leg) = legs.last_mut() {
+                leg.points.push(pos);
+            }
+            break;
         }
 
         // Cambio de marco, conservando posicion y velocidad en el mundo.
@@ -119,7 +125,7 @@ mod tests {
         assert_eq!(ship.frame, i);
         // Velocidad circular: v = sqrt(mu / r).
         ship.rel_vel = DVec3::Z * (planet.mu / r).sqrt();
-        let p = predict(&ship, &sys.bodies, t);
+        let p = predict(&ship, &sys.bodies, t, true);
         assert!(p.impact.is_none());
         assert_eq!(p.legs.len(), 1);
         for point in &p.legs[0].points {
@@ -135,7 +141,7 @@ mod tests {
         let t = 3.0;
         let dir = DVec3::new(0.2, 0.9, 0.3).normalize();
         let ship = ShipState::new(&sys.bodies, planet.position(t) + dir * (planet.radius + 60.0), DQuat::IDENTITY, t);
-        let p = predict(&ship, &sys.bodies, t);
+        let p = predict(&ship, &sys.bodies, t, true);
         let hit = p.impact.expect("deberia chocar");
         let ground = planet.radius + planet.surface_height(hit, t);
         assert!((hit.length() - ground).abs() < 3.0);

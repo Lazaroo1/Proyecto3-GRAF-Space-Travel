@@ -279,7 +279,22 @@ impl App {
     /// posicion y su velocidad respecto a su cuerpo, asi que viaja con el.
     pub fn skip(&mut self, seconds: f64) {
         let t = (self.sim_time + seconds).max(0.0);
+        self.system.bodies[0].radius = cycle::at(t, self.system.star_base).collision_radius;
         let body = &self.system.bodies[self.ship.frame];
+        // Junto a un planeta la nave gira con el: sigue sobre el mismo suelo.
+        if self.ship.frame != 0 {
+            let turn = body.rotation(t) * body.rotation(self.sim_time).conjugate();
+            self.ship.rel_pos = turn.rotate(self.ship.rel_pos);
+            self.ship.rel_vel = turn.rotate(self.ship.rel_vel);
+            self.ship.rot = (turn * self.ship.rot).normalize();
+            self.aim = (turn * self.aim).normalize();
+        }
+        // Y nunca queda dentro del suelo (ni de la estrella, que cambia).
+        let ground = body.radius + body.surface_height(self.ship.rel_pos, t) + config::COLLISION_CLEARANCE;
+        let r = self.ship.rel_pos.length();
+        if r < ground && r > 0.0 {
+            self.ship.rel_pos = self.ship.rel_pos * (ground / r);
+        }
         self.ship.world_pos = body.position(t) + self.ship.rel_pos;
         self.ship_prev = self.ship;
         self.sim_time = t;
@@ -318,7 +333,7 @@ impl App {
             "Cementerio" => 61.7,
             _ => 36.7,
         };
-        let state = cycle::at(t, star.radius);
+        let state = cycle::at(t, self.system.star_base);
         let heart = if state.star_radius > 0.0 { 1.0 } else { 0.0 };
         AudioParams {
             beat_phase: state.beat_phase,
@@ -375,6 +390,9 @@ impl App {
         // el sobrante se usa para interpolar el dibujo.
         self.accumulator += frame_dt;
         while self.accumulator >= config::PHYSICS_DT {
+            // La estrella del ciclo cambia de tamano: la nave choca con ella
+            // (o con la zona de exclusion del agujero) a su radio de ahora.
+            self.system.bodies[0].radius = cycle::at(self.sim_time, self.system.star_base).collision_radius;
             self.ship_prev = self.ship;
             self.flight = ship::step(
                 &mut self.ship,
@@ -432,15 +450,25 @@ impl App {
     fn steer_local(&mut self, dx: f64, dy: f64, dt: f64) {
         let body = &self.system.bodies[self.ship.frame];
         let up = (self.ship.world_pos - body.position(self.sim_time)).normalize();
+        // El suelo gira: la mira gira con el (asi el rumbo no se desliza
+        // respecto al terreno) y despues sigue la curvatura.
+        let spin = DQuat::from_scaled_axis(ship::angular_velocity(body) * dt);
         if let Some(previous) = self.local_up {
-            self.aim = DQuat::from_rotation_arc(previous, up) * self.aim;
+            self.aim = DQuat::from_rotation_arc(spin.rotate(previous), up) * spin * self.aim;
         }
         self.local_up = Some(up);
         let yaw = DQuat::from_axis_angle(up, -dx);
         let mut aim = yaw * self.aim * DQuat::from_axis_angle(DVec3::X, -dy);
-        // Cabeceo maximo de 75 grados: mas alla se deshace el del mouse.
-        if aim.forward().dot(up).abs() > 75f64.to_radians().sin() {
-            aim = yaw * self.aim;
+        // Cabeceo de 75 grados como maximo. Si se paso (se entro al modo
+        // mirando al suelo), se lleva suave hacia el borde sin ignorar el
+        // mouse.
+        let limit = 75f64.to_radians();
+        let pitch = aim.forward().dot(up).clamp(-1.0, 1.0).asin();
+        if pitch.abs() > limit {
+            let target = pitch.clamp(-limit, limit);
+            let eased = pitch + (target - pitch) * smoothing(4.0, dt).max(0.02);
+            let (heading, _) = ship::heading(aim, up);
+            aim = DQuat::look_rotation(heading * eased.cos() + up * eased.sin(), up);
         }
         let level = DQuat::look_rotation(aim.forward(), up);
         self.aim = aim.slerp(level, smoothing(5.0, dt)).normalize();
@@ -450,7 +478,7 @@ impl App {
     pub fn render(&mut self) -> Stats {
         let dt = config::PHYSICS_DT;
         let alpha = (self.accumulator / dt).clamp(0.0, 1.0);
-        let t = self.sim_time - dt * (1.0 - alpha);
+        let t = (self.sim_time - dt * (1.0 - alpha)).max(0.0);
         let ship_pos = self.ship_prev.world_pos.lerp(self.ship.world_pos, alpha);
         let ship_rot = self.ship_prev.rot.slerp(self.ship.rot, alpha);
 
@@ -468,13 +496,16 @@ impl App {
 
         let show_ship = self.camera_mode == CameraMode::Chase;
         let pixel_angle = 2.0 * (camera.fov_y * 0.5).tan() / self.renderer.height() as f64;
+        let state = cycle::at(t, self.system.star_base);
+        self.system.bodies[0].radius = state.collision_radius;
         let star = &self.system.bodies[0];
-        let state = cycle::at(t, star.radius);
         self.cycle = state;
         let beat = if state.star_radius > 0.0 { heartbeat_phase(state.beat_phase) as f32 } else { 0.0 };
         let heart = if state.star_radius > 0.0 { 1.0 } else { 0.0 };
         // La estrella del ciclo: su radio late, se hincha y colapsa.
-        let star_radius = state.star_radius * (1.0 + state.pulse * beat as f64);
+        // El panel de ajustes cambia el latido base (0.012 de diseno).
+        let pulse = state.pulse * star.pulse / 0.012;
+        let star_radius = state.star_radius * (1.0 + pulse * beat as f64);
         let star_material = Material::Sun(SunStyle {
             temperature: state.star_temperature,
             intensity: 3.0 * state.star_intensity,
@@ -554,6 +585,7 @@ impl App {
             _ => None,
         };
         self.renderer.exposure = self.exposure * state.exposure;
+        self.renderer.whiteout = state.whiteout;
         // La onda gravitacional sale del agujero justo despues del destello
         // y cruza la pantalla en unos tres segundos.
         let wave = state.tau - cycle::phase_start(cycle::Phase::Gargantua);
@@ -669,7 +701,7 @@ impl App {
             return;
         }
         let bodies = &self.system.bodies;
-        let Prediction { legs, impact } = trajectory::predict(&self.ship, bodies, t);
+        let Prediction { legs, impact } = trajectory::predict(&self.ship, bodies, t, self.settings.gravity);
         let pixel = pixel_angle as f32;
         for (k, leg) in legs.iter().enumerate() {
             let base = bodies[leg.frame].position(t) - camera.pos;
@@ -1003,7 +1035,7 @@ fn pixel_angle_of(camera: &Camera, height: usize) -> f64 {
 /// Gargantua.
 fn markers(system: &System, t: f64, camera: &Camera, view: &View, width: usize, height: usize) -> Vec<Marker> {
     let pixel = pixel_angle_of(camera, height);
-    let state = cycle::at(t, system.bodies[0].radius);
+    let state = cycle::at(t, system.star_base);
     system
         .bodies
         .iter()
@@ -1280,5 +1312,38 @@ mod tests {
         assert!(traveled > 100.0, "recorrio {traveled}");
         let altitude = rel.length() - body.radius - body.surface_height(rel, app.sim_time);
         assert!(altitude > 8.0 && altitude < 40.0, "altitud {altitude}");
+    }
+
+    /// Entrar al modo local mirando de frente al suelo (lo normal al volar
+    /// hacia un planeta) no deja la mira trabada: el mouse la levanta.
+    #[test]
+    fn looking_straight_down_in_local_mode_can_still_look_up() {
+        let mut app = App::new(64, 36).unwrap();
+        let preset = Preset {
+            name: "prueba",
+            shot: Shot::Surface { body: "Jardin", azimuth: 0.4, elevation: 0.2, altitude: 30.0 },
+            time: 40.0,
+        };
+        app.apply_preset(&preset);
+        let jardin = app.system.find("Jardin").unwrap();
+        let up = (app.ship.world_pos - app.system.bodies[jardin].position(app.sim_time)).normalize();
+        let side = up.cross(DVec3::X).normalize();
+        app.aim = DQuat::look_rotation(-up, side);
+        let still = FrameInput::default();
+        for _ in 0..30 {
+            app.update(1.0 / 60.0, &still);
+        }
+        assert!(app.flight.local);
+        let look_up = FrameInput {
+            look: (0.0, -40.0),
+            ..FrameInput::default()
+        };
+        for _ in 0..60 {
+            app.update(1.0 / 60.0, &look_up);
+        }
+        let body = &app.system.bodies[jardin];
+        let up = (app.ship.world_pos - body.position(app.sim_time)).normalize();
+        let pitch = app.aim.forward().dot(up).asin().to_degrees();
+        assert!(pitch > -10.0, "la mira deberia haber subido: {pitch} grados");
     }
 }
