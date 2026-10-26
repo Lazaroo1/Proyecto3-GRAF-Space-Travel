@@ -22,11 +22,11 @@ use std::sync::OnceLock;
 
 use super::Uniforms;
 use crate::math::blackbody::planckian_rgb;
-use crate::math::{smoothstep, Perlin, Vec3};
+use crate::math::{Perlin, Vec3, smoothstep};
 use crate::parallel;
 
 /// (celdas por lado de cada cara, probabilidad de estrella, brillo).
-const LAYERS: [(f32, f32, f32); 3] = [(40.0, 0.22, 1.0), (80.0, 0.16, 0.55), (150.0, 0.12, 0.3)];
+const LAYERS: [(f32, f32, f32); 3] = [(85.0, 0.12, 0.8), (180.0, 0.12, 0.42), (360.0, 0.16, 0.18)];
 /// Fondo apenas morado: el negro puro se ve plano.
 const BACKGROUND: Vec3 = Vec3::new(0.0004, 0.0003, 0.0008);
 
@@ -132,12 +132,13 @@ fn stars(dir: Vec3, pixel_angle: f32) -> Vec3 {
         // Una estrella menor que un pixel parpadearia al girar la camara: se
         // ensancha hasta medio pixel y se atenua para conservar su brillo.
         let cell_angle = 2.0 / cells;
-        let size = 0.025 + 0.025 * unit(h4);
+        let size = 0.012 + 0.016 * unit(h4);
         let sigma = size.max(0.5 * pixel_angle / cell_angle);
         let energy = (size / sigma) * (size / sigma);
         // Casi todas tenues y unas pocas brillantes, como en un cielo real.
-        let peak = brightness * (0.05 + 7.0 * unit(h5).powi(10)) * energy;
-        color += star_color(unit(mix(h5))) * (peak * (-dist2 / (2.0 * sigma * sigma)).exp());
+        let peak = brightness * (0.08 + 2.8 * unit(h5).powi(14)) * energy;
+        color += star_color(unit(mix(h5))).lerp(Vec3::ONE, 0.5)
+            * (peak * (-dist2 / (2.0 * sigma * sigma)).exp());
     }
     color
 }
@@ -146,15 +147,22 @@ fn stars(dir: Vec3, pixel_angle: f32) -> Vec3 {
 /// oscuras de polvo: ruido fractal, muy tenue, solo para dar atmosfera.
 fn nebula(dir: Vec3, noise: &Perlin) -> Vec3 {
     let band_normal = Vec3::new(0.25, 0.92, -0.3).normalize();
-    let band = (-(dir.dot(band_normal) / 0.32).powi(2)).exp();
+    let latitude = dir.dot(band_normal);
+    let band = (-(latitude / 0.19).powi(2)).exp();
     if band < 0.01 {
         return Vec3::ZERO;
     }
-    let gas = noise.fbm(dir * 2.2, 5) * 0.5 + 0.5;
-    let dust = smoothstep(0.45, 0.7, noise.fbm(dir * 5.0 + Vec3::new(7.0, 1.0, 3.0), 4) * 0.5 + 0.5);
+    let gas = noise.fbm(dir * 5.2, 6) * 0.5 + 0.5;
+    let dust = smoothstep(
+        0.42,
+        0.66,
+        noise.fbm(dir * 13.0 + Vec3::new(7.0, 1.0, 3.0), 5) * 0.5 + 0.5,
+    );
     let tint = noise.fbm(dir * 1.3 + Vec3::new(-3.0, 5.0, 2.0), 3) * 0.5 + 0.5;
-    let color = Vec3::new(0.55, 0.12, 0.42).lerp(Vec3::new(0.7, 0.18, 0.1), smoothstep(0.35, 0.7, tint));
-    color * (band * gas * gas * (1.0 - 0.8 * dust) * 0.06)
+    let color =
+        Vec3::new(0.17, 0.29, 0.48).lerp(Vec3::new(0.36, 0.18, 0.30), smoothstep(0.35, 0.7, tint));
+    let lane = 1.0 - 0.8 * (-(latitude / 0.055 + gas * 0.9).powi(2)).exp();
+    color * (band * gas.powi(2) * (1.0 - 0.94 * dust) * lane * 0.16)
 }
 
 /// Resplandor alrededor del disco de la estrella: cae rapido junto al borde y
@@ -180,7 +188,9 @@ pub fn corona(dir: Vec3, u: &Uniforms) -> Vec3 {
         return Vec3::ZERO;
     }
     let x = x2.sqrt();
-    u.sun_light * (0.35 * (-(x - 1.0) * 4.0).exp() + 0.025 / x2)
+    let rim = 0.24 * (-(x - 1.0) * 12.0).exp();
+    let halo = 0.035 * (-(x - 1.0) * 3.5).exp() + 0.002 / x2;
+    u.sun_light * Vec3::new(1.0, 0.18, 0.045) * (rim + halo)
 }
 
 /// Color de estrella: mas frias (rojizas) que calientes (azules).
@@ -257,6 +267,8 @@ mod tests {
         let noise = Perlin::new(1);
         let textures = super::super::Textures::generate();
         let u = Uniforms {
+            shadow: None,
+            points: &[],
             time: 0.0,
             beat: 0.0,
             beat_phase: 0.0,
@@ -303,7 +315,11 @@ mod tests {
 
     #[test]
     fn rgbe_round_trip_keeps_hdr_within_one_percent() {
-        for c in [Vec3::new(0.001, 0.0005, 0.002), Vec3::new(3.0, 1.5, 0.2), Vec3::new(40.0, 30.0, 10.0)] {
+        for c in [
+            Vec3::new(0.001, 0.0005, 0.002),
+            Vec3::new(3.0, 1.5, 0.2),
+            Vec3::new(40.0, 30.0, 10.0),
+        ] {
             let back = decode_rgbe(encode_rgbe(c));
             let error = (back - c).length() / c.length();
             assert!(error < 0.01, "{c:?} -> {back:?}");

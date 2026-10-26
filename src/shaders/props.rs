@@ -6,10 +6,10 @@
 //! con la base TBN interpolada. El nivel de mipmap sale de cuanto mide un
 //! pixel sobre la superficie: de lejos se lee el promedio, que no parpadea.
 
-use super::{rings, Fragment, Uniforms};
+use super::{Fragment, Uniforms, detail, pbr, rings};
 use crate::math::blackbody::planckian_rgb;
-use crate::math::{smoothstep, Vec2, Vec3};
-use crate::scene::props::{PropKind, CORAL_TOP, WRECK_UV_SIZE};
+use crate::math::{Vec2, Vec3, smoothstep};
+use crate::scene::props::{CORAL_TOP, PropKind, WRECK_UV_SIZE};
 
 /// Datos de una instancia para su shader.
 #[derive(Clone, Copy, Debug)]
@@ -32,8 +32,7 @@ const GLYPH_BOTTOM: f32 = 0.6;
 const GLYPH_ASPECT: f32 = 15.0 / GLYPH_SIZE;
 /// Centro del sombrero de los hongos (en el modelo) y altura del anillo que
 /// brilla en el tallo.
-const CAP_CENTER: Vec3 = Vec3::new(0.69, 6.1, 0.0);
-const STEM_RING: f32 = 5.3;
+const CAP_CENTER: Vec3 = Vec3::new(0.69, 8.6, 0.0);
 
 /// Lo que todos los objetos necesitan: el fragmento, los uniforms, la
 /// escala de la instancia y la luz de la estrella que les llega.
@@ -48,7 +47,10 @@ struct Ctx<'a> {
 pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
     let l = f.light_dir(u);
     // Sombra de los anillos, igual que en el terreno de Cementerio.
-    let rings = u.ring.as_ref().map_or(1.0, |ring| rings::transmittance(ring, f.pos, l, u.noise));
+    let rings = u
+        .ring
+        .as_ref()
+        .map_or(1.0, |ring| rings::transmittance(ring, f.pos, l, u.noise));
     let c = Ctx {
         f,
         u,
@@ -62,6 +64,7 @@ pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
         PropKind::Coral => coral(&c),
         PropKind::Spike => spike(&c),
         PropKind::Wreck => wreck(&c),
+        PropKind::Boulder => boulder(&c),
     }
 }
 
@@ -70,18 +73,9 @@ pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
 /// en lo que deja pasar un poco de luz (la carne de un hongo); 0 es Lambert.
 #[inline]
 fn lit(c: &Ctx, albedo: Vec3, n: Vec3, specular: f32, shininess: f32, wrap: f32) -> Vec3 {
-    let l = c.f.light_dir(c.u);
-    let ndl = n.dot(l);
-    let diffuse = ((ndl + wrap) / (1.0 + wrap)).max(0.0);
-    let spec = if ndl > 0.0 && specular > 0.0 {
-        let half = (l + c.f.view_dir()).normalize();
-        specular * n.dot(half).max(0.0).powf(shininess)
-    } else {
-        0.0
-    };
-    // El termino ambiente usa la luz completa: es el cielo, que sigue
-    // iluminando un rato despues de la puesta.
-    c.sun * (albedo * diffuse + Vec3::splat(spec)) + albedo * c.u.sun_light * 0.02
+    let rough = (2.0 / (shininess + 2.0)).powf(0.25).clamp(0.24, 0.85);
+    let _ = wrap;
+    pbr::shade_light(c.f, c.u, albedo, rough, specular * 0.06, n, 1.0, c.sun)
 }
 
 /// Cuanta luz de la estrella llega al punto `pos` sin que el planeta la
@@ -123,14 +117,21 @@ fn monolith(c: &Ctx) -> Vec3 {
         let gv = (f.uv.y - GLYPH_BOTTOM) * GLYPH_ASPECT;
         if (0.0..1.0).contains(&gv) {
             let footprint = pixel_footprint(c) / GLYPH_SIZE;
-            let texel = u.textures.eye_glyph.sample(Vec2::new(f.uv.x, gv), footprint);
+            let texel = u
+                .textures
+                .eye_glyph
+                .sample(Vec2::new(f.uv.x, gv), footprint);
             n = f.perturb(texel.normal, 1.0);
             glow = texel.glow;
             cavity = texel.height.clamp(0.4, 1.0);
         }
     }
     // Vetas de la piedra: un poco mas clara en bandas verticales irregulares.
-    let veins = u.noise.fbm(Vec3::new(f.local.x * 2.0, f.local.y * 0.25, f.local.z * 2.0), 3) * 0.5 + 0.5;
+    let veins = u.noise.fbm(
+        Vec3::new(f.local.x * 2.0, f.local.y * 0.25, f.local.z * 2.0),
+        3,
+    ) * 0.5
+        + 0.5;
     let albedo = Vec3::new(0.012, 0.010, 0.016) * ((0.7 + 0.8 * veins) * cavity);
     let emission = Vec3::new(1.0, 0.07, 0.12) * (glow * (0.5 + 1.6 * u.beat) * u.gains.requiem);
     lit(c, albedo, n, 0.6, 120.0, 0.0) + emission
@@ -153,54 +154,63 @@ fn obelisk(c: &Ctx) -> Vec3 {
 /// debajo laminillas que resplandecen.
 fn mushroom(c: &Ctx) -> Vec3 {
     let (f, u) = (c.f, c.u);
-    let is_cap = f.color.z > f.color.y;
-    let ndv = f.normal.dot(f.view_dir()).max(0.0);
-    if !is_cap {
-        // Vetas a lo largo del tallo.
-        let streaks = u.noise.noise(Vec3::new(f.local.x * 3.0, f.local.y * 0.3, f.local.z * 3.0)) * 0.5 + 0.5;
-        let albedo = Vec3::new(0.42, 0.40, 0.48) * (0.75 + 0.35 * streaks);
-        let ring = smoothstep(0.45, 0.0, (f.local.y - STEM_RING).abs());
-        let glow = Vec3::new(0.15, 0.85, 0.75) * (ring * 0.8);
-        return lit(c, albedo, f.normal, 0.05, 20.0, 0.5) + glow * u.biolum;
-    }
+    let cap = f.color.z > f.color.y;
+    let footprint = pixel_footprint(c);
+    let tex = detail::rock(f, u, 0.22, footprint, 0.46);
+    let cells = detail::sample(f, &u.textures.organic, 0.19, footprint, 0.2);
+    let n = (tex.normal * 0.65 + cells.normal * 0.35).normalize();
+    let tissue = tex.color * Vec3::new(0.28, 0.34, 0.27) * (0.55 + 0.45 * cells.height);
     let rel = f.local - CAP_CENTER;
-    let pixel = pixel_footprint(c);
-    let glow = if rel.y < 0.05 {
-        // Por debajo: laminillas radiales. Su separacion crece con el radio;
-        // cuando un pixel ya no las separa, se ve su brillo promedio.
-        let radius = rel.x.hypot(rel.z);
-        let spacing = std::f32::consts::TAU * radius / 40.0;
-        let contrast = smoothstep(spacing, spacing * 0.3, pixel);
-        let lines = 0.5 + 0.5 * (rel.z.atan2(rel.x) * 40.0).sin() * contrast;
-        let fade = smoothstep(0.3, 1.2, radius);
-        Vec3::new(0.95, 0.2, 0.75) * (lines * fade * 1.1)
+    let radius = rel.x.hypot(rel.z);
+    let phi = rel.z.atan2(rel.x);
+    let broken = u.noise.fbm(f.local * 0.8, 3) * 0.5 + 0.5;
+    let glow = if cap {
+        let edge = smoothstep(4.72, 5.05, radius) * 0.20;
+        let gills = (phi * 42.0 + radius * 1.3 + broken * 2.0).sin() * 0.5 + 0.5;
+        let under = if rel.y < 0.10 {
+            gills.powi(4) * 0.55 * broken
+        } else {
+            cells.glow.powi(3) * 0.35 * broken
+        };
+        Vec3::new(0.018, 0.55, 0.42) * (under + edge * broken)
     } else {
-        // Arriba: puntos de luz en las celdas de un Worley. Cada punto late a
-        // su ritmo (la segunda distancia de la celda le da una fase).
-        let (f1, f2) = u.noise.cells(f.local * 1.4);
-        // Cuando un pixel es mas grande que un punto, se ve el promedio
-        // (cada punto cubre ~18% de su celda) en vez de un brillo al azar.
-        let sharp = smoothstep(0.32, 0.16, f1);
-        let dot = 0.18 + (sharp - 0.18) * smoothstep(0.35, 0.1, pixel);
-        let pulse = 0.6 + 0.4 * (u.time * 1.3 + f2 * 9.0).sin();
-        Vec3::new(0.2, 1.0, 0.85) * (dot * pulse * 1.4)
+        Vec3::new(0.012, 0.42, 0.30) * (cells.glow.powi(3) * 0.30 * broken)
     };
-    let albedo = Vec3::new(0.10, 0.035, 0.13);
-    // Terciopelo: la luz se junta en el borde de la silueta.
-    let sheen = Vec3::new(0.5, 0.2, 0.6) * ((1.0 - ndv).powi(3) * 0.35);
-    lit(c, albedo, f.normal, 0.15, 24.0, 0.3) + sheen * c.sun + glow * u.biolum
+    pbr::shade_light(
+        f,
+        u,
+        tissue,
+        0.34 + 0.22 * tex.rough,
+        0.04,
+        n,
+        tex.ao * (0.35 + 0.65 * cells.height),
+        c.sun,
+    ) + glow * u.biolum * (0.7 + 0.3 * u.beat)
 }
 
-/// Coral: oscuro en la base, rosado arriba, con las puntas encendidas.
 fn coral(c: &Ctx) -> Vec3 {
     let (f, u) = (c.f, c.u);
     let height = (f.local.y / CORAL_TOP).clamp(0.0, 1.0);
-    let albedo = Vec3::new(0.08, 0.02, 0.09).lerp(Vec3::new(0.45, 0.14, 0.32), height);
-    // Los bulbos de las puntas vienen marcados con verde 0 en el color.
+    let tex = detail::rock(f, u, 0.25, pixel_footprint(c), 0.6);
     let tips = 1.0 - f.color.y;
-    let pulse = u.beat_at(height * 0.6);
-    let glow = Vec3::new(0.95, 0.3, 0.7).lerp(Vec3::new(0.2, 0.95, 0.9), height) * (tips * (0.25 + 0.6 * pulse));
-    lit(c, albedo, f.normal, 0.15, 24.0, 0.3) + glow * u.biolum
+    let cell = detail::sample(f, &u.textures.organic, 0.25, pixel_footprint(c), 0.2);
+    let n = (tex.normal * 0.75 + cell.normal * 0.25).normalize();
+    let albedo = tex.color * Vec3::new(0.24, 0.31, 0.24) * (0.5 + 0.5 * cell.height);
+    let lit = pbr::shade_light(
+        f,
+        u,
+        albedo,
+        0.38 + 0.25 * tex.rough,
+        0.03,
+        n,
+        tex.ao,
+        c.sun,
+    );
+    let grain = u.noise.fbm(f.local * 2.0, 3) * 0.5 + 0.5;
+    let glow = Vec3::new(0.012, 0.48, 0.24).lerp(Vec3::new(0.01, 0.25, 0.45), height)
+        * (tips * (0.3 + 0.7 * grain) * (0.75 + 0.25 * u.beat_at(height * 0.6))
+            + cell.glow.powi(7) * 0.025);
+    lit + glow * u.biolum
 }
 
 /// Espina de obsidiana con lava todavia viva en la base.
@@ -208,7 +218,11 @@ fn spike(c: &Ctx) -> Vec3 {
     let (f, u) = (c.f, c.u);
     let albedo = Vec3::new(0.02, 0.016, 0.016);
     let heat = smoothstep(1.8, -0.2, f.local.y);
-    let flicker = u.noise.noise(f.local * 0.7 + Vec3::new(0.0, u.time * 0.4, 0.0)) * 0.5 + 0.5;
+    let flicker = u
+        .noise
+        .noise(f.local * 0.7 + Vec3::new(0.0, u.time * 0.4, 0.0))
+        * 0.5
+        + 0.5;
     let glow = planckian_rgb(1250.0 + 500.0 * flicker) * (heat * (1.0 + 2.0 * flicker));
     lit(c, albedo, f.normal, 0.35, 160.0, 0.0) + glow
 }
@@ -227,4 +241,18 @@ fn wreck(c: &Ctx) -> Vec3 {
     // Las paredes de adentro (color de vertice oscuro) casi no reciben luz.
     albedo = albedo * f.color.x;
     lit(c, albedo, n, 0.6 * (1.0 - rust), 60.0, 0.0)
+}
+
+fn boulder(c: &Ctx) -> Vec3 {
+    let tex = detail::rock(c.f, c.u, 0.35, pixel_footprint(c), 0.85);
+    pbr::shade_light(
+        c.f,
+        c.u,
+        tex.color * 0.20,
+        tex.rough.max(0.5),
+        0.04,
+        tex.normal,
+        tex.ao,
+        c.sun,
+    )
 }

@@ -7,6 +7,7 @@
 mod app;
 mod audio;
 mod config;
+mod gargantua_p2;
 mod hud;
 #[allow(dead_code)]
 mod math;
@@ -32,6 +33,7 @@ enum Mode {
     Window,
     Capture(PathBuf),
     Bench(usize),
+    Tour(PathBuf),
 }
 
 struct Options {
@@ -41,12 +43,15 @@ struct Options {
     wireframe: bool,
     lod_colors: bool,
     fog_only: bool,
+    preset: Option<usize>,
 }
 
 const USAGE: &str = "\
 uso: ocaso [opciones]
   --res ANCHOxALTO      resolucion del render (por defecto 1280x720)
   --captura CARPETA     guarda vistas fijas como PNG sin abrir ventana
+  --vista NOMBRE       inicia o captura solo la vista elegida
+  --recorrido MP4      graba vuelo, acercamiento, vuelta y alejamiento (ffmpeg)
   --bench FRAMES        mide cada vista fija FRAMES veces sin abrir ventana
   --wire                empieza con el wireframe encendido (F3)
   --lod                 empieza con los colores de LOD encendidos (F4)
@@ -60,6 +65,7 @@ fn parse_args() -> Result<Options, String> {
         wireframe: false,
         lod_colors: false,
         fog_only: false,
+        preset: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -77,12 +83,26 @@ fn parse_args() -> Result<Options, String> {
                 let dir = args.next().ok_or("--captura espera una carpeta")?;
                 options.mode = Mode::Capture(PathBuf::from(dir));
             }
+            "--recorrido" => {
+                options.mode = Mode::Tour(PathBuf::from(
+                    args.next().ok_or("--recorrido espera un archivo .mp4")?,
+                ));
+            }
             "--bench" => {
                 let frames = args.next().ok_or("--bench espera un numero de frames")?;
                 let frames = frames.parse().map_err(|_| "numero de frames invalido")?;
                 options.mode = Mode::Bench(frames);
             }
             "--wire" => options.wireframe = true,
+            "--vista" => {
+                let name = args.next().ok_or("--vista espera el nombre de una vista")?;
+                options.preset = Some(
+                    PRESETS
+                        .iter()
+                        .position(|p| p.name == name)
+                        .ok_or_else(|| format!("vista desconocida: {name}"))?,
+                );
+            }
             "--lod" => options.lod_colors = true,
             "--niebla" => options.fog_only = true,
             "-h" | "--help" | "--ayuda" => {
@@ -107,6 +127,7 @@ fn main() {
         Mode::Window => run_window(&options),
         Mode::Capture(dir) => run_capture(&options, dir),
         Mode::Bench(frames) => run_bench(&options, *frames),
+        Mode::Tour(path) => run_tour(&options, path),
     };
     if let Err(error) = result {
         eprintln!("error: {error}");
@@ -120,11 +141,17 @@ fn new_app(options: &Options) -> Result<App, String> {
     app.debug.wireframe = options.wireframe;
     app.debug.lod_colors = options.lod_colors;
     app.debug.fog_only = options.fog_only;
+    if let Some(i) = options.preset {
+        app.apply_preset(&PRESETS[i]);
+    }
     Ok(app)
 }
 
 fn run_window(options: &Options) -> Result<(), String> {
     let mut app = new_app(options)?;
+    if options.preset.is_none() {
+        app.apply_preset(&PRESETS[21]);
+    }
     let (mut rl, thread) = raylib::init()
         .size(options.width as i32, options.height as i32)
         .title("OCASO - software renderer")
@@ -142,8 +169,8 @@ fn run_window(options: &Options) -> Result<(), String> {
         .load_texture_from_image(&thread, &image)
         .map_err(|e| format!("no se pudo crear la textura: {e:?}"))?;
     let mut hud = hud::Hud {
-        help: true,
-        stats: true,
+        help: false,
+        stats: false,
         age: 0.0,
         hidden: false,
         preset: None,
@@ -210,6 +237,9 @@ fn run_window(options: &Options) -> Result<(), String> {
         if rl.is_key_pressed(KeyboardKey::KEY_C) {
             app.toggle_camera();
         }
+        if rl.is_key_pressed(KeyboardKey::KEY_HOME) {
+            app.return_to_system();
+        }
         if rl.is_key_pressed(KeyboardKey::KEY_F3) {
             app.debug.wireframe = !app.debug.wireframe;
         }
@@ -248,17 +278,25 @@ fn run_window(options: &Options) -> Result<(), String> {
             tweaks.open = !tweaks.open;
         }
         if tweaks.open {
-            let big = if rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT) { 10 } else { 1 };
+            let big = if rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT) {
+                10
+            } else {
+                1
+            };
             if rl.is_key_pressed(KeyboardKey::KEY_UP) {
                 tweaks.select(-1);
             }
             if rl.is_key_pressed(KeyboardKey::KEY_DOWN) {
                 tweaks.select(1);
             }
-            if rl.is_key_pressed(KeyboardKey::KEY_RIGHT) || rl.is_key_pressed_repeat(KeyboardKey::KEY_RIGHT) {
+            if rl.is_key_pressed(KeyboardKey::KEY_RIGHT)
+                || rl.is_key_pressed_repeat(KeyboardKey::KEY_RIGHT)
+            {
                 tweaks.adjust(&mut app, big);
             }
-            if rl.is_key_pressed(KeyboardKey::KEY_LEFT) || rl.is_key_pressed_repeat(KeyboardKey::KEY_LEFT) {
+            if rl.is_key_pressed(KeyboardKey::KEY_LEFT)
+                || rl.is_key_pressed_repeat(KeyboardKey::KEY_LEFT)
+            {
                 tweaks.adjust(&mut app, -big);
             }
         }
@@ -318,6 +356,7 @@ fn read_input(rl: &RaylibHandle, captured: bool) -> FrameInput {
         ),
         roll: axis(KeyboardKey::KEY_Q, KeyboardKey::KEY_E),
         boost: down(KeyboardKey::KEY_LEFT_SHIFT),
+        brake: down(KeyboardKey::KEY_X),
         free_look: rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_RIGHT),
         rewind: down(KeyboardKey::KEY_R),
         zoom: rl.get_mouse_wheel_move() as f64,
@@ -349,7 +388,10 @@ fn save_photo(app: &App) {
 fn settle(app: &mut App) {
     for _ in 0..200 {
         app.render();
-        if app.terrain_stats().is_none_or(|(_, s)| s.pending == 0 && s.generated == 0) {
+        if app
+            .terrain_stats()
+            .is_none_or(|(_, s)| s.pending == 0 && s.generated == 0)
+        {
             break;
         }
     }
@@ -367,11 +409,17 @@ fn run_capture(options: &Options, dir: &Path) -> Result<(), String> {
         .map(|(body, set)| format!("{} {}", body.name, set.instances.len()))
         .collect();
     println!("objetos de la superficie: {}", counts.join(", "));
-    let mut shots: Vec<(String, Option<&app::Preset>)> = PRESETS.iter().map(|p| (p.name.to_string(), Some(p))).collect();
+    let mut shots: Vec<(String, Option<&app::Preset>)> = PRESETS
+        .iter()
+        .map(|p| (p.name.to_string(), Some(p)))
+        .collect();
     // Demostracion del culling: se congela el frustum sobre Requiem y la
     // camara se aleja hacia atras y arriba.
     shots.push(("21_frustum_congelado".to_string(), None));
     for (name, preset) in shots {
+        if options.preset.is_some_and(|i| name != PRESETS[i].name) {
+            continue;
+        }
         match preset {
             Some(preset) => app.apply_preset(preset),
             None => {
@@ -407,15 +455,111 @@ fn run_capture(options: &Options, dir: &Path) -> Result<(), String> {
 /// Mide cada vista fija `frames` veces y reporta medianas por etapa. Con la
 /// vista fija, la diferencia entre frames es solo ruido de la maquina, y la
 /// mediana lo filtra mucho mejor que la media de un recorrido.
+fn run_tour(options: &Options, path: &Path) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let encoder = std::env::var_os("OCASO_FFMPEG").unwrap_or_else(|| "ffmpeg".into());
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut child = Command::new(encoder)
+        .args([
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "rawvideo",
+            "-pixel_format",
+            "rgba",
+            "-video_size",
+        ])
+        .arg(format!("{}x{}", options.width, options.height))
+        .args([
+            "-framerate",
+            "24",
+            "-i",
+            "-",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+        ])
+        .arg(path)
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("ffmpeg: {e}. Instala ffmpeg o define OCASO_FFMPEG."))?;
+    let result = (|| -> Result<(), String> {
+        let mut pipe = child.stdin.take().ok_or("ffmpeg no abrio la entrada")?;
+        let mut app = new_app(options)?;
+        let mut tour = app.begin_tour();
+        settle(&mut app);
+        let mut done = false;
+        let mut frames = 0;
+        while !done && tour.elapsed < 240.0 {
+            // 15 pasos de 1/120 por frame a 24 Hz: simulacion x3.
+            for _ in 0..15 {
+                if app.tour_step(&mut tour) {
+                    done = true;
+                    break;
+                }
+            }
+            app.render();
+            pipe.write_all(app.renderer.rgba())
+                .map_err(|e| e.to_string())?;
+            frames += 1;
+            if frames % 120 == 0 {
+                println!("recorrido: {:.1} s de simulacion", tour.elapsed);
+            }
+        }
+        if !done {
+            return Err("el piloto no completo el recorrido en 240 s".into());
+        }
+        println!(
+            "recorrido continuo completo: {} frames, {:.1} s de video (simulacion x3)",
+            frames,
+            frames as f64 / 24.0
+        );
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = child.kill();
+    }
+    let status = child.wait().map_err(|e| e.to_string())?;
+    result?;
+    if !status.success() {
+        return Err(format!("ffmpeg termino con {status}"));
+    }
+    Ok(())
+}
+
 fn run_bench(options: &Options, frames: usize) -> Result<(), String> {
     let frames = frames.max(1);
     let mut app = new_app(options)?;
-    println!("{}x{}  {} frames por vista  {} hilos", options.width, options.height, frames, parallel::workers());
+    println!(
+        "{}x{}  {} frames por vista  {} hilos",
+        options.width,
+        options.height,
+        frames,
+        parallel::workers()
+    );
     println!(
         "{:<16} {:>7} {:>7} | {:>6} {:>6} {:>6} {:>6} {:>6} {:>7}  (medianas, ms)",
         "vista", "min", "frame", "vert", "tri", "raster", "shade", "bloom", "tonemap"
     );
     for preset in &PRESETS {
+        if options
+            .preset
+            .is_some_and(|i| preset.name != PRESETS[i].name)
+        {
+            continue;
+        }
         app.apply_preset(preset);
         settle(&mut app);
         let samples: Vec<render::Stats> = (0..frames).map(|_| app.render()).collect();

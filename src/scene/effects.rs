@@ -8,24 +8,66 @@
 //! devuelve exactamente a donde estaban.
 
 use crate::math::blackbody::planckian_rgb;
-use crate::math::{hash_u32, smoothstep, DQuat, DVec3, Vec3};
+use crate::math::{DQuat, DVec3, Vec3, hash_u32, smoothstep};
 use crate::parallel;
 use crate::render::Particle;
 
 use super::Body;
 
 /// Particulas del chorro de Pira.
-pub const STREAM_COUNT: usize = 6000;
+pub const STREAM_COUNT: usize = 3500;
 /// Segundos que tarda una brasa en caer de Pira a la estrella.
 const STREAM_LIFE: f32 = 36.0;
 /// Esporas alrededor de la camara cerca de Jardin.
-pub const SPORE_COUNT: usize = 1400;
+pub const SPORE_COUNT: usize = 450;
 /// Lado del cubo de esporas (se repite al moverse la camara).
 const SPORE_BOX: f32 = 90.0;
 /// Cuanto sube una espora en su vida, en unidades del mundo.
 const SPORE_RISE: f32 = 8.0;
 /// Particulas del escape de la nave.
-pub const EXHAUST_COUNT: usize = 260;
+pub const EXHAUST_COUNT: usize = 100;
+pub const PROMINENCE_COUNT: usize = 24 * 96 * 3;
+
+/// Filamentos tridimensionales anclados a la fotosfera. La profundidad de
+/// cada segmento oculta los arcos de atrás contra la propia estrella.
+pub fn prominences(out: &mut [Particle], star: &Body, t: f64, camera: DVec3, strength: f32) {
+    let center = (star.position(t) - camera).as_vec3();
+    let rotation = star.rotation(t).to_mat3().to_f32();
+    let r = star.radius as f32;
+    for (i, p) in out.iter_mut().enumerate() {
+        let arc = i / (96 * 3);
+        let strand = (i / 96) % 3;
+        let s = (i % 96) as f32 / 95.0;
+        let h = hash_u32(arc as u32 ^ 0xAC1D_72A1);
+        let y = unit(h) * 2.0 - 1.0;
+        let phi = unit(hash_u32(h)) * std::f32::consts::TAU;
+        let n = Vec3::new(
+            (1.0 - y * y).sqrt() * phi.cos(),
+            y,
+            (1.0 - y * y).sqrt() * phi.sin(),
+        );
+        let (a, b) = basis(n);
+        let spin = unit(hash_u32(h ^ 93)) * std::f32::consts::TAU;
+        let tangent = a * spin.cos() + b * spin.sin();
+        let width = 0.08 + 0.15 * unit(hash_u32(h ^ 7));
+        let angle = (s - 0.5) * width * 2.0;
+        let wave = (std::f32::consts::PI * s).sin().max(0.0);
+        let height = (0.07 + 0.18 * unit(hash_u32(h ^ 13)))
+            * (0.85 + 0.15 * (t as f32 * 0.12 + arc as f32).sin());
+        let radial = n * angle.cos() + tangent * angle.sin();
+        let filament = (strand as f32 - 1.0) * 0.004
+            + (s * 12.0 + t as f32 * 0.2 + strand as f32).sin() * 0.002 * wave;
+        let position = radial * (r * (1.002 + height * wave.powf(1.2))) + b * (r * filament);
+        *p = Particle {
+            pos: center + rotation.mul_vec(position),
+            radius: r * (0.0014 + 0.0008 * wave),
+            color: Vec3::new(1.4, 0.085, 0.012)
+                * (strength
+                    * (0.18 + 0.82 * wave)
+                    * (0.7 + 0.3 * (s * 18.0 - t as f32 * 1.2).sin())),
+        };
+    }
+}
 
 #[inline]
 fn unit(h: u32) -> f32 {
@@ -71,7 +113,14 @@ impl Blackbody {
 /// amarillo.
 /// `sink` es el radio donde termina: la superficie de la estrella o, despues
 /// del colapso, el borde del disco de Gargantua.
-pub fn pira_stream(out: &mut [Particle], pira: &Body, star: &Body, sink: f64, t: f64, camera: DVec3) {
+pub fn pira_stream(
+    out: &mut [Particle],
+    pira: &Body,
+    star: &Body,
+    sink: f64,
+    t: f64,
+    camera: DVec3,
+) {
     let p = pira.position(t);
     let star_pos = star.position(t);
     let to_star = (star_pos - p).normalize();
@@ -82,7 +131,11 @@ pub fn pira_stream(out: &mut [Particle], pira: &Body, star: &Body, sink: f64, t:
     // La curva se queda atras del planeta y un poco por fuera.
     let control = (start + end) * 0.5 - along_orbit * (span * 0.32);
     // Relativo a la camara en f64 y despues a f32.
-    let (start, control, end) = ((start - camera).as_vec3(), (control - camera).as_vec3(), (end - camera).as_vec3());
+    let (start, control, end) = (
+        (start - camera).as_vec3(),
+        (control - camera).as_vec3(),
+        (end - camera).as_vec3(),
+    );
     let (side_a, side_b) = basis(to_star.as_vec3());
     let width = pira.radius as f32 * 0.45;
     let colors = Blackbody::new();
@@ -105,8 +158,8 @@ pub fn pira_stream(out: &mut [Particle], pira: &Body, star: &Body, sink: f64, t:
             let temperature = 1500.0 + 2600.0 * s + 300.0 * unit(h2 >> 3);
             *particle = Particle {
                 pos,
-                radius: 1.0 + 1.6 * unit(h >> 5),
-                color: colors.get(temperature) * (6.0 * fade),
+                radius: 0.3 + 0.55 * unit(h >> 5),
+                color: colors.get(temperature) * (5.0 * fade),
             };
         }
     });
@@ -135,7 +188,11 @@ pub fn spores(out: &mut [Particle], jardin: &Body, t: f64, camera: DVec3, night:
             let (h1, h2) = (hash_u32(h), hash_u32(h ^ 0x9E37));
             let base = Vec3::new(unit(h), unit(h1), unit(h2)) * SPORE_BOX;
             let phase = unit(h >> 4) * std::f32::consts::TAU;
-            let sway = Vec3::new((time * 0.31 + phase).sin(), 0.0, (time * 0.27 + phase * 1.7).cos()) * 1.6;
+            let sway = Vec3::new(
+                (time * 0.31 + phase).sin(),
+                0.0,
+                (time * 0.27 + phase * 1.7).cos(),
+            ) * 1.6;
             // Cada espora sube unas unidades durante su vida y vuelve a
             // nacer abajo: la subida queda acotada (si creciera con el tiempo
             // total, al moverse la camara las esporas saltarian).
@@ -158,7 +215,7 @@ pub fn spores(out: &mut [Particle], jardin: &Body, t: f64, camera: DVec3, night:
             let color = if h & 1 == 0 {
                 Vec3::new(0.2, 1.0, 0.85)
             } else {
-                Vec3::new(1.0, 0.3, 0.8)
+                Vec3::new(0.08, 0.55, 0.9)
             };
             *particle = Particle {
                 pos: to_world(local.as_dvec3()),
@@ -171,7 +228,15 @@ pub fn spores(out: &mut [Particle], jardin: &Body, t: f64, camera: DVec3, night:
 
 /// Fuego de los motores: un cono corto de plasma azul detras de la nave que
 /// crece con el empuje.
-pub fn exhaust(out: &mut [Particle], ship_pos: DVec3, ship_rot: DQuat, throttle: f32, length: f64, t: f64, camera: DVec3) {
+pub fn exhaust(
+    out: &mut [Particle],
+    ship_pos: DVec3,
+    ship_rot: DQuat,
+    throttle: f32,
+    length: f64,
+    t: f64,
+    camera: DVec3,
+) {
     let back = ship_rot.rotate(DVec3::Z).as_vec3();
     let nozzle = (ship_pos + ship_rot.rotate(DVec3::Z * (length * 0.5)) - camera).as_vec3();
     let (a, b) = basis(back);
@@ -186,8 +251,9 @@ pub fn exhaust(out: &mut [Particle], ship_pos: DVec3, ship_rot: DQuat, throttle:
         let heat = (1.0 - age) * (1.0 - age);
         *particle = Particle {
             pos: nozzle + dir * reach,
-            radius: 0.12 + 0.25 * age,
-            color: Vec3::new(0.45, 0.65, 1.0).lerp(Vec3::new(1.0, 0.55, 0.3), age) * (throttle * heat * 9.0),
+            radius: 0.05 + 0.12 * age,
+            color: Vec3::new(0.06, 0.5, 1.0).lerp(Vec3::new(0.04, 0.16, 0.6), age)
+                * (throttle * heat * 0.65),
         };
     }
 }
@@ -227,13 +293,24 @@ mod tests {
         pira_stream(&mut out, pira, star, star.radius, t, DVec3::ZERO);
         let (p, s) = (pira.position(t).as_vec3(), star.position(t).as_vec3());
         let span = (p - s).length();
-        let near_pira = out.iter().filter(|q| (q.pos - p).length() < pira.radius as f32 * 1.5).count();
-        let near_star = out.iter().filter(|q| (q.pos - s).length() < star.radius as f32 * 1.3).count();
+        let near_pira = out
+            .iter()
+            .filter(|q| (q.pos - p).length() < pira.radius as f32 * 1.5)
+            .count();
+        let near_star = out
+            .iter()
+            .filter(|q| (q.pos - s).length() < star.radius as f32 * 1.3)
+            .count();
         assert!(near_pira > 0 && near_star > 0);
         // Ninguna se va lejos del tramo entre los dos.
-        assert!(out.iter().all(|q| (q.pos - p).length() < span * 1.2 && (q.pos - s).length() < span * 1.2));
+        assert!(
+            out.iter()
+                .all(|q| (q.pos - p).length() < span * 1.2 && (q.pos - s).length() < span * 1.2)
+        );
         // Las que nacen junto a Pira son mas frias (mas rojas) que las que caen.
-        let born = out.iter().filter(|q| (q.pos - p).length() < pira.radius as f32 * 1.5 && q.color.x > 0.0);
+        let born = out
+            .iter()
+            .filter(|q| (q.pos - p).length() < pira.radius as f32 * 1.5 && q.color.x > 0.0);
         assert!(born.clone().all(|q| q.color.z / q.color.x < 0.6));
     }
 
@@ -252,7 +329,11 @@ mod tests {
         spores(&mut day, jardin, t, camera, 0.0, 1.0);
         spores(&mut night, jardin, t, camera, 1.0, 1.0);
         assert!(day.iter().all(|q| q.pos.length() < SPORE_BOX));
-        let total = |v: &[Particle]| v.iter().map(|q| q.color.x + q.color.y + q.color.z).sum::<f32>();
+        let total = |v: &[Particle]| {
+            v.iter()
+                .map(|q| q.color.x + q.color.y + q.color.z)
+                .sum::<f32>()
+        };
         assert!(total(&night) > 3.0 * total(&day));
     }
 }

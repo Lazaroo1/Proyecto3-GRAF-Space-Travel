@@ -7,7 +7,7 @@
 pub const DEFAULT_WIDTH: usize = 1280;
 pub const DEFAULT_HEIGHT: usize = 720;
 
-pub const FOV_Y_DEGREES: f64 = 70.0;
+pub const FOV_Y_DEGREES: f64 = 58.0;
 /// Plano cercano. Con la profundidad invertida en `f32` puede ser muy pequeno
 /// sin perder precision a lo lejos.
 pub const NEAR_PLANE: f64 = 0.05;
@@ -15,8 +15,8 @@ pub const EXPOSURE: f32 = 1.0;
 
 /// Bloom: luminancia HDR desde la que algo empieza a brillar, intensidad del
 /// halo, niveles de la piramide, radio y sigma del blur y caida entre niveles.
-pub const BLOOM_THRESHOLD: f32 = 0.9;
-pub const BLOOM_INTENSITY: f32 = 0.45;
+pub const BLOOM_THRESHOLD: f32 = 1.1;
+pub const BLOOM_INTENSITY: f32 = 0.22;
 pub const BLOOM_LEVELS: usize = 6;
 pub const BLOOM_RADIUS: usize = 4;
 pub const BLOOM_SIGMA: f32 = 2.0;
@@ -27,7 +27,7 @@ pub const NOISE_SEED: u32 = 1337;
 /// Lado de cada cara del cielo horneado. Con 512 el cubemap pesa 6 MB y cabe
 /// en la cache L3; con 1024 pesaria 25 MB y cada muestra esperaria a la RAM.
 /// Un texel mide 0.18 grados, poco mas de un pixel a 720p.
-pub const SKY_SIZE: usize = 512;
+pub const SKY_SIZE: usize = 1024;
 
 // Terreno -----------------------------------------------------------------
 
@@ -56,7 +56,9 @@ pub const PROP_FULL_PIXELS: f32 = 6.0;
 pub const PHYSICS_HZ: f64 = 120.0;
 pub const PHYSICS_DT: f64 = 1.0 / PHYSICS_HZ;
 /// Un frame mas lento que esto cuenta como si durara esto (evita saltos).
-pub const MAX_FRAME_DT: f64 = 0.1;
+// Admite los frames del perfil de detalle sin ralentizar el ciclo de 15 min.
+// Las pausas largas siguen acotadas para evitar una recuperación ilimitada.
+pub const MAX_FRAME_DT: f64 = 2.0;
 
 /// Periodo del latido de la estrella, en segundos (al principio del ciclo).
 pub const HEARTBEAT_PERIOD: f64 = 1.9;
@@ -70,11 +72,16 @@ pub const SHIP_LENGTH: f64 = 4.0;
 /// La velocidad maxima crece con la altitud: lejos se cruza el sistema en
 /// segundos y junto a la superficie se vuela con precision. Como la nave
 /// tambien frena con la altitud, nunca llega al suelo a toda velocidad.
-pub const SPEED_PER_ALTITUDE: f64 = 1.0;
+pub const SPEED_PER_ALTITUDE: f64 = 0.55;
 pub const MIN_SPEED: f64 = 8.0;
-pub const MAX_SPEED: f64 = 4000.0;
+pub const MAX_SPEED: f64 = 420.0;
 /// Multiplicador de la velocidad con Shift.
-pub const BOOST: f64 = 3.0;
+pub const BOOST: f64 = 2.6;
+/// El freno mantiene su fuerza cuando baja la velocidad maxima junto al suelo.
+pub const BRAKE_GAIN: f64 = 8.0;
+pub const BRAKE_MIN_ACCEL: f64 = 100.0;
+/// Margen explorable mas alla de la orbita mas lejana.
+pub const SYSTEM_MARGIN: f64 = 3200.0;
 /// Aceleracion maxima como fraccion de la velocidad maxima, por segundo.
 pub const ACCEL_PER_SPEED: f64 = 1.2;
 /// Ganancia del asistente de vuelo (1/s): que tan rapido corrige la velocidad.
@@ -99,8 +106,8 @@ pub const CRUISE_THRUST: f64 = 0.6;
 
 // Camara -----------------------------------------------------------------
 
-pub const CHASE_HEIGHT: f64 = 1.8;
-pub const CHASE_DISTANCE: f64 = 10.0;
+pub const CHASE_HEIGHT: f64 = 2.8;
+pub const CHASE_DISTANCE: f64 = 8.8;
 /// Posicion de la cabina respecto al centro de la nave.
 pub const COCKPIT_OFFSET: [f64; 3] = [0.0, 0.5, -0.6];
 /// Distancia minima entre la camara y la superficie de un cuerpo.

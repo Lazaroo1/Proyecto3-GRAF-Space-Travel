@@ -31,12 +31,12 @@
 
 use std::f32::consts::TAU;
 
-use super::builder::MeshBuilder;
 use super::Mesh;
+use super::builder::MeshBuilder;
 use crate::config;
-use crate::math::{hash_u32, smoothstep, DMat3, DQuat, DVec3, Perlin, Vec3};
+use crate::math::{DMat3, DQuat, DVec3, Perlin, Vec3, hash_u32, smoothstep};
 use crate::parallel::{self, DisjointMut};
-use crate::terrain::{cube_to_sphere, HeightField, TerrainSample};
+use crate::terrain::{HeightField, TerrainSample, cube_to_sphere};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PropKind {
@@ -46,16 +46,18 @@ pub enum PropKind {
     Coral,
     Spike,
     Wreck,
+    Boulder,
 }
 
 impl PropKind {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Monolith,
         Self::Obelisk,
         Self::Mushroom,
         Self::Coral,
         Self::Spike,
         Self::Wreck,
+        Self::Boulder,
     ];
 
     /// Posicion en `ALL` (y en la lista de modelos).
@@ -70,7 +72,7 @@ impl PropKind {
     /// ensuciarian.
     pub fn visibility(self) -> f32 {
         match self {
-            Self::Wreck => 1.0,
+            Self::Wreck | Self::Boulder => 1.0,
             Self::Monolith | Self::Obelisk => 0.75,
             Self::Mushroom | Self::Coral | Self::Spike => 0.5,
         }
@@ -121,17 +123,33 @@ fn monolith(detail: usize) -> Mesh {
     b.color(STONE);
     // Losa principal: el frente y la espalda (las caras anchas, sus primeros
     // ocho vertices) llevan el glifo del ojo.
-    let slab = b.cuboid(Vec3::new(0.0, 7.5, 0.0), [Vec3::X, Vec3::Y, Vec3::Z], Vec3::new(1.2, 7.5, 0.45));
+    let slab = b.cuboid(
+        Vec3::new(0.0, 7.5, 0.0),
+        [Vec3::X, Vec3::Y, Vec3::Z],
+        Vec3::new(1.2, 7.5, 0.45),
+    );
     b.paint(slab..slab + 8, GLYPH_FACE);
     if detail >= 1 {
         // Remate roto e inclinado.
-        b.cuboid(Vec3::new(0.15, 15.65, 0.0), tilted(0.22), Vec3::new(1.0, 0.8, 0.38));
+        b.cuboid(
+            Vec3::new(0.15, 15.65, 0.0),
+            tilted(0.22),
+            Vec3::new(1.0, 0.8, 0.38),
+        );
     }
     if detail >= 2 {
         // Escombros al pie.
         // El suelo queda en y = 0.8 (el monolito se hunde eso).
-        b.cuboid(Vec3::new(1.9, 1.0, 0.9), tilted(0.5), Vec3::new(0.5, 0.35, 0.35));
-        b.cuboid(Vec3::new(-1.7, 0.95, -0.7), tilted(-0.4), Vec3::new(0.35, 0.3, 0.5));
+        b.cuboid(
+            Vec3::new(1.9, 1.0, 0.9),
+            tilted(0.5),
+            Vec3::new(0.5, 0.35, 0.35),
+        );
+        b.cuboid(
+            Vec3::new(-1.7, 0.95, -0.7),
+            tilted(-0.4),
+            Vec3::new(0.35, 0.3, 0.5),
+        );
     }
     b.build()
 }
@@ -140,87 +158,194 @@ fn obelisk(detail: usize) -> Mesh {
     let mut b = MeshBuilder::new();
     b.color(STONE);
     let base = if detail >= 1 {
-        b.cuboid(Vec3::new(0.0, 0.6, 0.0), [Vec3::X, Vec3::Y, Vec3::Z], Vec3::new(1.6, 0.6, 1.6));
+        b.cuboid(
+            Vec3::new(0.0, 0.6, 0.0),
+            [Vec3::X, Vec3::Y, Vec3::Z],
+            Vec3::new(1.6, 0.6, 1.6),
+        );
         1.2
     } else {
         0.0
     };
     // Fuste de seccion cuadrada (cuatro lados) y piramidion.
-    b.frustum(Vec3::new(0.0, base, 0.0), Vec3::Y, 16.0, 1.25, 0.85, 4, false, (false, false));
-    b.frustum(Vec3::new(0.0, base + 16.0, 0.0), Vec3::Y, 2.2, 0.85, 0.0, 4, false, (false, false));
+    b.frustum(
+        Vec3::new(0.0, base, 0.0),
+        Vec3::Y,
+        16.0,
+        1.25,
+        0.85,
+        4,
+        false,
+        (false, false),
+    );
+    b.frustum(
+        Vec3::new(0.0, base + 16.0, 0.0),
+        Vec3::Y,
+        2.2,
+        0.85,
+        0.0,
+        4,
+        false,
+        (false, false),
+    );
     b.build()
 }
 
 fn mushroom(detail: usize) -> Mesh {
     let mut b = MeshBuilder::new();
-    if detail == 0 {
-        // De lejos basta la silueta: tallo de cuatro caras y sombrero conico.
-        b.color(STEM);
-        b.frustum(Vec3::ZERO, Vec3::new(0.12, 1.0, 0.0).normalize(), 6.2, 0.7, 0.45, 4, false, (false, false));
-        b.color(CAP);
-        b.frustum(Vec3::new(0.69, 6.1, 0.0), Vec3::Y, 1.9, 3.6, 0.0, 6, false, (true, false));
-        return b.build();
-    }
-    let segments = [5, 9, 14][detail];
-    let rings = [3, 4, 6][detail];
+    let sides = [10, 24, 48][detail];
+    let top = Vec3::new(0.69, 8.6, 0.0);
     b.color(STEM);
-    // Tallo curvo que se adelgaza.
-    let path: Vec<Vec3> = (0..=4)
+    let path: Vec<Vec3> = (0..=6)
         .map(|k| {
-            let t = k as f32 / 4.0;
-            Vec3::new((t * 1.4).sin() * 0.7, t * 6.5, 0.0)
+            let t = k as f32 / 6.0;
+            Vec3::new((t * 1.4).sin() * 0.7, t * 8.9, 0.0)
         })
         .collect();
-    let radii: Vec<f32> = (0..=4).map(|k| 0.75 - 0.3 * k as f32 / 4.0).collect();
-    b.tube(&path, &radii, segments);
+    let radii: Vec<f32> = (0..=6).map(|k| 0.72 - 0.35 * k as f32 / 6.0).collect();
+    b.tube(&path, &radii, [5, 8, 12][detail]);
     b.color(CAP);
-    let top = path[4] + Vec3::new(0.0, -0.4, 0.0);
-    b.ellipsoid(top, Vec3::new(3.6, 1.9, 3.6), rings, segments * 2, true);
+    b.ellipsoid(
+        top,
+        Vec3::new(5.0, 0.85, 5.0),
+        [3, 7, 12][detail],
+        sides,
+        true,
+    );
+    if detail > 0 {
+        // Nervaduras arqueadas: sostienen el disco como un paraguas vivo.
+        b.color(STEM);
+        let count = [0, 10, 22][detail];
+        for k in 0..count {
+            let angle = k as f32 / count as f32 * TAU;
+            let radial = Vec3::new(angle.cos(), 0.0, angle.sin());
+            let rib: Vec<Vec3> = (0..=7)
+                .map(|j| {
+                    let t = j as f32 / 7.0;
+                    let r = 0.65 + 4.3 * t.powi(3);
+                    top + radial * r + Vec3::Y * (-8.6 * (1.0 - t))
+                })
+                .collect();
+            b.tube(
+                &rib,
+                &(0..=7)
+                    .map(|j| 0.15 - 0.075 * j as f32 / 7.0)
+                    .collect::<Vec<_>>(),
+                [4, 5, 6][detail],
+            );
+            if detail == 2 && k % 2 == 0 {
+                let root = [
+                    radial * 2.2 - Vec3::Y * 0.2,
+                    radial * 1.0 + Vec3::Y * 0.5,
+                    Vec3::Y * 1.8,
+                ];
+                b.tube(&root, &[0.18, 0.28, 0.22], 5);
+            }
+        }
+        // Aro liso y fino en la orilla.
+        b.color(CAP);
+        let rim: Vec<Vec3> = (0..=sides)
+            .map(|k| {
+                let a = k as f32 / sides as f32 * TAU;
+                top + Vec3::new(a.cos() * 5.0, 0.0, a.sin() * 5.0)
+            })
+            .collect();
+        b.tube(&rim, &vec![0.08; rim.len()], 5);
+    }
     b.build()
 }
 
-/// Rama de coral: un tubo curvo que se abre en dos o tres ramas mas chicas.
-fn coral_branch(b: &mut MeshBuilder, origin: Vec3, dir: Vec3, length: f32, radius: f32, depth: usize, segments: usize, seed: u32) {
-    let path: Vec<Vec3> = (0..=3)
-        .map(|k| {
-            let t = k as f32 / 3.0;
-            // Se curva hacia arriba al crecer, como buscando luz.
-            let bend = Vec3::Y * (t * t * length * 0.25);
-            origin + dir * (t * length) + bend
+fn organic_link(b: &mut MeshBuilder, a: Vec3, bend: Vec3, c: Vec3, r: f32, detail: usize) {
+    let control = bend * 2.0 - (a + c) * 0.5;
+    let steps = [2, 3, 5][detail];
+    let path: Vec<_> = (0..=steps)
+        .map(|j| {
+            let t = j as f32 / steps as f32;
+            a * (1.0 - t).powi(2) + control * (2.0 * t * (1.0 - t)) + c * t * t
         })
         .collect();
-    let radii: Vec<f32> = (0..=3).map(|k| radius * (1.0 - 0.35 * k as f32 / 3.0)).collect();
-    b.tube(&path, &radii, segments);
-    let end = path[3];
-    if depth == 0 {
-        // Bulbo en la punta: el color lo marca para que brille.
-        b.color(TIP);
-        // De cerca el bulbo se ve redondo; de lejos bastan pocas caras.
-        let (rings, around) = if segments >= 6 { (5, segments * 2) } else { (3, segments) };
-        b.ellipsoid(end, Vec3::splat(radius * 1.35), rings, around, false);
-        b.color(Vec3::ONE);
-        return;
-    }
-    // Nudo que cierra la union con las ramas hijas (sin el, el tubo abierto
-    // dejaria ver a traves).
-    b.ellipsoid(end, Vec3::splat(radius * 0.7), 2, segments, false);
-    let branches = 3 + (hash_u32(seed) % 2) as usize;
-    for k in 0..branches {
-        let h = hash_u32(seed.wrapping_add(k as u32 * 7919));
-        // Ramas repartidas alrededor, con un poco de azar.
-        let angle = (k as f32 + 0.6 * unit(h)) / branches as f32 * TAU;
-        let side = Vec3::new(angle.cos(), 0.0, angle.sin());
-        let child = (dir + side * 0.8 + Vec3::Y * 0.35).normalize();
-        coral_branch(b, end, child, length * 0.72, radius * 0.68, depth - 1, segments, h);
-    }
+    let radii: Vec<_> = (0..=steps)
+        .map(|j| r * (0.90 + 0.10 * (j as f32 / steps as f32 * std::f32::consts::PI).sin()))
+        .collect();
+    b.tube(&path, &radii, [4, 6, 10][detail]);
 }
 
 fn coral(detail: usize) -> Mesh {
     let mut b = MeshBuilder::new();
+    let levels = [4, 8, 13][detail];
+    let sides = [5, 8, 12][detail];
+    let noise = Perlin::new(0xC0A1);
+    let node = |j: usize, k: usize| {
+        let t = j as f32 / levels as f32;
+        let h = noise.noise(Vec3::new(k as f32 * 0.63, j as f32 * 0.47, 1.8));
+        let a = k as f32 / sides as f32 * TAU + t * 1.3 + h * 0.42;
+        let radius = (2.6 * (1.0 - t).max(0.0).powf(0.62) + 0.12) * (1.0 + h * 0.35);
+        Vec3::new(
+            a.cos() * radius + (t * 3.3).sin() * 0.6,
+            t * CORAL_TOP + h * 1.2 * (std::f32::consts::PI * t).sin(),
+            a.sin() * radius + (t * 4.1).sin() * 0.4,
+        )
+    };
     b.color(Vec3::ONE);
-    let (depth, segments) = [(0, 4), (1, 5), (2, 6)][detail];
-    coral_branch(&mut b, Vec3::ZERO, Vec3::Y, 4.5, 1.0, depth, segments, 0xC0A1);
+    for j in 0..levels {
+        for k in 0..sides {
+            let t = j as f32 / levels as f32;
+            let r = 0.25 * (1.0 - t) + 0.11;
+            let a = node(j, k);
+            let c = node(j + 1, k);
+            let bend = (a + c) * 0.5
+                + Vec3::new(
+                    (k as f32 * 1.7).sin() * 0.18,
+                    0.0,
+                    (k as f32 * 2.1).cos() * 0.18,
+                );
+            organic_link(&mut b, a, bend, c, r, detail);
+            let side = node(j, (k + 1) % sides);
+            organic_link(
+                &mut b,
+                a,
+                (a + side) * 0.5 + Vec3::Y * 0.2,
+                side,
+                r * 0.7,
+                detail,
+            );
+            if detail > 0 && (k + j) % 3 == 0 {
+                organic_link(
+                    &mut b,
+                    a,
+                    (a + node(j + 1, (k + 1) % sides)) * 0.5,
+                    node(j + 1, (k + 1) % sides),
+                    r * 0.5,
+                    detail,
+                );
+            }
+        }
+    }
+    b.color(TIP);
+    for j in 1..levels {
+        let t = j as f32 / levels as f32;
+        let center = Vec3::new((t * 3.3).sin() * 0.6, t * CORAL_TOP, (t * 4.1).sin() * 0.4);
+        let r = 0.95 * (1.0 - t) + 0.25;
+        b.ellipsoid(
+            center,
+            Vec3::new(r, 0.9, r),
+            [3, 5, 8][detail],
+            [8, 14, 22][detail],
+            false,
+        );
+    }
     b.build()
+}
+
+fn boulder(detail: usize) -> Mesh {
+    let mut mesh = super::icosphere([1, 2, 3][detail]);
+    mesh.tangents = vec![super::NO_TANGENT; mesh.positions.len()];
+    let noise = Perlin::new(0xB001);
+    mesh.deform(|p| {
+        let h = 1.0 + noise.fbm(p * 2.2, 4) * 0.24;
+        Vec3::new(p.x * 1.7, p.y * 0.9 + 0.65, p.z * 1.25) * h
+    });
+    mesh
 }
 
 fn spikes(detail: usize) -> Mesh {
@@ -236,7 +361,16 @@ fn spikes(detail: usize) -> Mesh {
         let lean = Vec3::new(angle.cos(), 0.0, angle.sin()) * (0.15 + 0.35 * unit(16));
         let height = if k == 0 { 7.0 } else { 2.6 + 4.0 * unit(24) };
         let radius = if k == 0 { 0.95 } else { 0.4 + 0.4 * unit(4) };
-        b.frustum(base, (Vec3::Y + lean).normalize(), height, radius, 0.0, 5, false, (false, false));
+        b.frustum(
+            base,
+            (Vec3::Y + lean).normalize(),
+            height,
+            radius,
+            0.0,
+            5,
+            false,
+            (false, false),
+        );
     }
     b.build()
 }
@@ -249,29 +383,81 @@ fn wreck(detail: usize) -> Mesh {
     // Casco principal: un cilindro acostado de 16 unidades, partido. De
     // lejos basta un prisma de seis caras.
     let (segments, smooth) = if detail == 0 { (6, false) } else { (12, true) };
-    b.frustum(Vec3::new(-11.2, 0.0, 0.0), Vec3::X, 16.0, HULL, 2.7, segments, smooth, (true, false));
+    b.frustum(
+        Vec3::new(-11.2, 0.0, 0.0),
+        Vec3::X,
+        16.0,
+        HULL,
+        2.7,
+        segments,
+        smooth,
+        (true, false),
+    );
     // El extremo partido esta abierto: por dentro, una pared oscura que mira
     // hacia adentro, para que no se vea a traves del casco.
     let inside = b.mark();
     b.color(INSIDE);
-    b.frustum(Vec3::new(-2.0, 0.0, 0.0), Vec3::X, 6.8, HULL * 0.92, 2.7 * 0.92, segments, smooth, (true, false));
+    b.frustum(
+        Vec3::new(-2.0, 0.0, 0.0),
+        Vec3::X,
+        6.8,
+        HULL * 0.92,
+        2.7 * 0.92,
+        segments,
+        smooth,
+        (true, false),
+    );
     b.flip(inside);
     b.color(Vec3::ONE);
     if detail >= 1 {
         // La nariz se partio y quedo torcida a un lado.
         let nose_axis = Vec3::new(1.0, 0.18, 0.35).normalize();
-        b.frustum(Vec3::new(6.7, 0.3, 1.45), nose_axis, 7.2, 2.55, 0.55, segments, smooth, (true, false));
+        b.frustum(
+            Vec3::new(6.7, 0.3, 1.45),
+            nose_axis,
+            7.2,
+            2.55,
+            0.55,
+            segments,
+            smooth,
+            (true, false),
+        );
         // Aletas.
-        b.cuboid(Vec3::new(-8.8, 3.85, 0.0), tilted(0.3), Vec3::new(2.55, 1.45, 0.2));
-        let fin = [Vec3::X, Vec3::new(0.0, 0.5, 0.87), Vec3::new(0.0, -0.87, 0.5)];
+        b.cuboid(
+            Vec3::new(-8.8, 3.85, 0.0),
+            tilted(0.3),
+            Vec3::new(2.55, 1.45, 0.2),
+        );
+        let fin = [
+            Vec3::X,
+            Vec3::new(0.0, 0.5, 0.87),
+            Vec3::new(0.0, -0.87, 0.5),
+        ];
         b.cuboid(Vec3::new(-8.8, -1.9, 3.05), fin, Vec3::new(2.25, 1.3, 0.2));
     }
     if detail >= 2 {
         // Escombros (apoyados donde quedaria el suelo) y una antena doblada.
-        b.cuboid(Vec3::new(2.4, -2.25, -4.15), tilted(0.7), Vec3::new(1.1, 0.65, 0.8));
-        b.cuboid(Vec3::new(-4.0, -2.4, 4.5), tilted(-0.5), Vec3::new(0.8, 0.8, 0.95));
+        b.cuboid(
+            Vec3::new(2.4, -2.25, -4.15),
+            tilted(0.7),
+            Vec3::new(1.1, 0.65, 0.8),
+        );
+        b.cuboid(
+            Vec3::new(-4.0, -2.4, 4.5),
+            tilted(-0.5),
+            Vec3::new(0.8, 0.8, 0.95),
+        );
         let antenna = Vec3::new(0.2, 1.0, 0.1).normalize();
-        b.frustum(Vec3::new(-1.6, 2.55, 0.0), antenna, 3.85, 0.24, 0.13, 4, false, (false, false));
+        b.frustum(
+            Vec3::new(-1.6, 2.55, 0.0),
+            antenna,
+            3.85,
+            0.24,
+            0.13,
+            4,
+            false,
+            (false, false),
+        );
     }
     let mut mesh = b.build();
     // Armado alrededor del eje del casco; se sube para que la base quede en
@@ -308,8 +494,29 @@ pub fn build_models() -> Vec<PropModel> {
                 PropKind::Coral => coral(detail),
                 PropKind::Spike => spikes(detail),
                 PropKind::Wreck => wreck(detail),
+                PropKind::Boulder => boulder(detail),
             };
             let mut lods = [make(2), make(1), make(0)];
+            if matches!(kind, PropKind::Mushroom | PropKind::Coral) {
+                let noise = Perlin::new(0xB10C);
+                for mesh in &mut lods {
+                    mesh.deform(|p| {
+                        let top = smoothstep(4.0, 8.6, p.y);
+                        let phi = p.z.atan2(p.x - 0.69);
+                        let radial = 1.0
+                            + top * (0.07 * (phi * 3.0 + 0.4).sin() + 0.035 * (phi * 7.0).sin());
+                        let ripple =
+                            top * (0.27 * (phi * 3.0 + 0.7).sin() + 0.12 * (phi * 11.0).sin());
+                        Vec3::new(p.x * radial, p.y + ripple, p.z * radial)
+                            + Vec3::new(
+                                noise.noise(p * 0.65),
+                                noise.noise(p * 0.65 + Vec3::splat(17.0)),
+                                noise.noise(p * 0.65 + Vec3::splat(39.0)),
+                            ) * 0.22
+                    });
+                }
+            }
+
             if kind == PropKind::Coral {
                 // Con menos ramas el coral queda mas bajo: los niveles burdos
                 // se estiran a la altura del fino para que no cambie de tamano
@@ -343,7 +550,12 @@ fn unit(h: u32) -> f32 {
 }
 
 /// Coloca los objetos de un planeta. Determinista: depende solo de `seed`.
-pub fn scatter(radius: f64, field: &dyn HeightField, rules: &[Scatter], seed: u32) -> Vec<Instance> {
+pub fn scatter(
+    radius: f64,
+    field: &dyn HeightField,
+    rules: &[Scatter],
+    seed: u32,
+) -> Vec<Instance> {
     let noise = Perlin::new(seed);
     let mut instances = Vec::new();
     for (rule_index, rule) in rules.iter().enumerate() {
@@ -356,14 +568,23 @@ pub fn scatter(radius: f64, field: &dyn HeightField, rules: &[Scatter], seed: u3
             // SAFETY: cada fila escribe solo su propia casilla.
             let found = unsafe { &mut out.range(row, 1)[0] };
             for i in 0..n {
-                let h = hash_u32(seed ^ hash_u32((rule_index as u32) << 24 ^ (face as u32) << 20 ^ (j as u32) << 10 ^ i as u32));
+                let h = hash_u32(
+                    seed ^ hash_u32(
+                        (rule_index as u32) << 24
+                            ^ (face as u32) << 20
+                            ^ (j as u32) << 10
+                            ^ i as u32,
+                    ),
+                );
                 let h2 = hash_u32(h);
                 let u = -1.0 + 2.0 * (i as f64 + unit(h) as f64) / n as f64;
                 let v = -1.0 + 2.0 * (j as f64 + unit(h2) as f64) / n as f64;
                 let dir = cube_to_sphere(face, u, v);
                 let d = dir.as_vec3();
                 // Prueba barata primero: el ruido de densidad hace grupos y claros.
-                let density = noise.fbm(d * 3.0 + Vec3::new(rule_index as f32 * 7.7, 1.3, -2.1), 3) * 0.5 + 0.5;
+                let density = noise.fbm(d * 3.0 + Vec3::new(rule_index as f32 * 7.7, 1.3, -2.1), 3)
+                    * 0.5
+                    + 0.5;
                 if density < 0.3 {
                     continue;
                 }
@@ -388,7 +609,8 @@ pub fn scatter(radius: f64, field: &dyn HeightField, rules: &[Scatter], seed: u3
                     // Tirado: inclinado hasta unos 23 grados al azar.
                     let h6 = hash_u32(h5);
                     let (a, b) = crate::scene::builder::perpendiculars(d);
-                    let lean = (a * (unit(h6) - 0.5) + b * (unit(hash_u32(h6)) - 0.5)).as_dvec3() * 0.6;
+                    let lean =
+                        (a * (unit(h6) - 0.5) + b * (unit(hash_u32(h6)) - 0.5)).as_dvec3() * 0.6;
                     (dir + lean).normalize()
                 };
                 let rotation = upright_rotation(up, yaw);
@@ -414,6 +636,56 @@ fn upright_rotation(up: DVec3, yaw: f64) -> DQuat {
     DQuat::from_mat3(&DMat3::from_cols(x, up, z)) * DQuat::from_axis_angle(DVec3::Y, yaw)
 }
 
+/// Colonias grandes a ambos lados de un claro transitable. La distribución
+/// global continúa fuera del bioma; este punto de interés evita un horizonte
+/// vacío al llegar a Jardín. Todas las bases usan la misma altura del terreno.
+pub fn garden_grove(
+    instances: &mut Vec<Instance>,
+    radius: f64,
+    field: &dyn HeightField,
+    seed: u32,
+    frame: (DVec3, DVec3, DVec3),
+) {
+    let (n, forward, right) = frame;
+    instances.retain(|p| {
+        let d = p.position - n * radius;
+        let x = d.dot(right);
+        let z = d.dot(forward);
+        !(x.abs() < 9.0 && z > -20.0 && z < 110.0)
+    });
+    for row in 0..5 {
+        for side in [-1.0, 1.0] {
+            for col in 0..2 {
+                let id = (row * 4 + col * 2 + if side < 0.0 { 0 } else { 1 }) as u32;
+                let h = hash_u32(seed ^ id ^ 0xA11E_6805);
+                let x = side * (20.0 + col as f64 * 22.0 + (unit(h) as f64 - 0.5) * 4.0);
+                let z = 14.0 + row as f64 * 20.0 + (unit(hash_u32(h)) as f64 - 0.5) * 6.0;
+                let dir = (n + (right * x + forward * z) / radius).normalize();
+                let kind = if side > 0.0 && (row + col) % 2 == 0 {
+                    PropKind::Coral
+                } else {
+                    PropKind::Mushroom
+                };
+                let scale = if kind == PropKind::Coral {
+                    2.5 + unit(h) * 1.4
+                } else {
+                    2.1 + unit(h) * 1.3
+                };
+                let height = field.sample(dir.as_vec3()).height as f64;
+                instances.push(Instance {
+                    kind,
+                    position: dir * (radius + height - 0.3 * scale as f64),
+                    rotation: upright_rotation(
+                        dir,
+                        unit(hash_u32(h ^ 17)) as f64 * std::f64::consts::TAU,
+                    ),
+                    scale,
+                });
+            }
+        }
+    }
+}
+
 /// Los objetos de un planeta.
 #[derive(Default)]
 pub struct PropSet {
@@ -429,7 +701,10 @@ impl PropSet {
             .iter()
             .map(|i| models[i.kind.index()].lods[0].bounds_radius as f64 * i.scale as f64)
             .fold(0.0, f64::max);
-        Self { instances, max_radius }
+        Self {
+            instances,
+            max_radius,
+        }
     }
 }
 
@@ -476,7 +751,13 @@ pub struct Chosen {
 }
 
 /// Elige los objetos de un planeta que se dibujan y su nivel de detalle.
-pub fn select(set: &PropSet, models: &[PropModel], view: &PropView, stats: &mut PropStats, out: &mut Vec<Chosen>) {
+pub fn select(
+    set: &PropSet,
+    models: &[PropModel],
+    view: &PropView,
+    stats: &mut PropStats,
+    out: &mut Vec<Chosen>,
+) {
     let count = set.instances.len();
     stats.considered += count;
     // Si hasta el objeto mas grande, en el punto mas cercano de la superficie,
@@ -487,11 +768,24 @@ pub fn select(set: &PropSet, models: &[PropModel], view: &PropView, stats: &mut 
         stats.small += count;
         return;
     }
-    let camera_horizon = if d > view.occluder { (view.occluder / d).acos() } else { f64::INFINITY };
+    let camera_horizon = if d > view.occluder {
+        (view.occluder / d).acos()
+    } else {
+        f64::INFINITY
+    };
+    let flora_fade = 1.0 - smoothstep(60.0, 160.0, (d - view.surface_top).max(0.0) as f32);
     for (index, instance) in set.instances.iter().enumerate() {
+        let vegetation = matches!(instance.kind, PropKind::Mushroom | PropKind::Coral);
+        if vegetation && flora_fade <= 0.0 {
+            stats.small += 1;
+            continue;
+        }
         let mesh = &models[instance.kind.index()].lods[0];
         let scale = instance.scale as f64;
-        let center = instance.position + instance.rotation.rotate(mesh.bounds_center.as_dvec3() * scale);
+        let center = instance.position
+            + instance
+                .rotation
+                .rotate(mesh.bounds_center.as_dvec3() * scale);
         let radius = mesh.bounds_radius as f64 * scale;
         let distance = (center - view.camera).length().max(1e-3);
         // Radio en pixeles de la esfera envolvente; para decidir si se
@@ -528,7 +822,8 @@ pub fn select(set: &PropSet, models: &[PropModel], view: &PropView, stats: &mut 
         out.push(Chosen {
             index,
             lod,
-            grow: smoothstep(config::PROP_MIN_PIXELS, config::PROP_FULL_PIXELS, presence),
+            grow: smoothstep(config::PROP_MIN_PIXELS, config::PROP_FULL_PIXELS, presence)
+                * if vegetation { flora_fade } else { 1.0 },
         });
     }
 }
@@ -544,7 +839,12 @@ pub fn rules_for(planet: &str) -> Vec<Scatter> {
                 scale: (0.8, 1.3),
                 sink: 0.8,
                 upright: true,
-                accept: |density, s, slope| (1.0 - s.attrs.x) * smoothstep(0.6, 0.2, slope) * smoothstep(0.55, 0.7, density) * 0.7,
+                accept: |density, s, slope| {
+                    (1.0 - s.attrs.x)
+                        * smoothstep(0.6, 0.2, slope)
+                        * smoothstep(0.55, 0.7, density)
+                        * 0.7
+                },
             },
             Scatter {
                 kind: PropKind::Obelisk,
@@ -552,26 +852,51 @@ pub fn rules_for(planet: &str) -> Vec<Scatter> {
                 scale: (0.8, 1.2),
                 sink: 0.5,
                 upright: true,
-                accept: |density, s, slope| (1.0 - s.attrs.x) * smoothstep(0.4, 0.1, slope) * smoothstep(0.6, 0.72, density) * 0.6,
+                accept: |density, s, slope| {
+                    (1.0 - s.attrs.x)
+                        * smoothstep(0.4, 0.1, slope)
+                        * smoothstep(0.6, 0.72, density)
+                        * 0.6
+                },
             },
         ],
         // Hongos en los valles, corales en las crestas.
         "Jardin" => vec![
             Scatter {
+                kind: PropKind::Boulder,
+                cells: 75,
+                scale: (0.45, 3.2),
+                sink: 0.35,
+                upright: true,
+                accept: |density, _, slope| {
+                    smoothstep(0.8, 0.2, slope) * smoothstep(0.35, 0.7, density) * 0.25
+                },
+            },
+            Scatter {
                 kind: PropKind::Mushroom,
-                cells: 30,
-                scale: (0.5, 1.25),
+                cells: 75,
+                scale: (0.75, 3.5),
                 sink: 0.3,
                 upright: true,
-                accept: |density, s, slope| smoothstep(0.7, 0.3, s.attrs.z) * smoothstep(0.8, 0.3, slope) * smoothstep(0.45, 0.65, density) * 0.6,
+                accept: |density, s, slope| {
+                    smoothstep(0.7, 0.3, s.attrs.z)
+                        * smoothstep(0.8, 0.3, slope)
+                        * smoothstep(0.45, 0.65, density)
+                        * 0.6
+                },
             },
             Scatter {
                 kind: PropKind::Coral,
-                cells: 24,
-                scale: (0.7, 1.3),
+                cells: 60,
+                scale: (1.0, 4.0),
                 sink: 0.3,
                 upright: true,
-                accept: |density, s, slope| smoothstep(0.45, 0.8, s.attrs.z) * smoothstep(0.9, 0.4, slope) * smoothstep(0.5, 0.7, density) * 0.5,
+                accept: |density, s, slope| {
+                    smoothstep(0.45, 0.8, s.attrs.z)
+                        * smoothstep(0.9, 0.4, slope)
+                        * smoothstep(0.5, 0.7, density)
+                        * 0.5
+                },
             },
         ],
         // En la roca enfriada, lejos del mar de lava.
@@ -581,7 +906,9 @@ pub fn rules_for(planet: &str) -> Vec<Scatter> {
             scale: (0.6, 1.4),
             sink: 0.5,
             upright: true,
-            accept: |density, s, _| (1.0 - s.attrs.x) * (1.0 - 0.6 * s.attrs.y) * smoothstep(0.45, 0.68, density) * 0.6,
+            accept: |density, s, _| {
+                (1.0 - s.attrs.x) * (1.0 - 0.6 * s.attrs.y) * smoothstep(0.45, 0.68, density) * 0.6
+            },
         }],
         // Naves estrelladas en las zanjas y junto a los crateres.
         "Cementerio" => vec![Scatter {
@@ -590,7 +917,9 @@ pub fn rules_for(planet: &str) -> Vec<Scatter> {
             scale: (0.8, 1.25),
             sink: 1.2,
             upright: false,
-            accept: |density, s, _| (s.attrs.y.max(s.attrs.x * 0.6) + 0.15) * smoothstep(0.4, 0.65, density) * 0.8,
+            accept: |density, s, _| {
+                (s.attrs.y.max(s.attrs.x * 0.6) + 0.15) * smoothstep(0.4, 0.65, density) * 0.8
+            },
         }],
         _ => Vec::new(),
     }
@@ -610,7 +939,11 @@ mod tests {
         let c = scatter(160.0, &field, &rules, 43);
         assert!(!a.is_empty());
         assert_eq!(a.len(), b.len());
-        assert!(a.iter().zip(&b).all(|(x, y)| x.position == y.position && x.scale == y.scale));
+        assert!(
+            a.iter()
+                .zip(&b)
+                .all(|(x, y)| x.position == y.position && x.scale == y.scale)
+        );
         assert!(a.len() != c.len() || a.iter().zip(&c).any(|(x, y)| x.position != y.position));
     }
 
@@ -621,7 +954,10 @@ mod tests {
         for i in instances.iter().take(200) {
             let up = i.rotation.rotate(DVec3::Y);
             let radial = i.position.normalize();
-            assert!(up.dot(radial) > 0.999, "el objeto debe pararse sobre la normal radial");
+            assert!(
+                up.dot(radial) > 0.999,
+                "el objeto debe pararse sobre la normal radial"
+            );
             let ground = 160.0 + field.sample(radial.as_vec3()).height as f64;
             assert!((i.position.length() - ground).abs() < 2.0);
         }
@@ -650,7 +986,11 @@ mod tests {
         // queda del otro lado del planeta no se dibuja.
         let first = set.instances[0];
         let (stats, out) = run(first.position * 1.02);
-        assert!(out.iter().any(|c| c.index == 0 && c.lod == 0 && c.grow == 1.0), "{stats:?}");
+        assert!(
+            out.iter()
+                .any(|c| c.index == 0 && c.lod == 0 && c.grow == 1.0),
+            "{stats:?}"
+        );
         assert!(stats.horizon > set.instances.len() / 3, "{stats:?}");
         // Muy lejos: todo diminuto, nada se dibuja.
         let (stats, out) = run(DVec3::new(0.0, 0.0, 1e6));
@@ -661,8 +1001,16 @@ mod tests {
     fn every_model_has_three_levels_with_less_detail_each_time() {
         for (kind, model) in PropKind::ALL.iter().zip(build_models()) {
             let tris: Vec<usize> = model.lods.iter().map(|m| m.indices.len()).collect();
-            assert!(tris[0] >= tris[1] && tris[1] >= tris[2], "{kind:?}: {tris:?}");
-            assert!(model.lods.iter().all(|m| m.tangents.len() == m.positions.len()));
+            assert!(
+                tris[0] >= tris[1] && tris[1] >= tris[2],
+                "{kind:?}: {tris:?}"
+            );
+            assert!(
+                model
+                    .lods
+                    .iter()
+                    .all(|m| m.tangents.len() == m.positions.len())
+            );
         }
     }
 }

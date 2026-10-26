@@ -1,3 +1,42 @@
+# Cambios de la revision visual
+
+El resto de este documento describe la arquitectura original. Esta revision
+agrega los siguientes puntos para explicar en la demostracion:
+
+- **Frenado** (`scene/ship.rs`): antes la aceleracion maxima dependia solo de la
+  altitud. El piloto podia llegar con mucha velocidad y quedarse sin fuerza
+  para detenerse. Ahora el exceso de velocidad aporta capacidad de frenado;
+  soltar las teclas usa ganancia 8/s. X pide detenerse con prioridad y compensa
+  la gravedad incluso sin asistente. En modo local se frena contra la velocidad
+  de la superficie, no contra el origen del universo.
+- **Limite exterior**: empieza 1.200 unidades antes del borde, reduce solo la
+  componente saliente de velocidad y permite regresar. El borde se obtiene de
+  la orbita mas lejana mas un margen; sigue funcionando al editar los radios.
+- **Normales triplanares** (`shaders/detail.rs`): tres proyecciones de mapas
+  fotográficos y procedurales se mezclan según la normal. Las pendientes pasan del espacio del
+  modelo al mundo con su matriz de normales. Por eso el relieve gira con el
+  planeta. Los mipmaps evitan ruido fino a distancia.
+- **Nave**: tres OBJ de la OCASO-1 adjunta, con UV, normales y parámetros
+  originales de los materiales. Se selecciona un nivel según la
+  distancia a la camara. El modelo Blender original se conserva sin cambios.
+- **Hongos y torres**: las nervaduras, arcos y huecos son triangulos reales
+  generados antes de rasterizar. La distribucion usa la semilla del sistema.
+- **Vigía**: usa el mapa fotográfico Hubble de NASA con una paleta violeta.
+  El shader deforma sus coordenadas alrededor de una tormenta que sigue a la
+  nave. La vegetación de Jardín se desvanece progresivamente a gran altitud
+  para conservar la lectura del planeta desde órbita.
+- **FXAA** (`render/antialias.rs`): identifica diagonales por luminancia y
+  combina muestras bilineales del framebuffer RGBA. Funciona en CPU; la GPU
+  sigue recibiendo solamente la imagen 2D final.
+- **Recorrido**: `--recorrido` usa el mismo integrador de 120 Hz y los mismos
+  controles. El piloto se acerca, frena, rodea Jardin, se aleja y vuelve a
+  frenar. La exportacion corre a simulacion x3 y no representa FPS en vivo.
+
+Los parametros actuales estan en `config.rs`, `scene/system.rs` y
+`scene/cycle.rs`; prevalecen sobre cifras de la explicacion original.
+
+---
+
 # Cómo funciona OCASO
 
 Explicación de cada parte del proyecto, en el orden en que pasa un frame.
@@ -227,23 +266,39 @@ y renacer. Todo es función pura del tiempo. Como el latido acelera, su fase
 no puede ser `t / periodo` (saltaría al cambiar el periodo): es la integral
 cerrada de la frecuencia.
 
-### Gargantúa ([math/geodesic.rs](src/math/geodesic.rs), [shaders/gargantua.rs](src/shaders/gargantua.rs))
-- La física viene del Proyecto 2: unidades con `rs = 1`, la geodésica de la
-  luz como una aceleración central `a = -(3/2) h² r / |r|⁵` (de la ecuación
-  de Binet `u'' + u = 3Mu²`), integrada con RK4.
-- **La idea nueva**: la trayectoria de un fotón es plana, y desde una cámara
-  a distancia `D` solo depende del ángulo `s` entre el rayo y el agujero.
-  Entonces se integran mil rayos (uno por cada `s`, más densos junto al borde
-  de la sombra) y cada pixel solo busca en la tabla: si cae, hacia dónde sale
-  (ahí se lee el cielo: las estrellas se curvan) y el radio de su camino.
-- **Disco**: el plano del rayo corta el plano del disco en una recta; el
-  fotón cruza el disco cada media vuelta. Cada cruce dentro del disco suma su
-  luz de adelante hacia atrás: el disco de frente, el de atrás doblado por
-  encima y por debajo de la sombra, y los anillos de fotones.
-- **Color**: temperatura de disco delgado, corrimiento `g` gravitacional y por
-  Doppler (el lado que se acerca es más azul y brillante, brillo ∝ g⁴).
-- **Composición**: lo que está delante del agujero lo tapa; lo que está
-  detrás y cae en la sombra desaparece.
+### Gargantúa (`shaders/gargantua.rs`, `gargantua_p2/`)
+
+- Se integra el núcleo de la Variante predeterminada del Proyecto 2,
+  conservado bajo `gargantua_p2/` para poder comparar sus fórmulas y pruebas.
+  No se modifica el Proyecto 2 ni se depende de su ejecutable.
+- Unidades `rs = 1`, masa `M = 1/2`, geodésica
+  `a = -(3/2) h² r / |r|⁵`, RK4 con pasos adaptativos. La dirección local
+  se lleva al marco de Schwarzschild antes de integrar. La base del disco
+  mantiene la orientación para conservar el signo del Doppler.
+- Espesor gaussiano: fotosfera de `0.004 r`, atmósfera de `0.028 r`,
+  disco caliente de 3 a 13 rs y envoltura gris hasta 19 rs. Cada tramo
+  aporta emisión y absorción de adelante hacia atrás. La opacidad y la
+  fuente se enfrían gradualmente en la periferia.
+- Pico de color 6500 K, corrimiento gravitacional y Doppler, brillo `g⁴`
+  aplicado una sola vez. El tono dorado conserva la compresión de rango
+  del Proyecto 2 y exposición 5.0. El resto del ciclo conserva su ACES.
+- Gas 3D de 384×192×9, dos campos que se relevan continuamente, rotación
+  de Kepler y cizalla con altura. No se sustituye por anillos de seno.
+- La tabla angular sigue acelerando el cielo que no atraviesa gas.
+  Superficies delanteras conservan su visibilidad; la sombra del agujero
+  aporta profundidad para tapar anillos y atmósferas posteriores.
+
+### Luz y materiales (`shaders/pbr.rs`, `render/shadow.rs`)
+
+Cook–Torrance con distribución GGX, geometría Smith y Fresnel Schlick.
+Rugosidad y metalicidad provienen del Blender en la nave; fotografías y
+mapas triplanares aportan detalle a los planetas. Un mapa de sombras
+ortográfico 1024² rasterizado en CPU resuelve sombras cercanas con PCF
+de nueve muestras. El raster completo termina antes del shading para
+poder leer vecinos del z-buffer en la oclusión ambiental. Un segundo
+buffer evita leer y escribir simultáneamente los reflejos de pantalla.
+Estos reflejos solo alcanzan superficies cercanas visibles en pantalla.
+Las bioluminiscencias emiten y aportan luces puntuales de alcance finito.
 
 ## 11. Partículas, sonido y ajustes en vivo
 

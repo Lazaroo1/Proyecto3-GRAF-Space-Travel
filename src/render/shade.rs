@@ -10,12 +10,13 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::pipeline::{ClipVertex, TriChunk, Varyings, EXTRA_VERTEX};
-use super::{Draw, View, VisPixel, TILE};
-use crate::math::{smoothstep, Vec3};
+use super::pipeline::{ClipVertex, EXTRA_VERTEX, TriChunk, Varyings};
+use super::{Draw, TILE, View, VisPixel};
+use crate::math::{Vec3, smoothstep};
 use crate::shaders::{self, Fragment, Uniforms};
 
 pub struct ShadeContext<'a> {
+    pub global_vis: &'a [VisPixel],
     pub chunks: &'a [TriChunk],
     pub verts: &'a [ClipVertex],
     pub draws: &'a [Draw<'a>],
@@ -94,7 +95,12 @@ fn shade_surface(id: u32, px: f32, py: f32, ctx: &ShadeContext) -> (Vec3, f32) {
         q1 * norm,
         q2 * norm,
     );
+    let draw = &ctx.draws[tri.draw as usize];
+    let normal = var.normal.normalize();
+    let ao = ambient_occlusion(var.pos, normal, px, py, ctx);
     let fragment = Fragment {
+        ao,
+        object_to_world: draw.normal,
         pos: var.pos,
         normal: var.normal.normalize(),
         local: var.local,
@@ -102,9 +108,9 @@ fn shade_surface(id: u32, px: f32, py: f32, ctx: &ShadeContext) -> (Vec3, f32) {
         color: var.color,
         tangent: var.tangent,
     };
-    let draw = &ctx.draws[tri.draw as usize];
     // Superficie vista a traves de la atmosfera calculada en los vertices.
-    let mut color = shaders::shade(&draw.material, &fragment, ctx.uniforms) * var.fog_trans + var.fog_scatter;
+    let mut color =
+        shaders::shade(&draw.material, &fragment, ctx.uniforms) * var.fog_trans + var.fog_scatter;
 
     let debug = ctx.uniforms.debug;
     if debug.fog_only {
@@ -142,4 +148,49 @@ fn fetch<'a>(chunk: &'a TriChunk, verts: &'a [ClipVertex], id: u32) -> &'a Varyi
     } else {
         &verts[id as usize].var
     }
+}
+
+/// Oclusion de horizonte en pantalla. La profundidad ya es de solo lectura.
+fn ambient_occlusion(pos: Vec3, n: Vec3, px: f32, py: f32, ctx: &ShadeContext) -> f32 {
+    let footprint = (pos.length() * ctx.uniforms.pixel_angle).max(0.0001);
+    let r = (2.4 / footprint).clamp(2.0, 42.0);
+    let mut occ = 0.0;
+    let dirs = [
+        (1.0, 0.0),
+        (-1.0, 0.0),
+        (0.0, 1.0),
+        (0.0, -1.0),
+        (0.707, 0.707),
+        (-0.707, 0.707),
+        (0.707, -0.707),
+        (-0.707, -0.707),
+    ];
+    for (k, (dx, dy)) in dirs.iter().enumerate() {
+        let radius = if k < 4 { r * 0.45 } else { r };
+        let x = (px + dx * radius) as i32;
+        let y = (py + dy * radius) as i32;
+        if x < 0 || y < 0 || x >= ctx.width as i32 || y >= ctx.height as i32 {
+            continue;
+        }
+        let (x, y) = (x as usize, y as usize);
+        let index =
+            ((y / TILE) * ctx.tiles_x + x / TILE) * TILE * TILE + (y % TILE) * TILE + x % TILE;
+        let sample = ctx.global_vis[index];
+        if sample.id == VisPixel::EMPTY_ID || sample.depth <= 0.0 {
+            continue;
+        }
+        let z = ctx.view.near / sample.depth;
+        let point = ctx.view.pixel_direction(
+            x as f32 + 0.5,
+            y as f32 + 0.5,
+            1.0 / ctx.width as f32,
+            1.0 / ctx.height as f32,
+        ) * z;
+        let d = point - pos;
+        let distance = d.length();
+        if distance > 0.02 && distance < 7.0 {
+            occ += (n.dot(d) / distance - 0.10).max(0.0) / (1.0 + distance * distance * 0.2);
+        }
+    }
+    (1.0 - occ * 0.5).clamp(0.15, 1.0)
 }

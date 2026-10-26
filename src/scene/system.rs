@@ -10,11 +10,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::props::{self, PropModel, PropSet};
-use super::{icosphere, load_obj, Mesh};
+use super::{Mesh, icosphere, load_obj};
 use crate::config;
 use crate::math::{DQuat, DVec3, Perlin, Vec3};
 use crate::shaders::{
-    heartbeat, AtmosphereModel, AtmosphereParams, Material, ShipStyle, SkyCube, SunStyle, Textures,
+    AtmosphereModel, AtmosphereParams, Material, ShipStyle, SkyCube, SunStyle, Textures, heartbeat,
 };
 use crate::terrain::shapes::{CementerioField, JardinField, PiraField, RequiemField};
 use crate::terrain::{HeightField, Smooth, Terrain};
@@ -127,7 +127,9 @@ struct PlanetSpec {
 impl PlanetSpec {
     fn build(self) -> (Body, Terrain, Option<AtmosphereModel>) {
         let terrain = Terrain::new(self.radius, self.surface.clone(), config::TERRAIN_FINEST);
-        let atmosphere = self.atmosphere.map(|p| AtmosphereModel::new(self.radius as f32, p));
+        let atmosphere = self
+            .atmosphere
+            .map(|p| AtmosphereModel::new(self.radius as f32, p));
         let body = Body {
             name: self.name,
             radius: self.radius,
@@ -157,7 +159,7 @@ pub struct System {
     /// Atmosfera de cada cuerpo, en el mismo orden que `bodies`.
     pub atmospheres: Vec<Option<AtmosphereModel>>,
     pub meshes: Vec<Mesh>,
-    pub ship_mesh: usize,
+    pub ship_mesh: [usize; 3],
     /// Giro que alinea el modelo de la nave con -Z (adelante) y +Y (arriba).
     pub ship_fix: DQuat,
     pub ship_material: Material,
@@ -181,9 +183,13 @@ pub struct System {
 
 impl System {
     pub fn load(assets: &Path) -> Result<Self, String> {
-        let mut ship = load_obj(&assets.join("naveGraficas.obj"))?;
+        let mut ship = load_obj(&assets.join("OCASO-1.obj"))?;
         ship.normalize_size(config::SHIP_LENGTH as f32);
-        let meshes = vec![icosphere(5), ship];
+        let mut medium = load_obj(&assets.join("OCASO-1-medium.obj"))?;
+        let mut low = load_obj(&assets.join("OCASO-1-low.obj"))?;
+        medium.normalize_size(config::SHIP_LENGTH as f32);
+        low.normalize_size(config::SHIP_LENGTH as f32);
+        let meshes = vec![icosphere(5), ship, medium, low];
         let seed = config::NOISE_SEED;
 
         let star = Body {
@@ -211,7 +217,7 @@ impl System {
         let (mut pira, pira_terrain, pira_air) = PlanetSpec {
             name: "Pira",
             radius: 110.0,
-            orbit: 1150.0,
+            orbit: 800.0,
             period: 260.0,
             phase: 2.4,
             inclination: 0.0,
@@ -227,7 +233,7 @@ impl System {
                 rayleigh: Vec3::new(0.010, 0.0045, 0.002),
                 mie: 0.012,
                 mie_g: 0.7,
-                intensity: 8.0,
+                intensity: 2.2,
             }),
         }
         .build();
@@ -237,8 +243,8 @@ impl System {
 
         let (jardin, jardin_terrain, jardin_air) = PlanetSpec {
             name: "Jardin",
-            radius: 170.0,
-            orbit: 2300.0,
+            radius: 400.0,
+            orbit: 1500.0,
             period: 700.0,
             phase: 0.6,
             inclination: 0.03,
@@ -247,25 +253,24 @@ impl System {
             gravity: 4.0,
             material: Material::Jardin,
             surface: Arc::new(JardinField::new(seed ^ 0x7A3D, seed)),
-            // Densa: dispersa mucho mas el verde y el azul. Con la luz roja de la
-            // estrella el cielo de dia sale turquesa y los atardeceres rosas.
+            // Bruma fina: conserva el violeta de Vigía visto desde el suelo.
             atmosphere: Some(AtmosphereParams {
                 thickness: 20.0,
                 scale_height: 5.0,
-                rayleigh: Vec3::new(0.002, 0.016, 0.042),
+                rayleigh: Vec3::new(0.001, 0.004, 0.007),
                 mie: 0.0015,
                 mie_g: 0.76,
-                intensity: 8.0,
+                intensity: 2.2,
             }),
         }
         .build();
 
         let (mut vigia, vigia_terrain, vigia_air) = PlanetSpec {
             name: "Vigia",
-            radius: 430.0,
-            orbit: 3900.0,
+            radius: 540.0,
+            orbit: 3100.0,
             period: 1300.0,
-            phase: 4.0,
+            phase: 0.765,
             inclination: -0.04,
             spin: 90.0,
             tilt: 0.15,
@@ -279,7 +284,7 @@ impl System {
                 rayleigh: Vec3::new(0.012, 0.004, 0.016),
                 mie: 0.002,
                 mie_g: 0.6,
-                intensity: 9.0,
+                intensity: 0.25,
             }),
         }
         .build();
@@ -288,7 +293,7 @@ impl System {
         let (requiem, requiem_terrain, requiem_air) = PlanetSpec {
             name: "Requiem",
             radius: 160.0,
-            orbit: 5400.0,
+            orbit: 4000.0,
             period: 2000.0,
             phase: 1.3,
             inclination: 0.05,
@@ -312,7 +317,7 @@ impl System {
         let (mut cementerio, cementerio_terrain, _) = PlanetSpec {
             name: "Cementerio",
             radius: 140.0,
-            orbit: 6800.0,
+            orbit: 5200.0,
             period: 2600.0,
             phase: 3.1,
             inclination: -0.06,
@@ -339,9 +344,9 @@ impl System {
             ],
             atmospheres: vec![None, pira_air, jardin_air, vigia_air, requiem_air, None],
             meshes,
-            ship_mesh: 1,
-            // El modelo de Blender tiene la punta hacia +Z; adelante es -Z.
-            ship_fix: DQuat::from_axis_angle(DVec3::Y, std::f64::consts::PI),
+            ship_mesh: [1, 2, 3],
+            // OCASO-1 se exporta con frente -Z y arriba +Y.
+            ship_fix: DQuat::IDENTITY,
             ship_material: Material::Ship(ShipStyle {
                 specular: 0.5,
                 shininess: 40.0,
@@ -365,12 +370,35 @@ impl System {
     /// el mismo patron.
     pub fn scatter_props(&mut self, seed: u32) {
         self.prop_seed = seed;
-        self.props = (0..self.bodies.len()).map(|index| self.scatter_body(index, seed)).collect();
+        self.props = (0..self.bodies.len())
+            .map(|index| self.scatter_body(index, seed))
+            .collect();
     }
 
     /// Indice de un cuerpo por nombre.
     pub fn find(&self, name: &str) -> Option<usize> {
         self.bodies.iter().position(|b| b.name == name)
+    }
+
+    /// Bioma de llegada, fijo en el espacio local de Jardín. El claro y sus
+    /// grandes colonias forman parte del planeta y giran con él.
+    pub fn garden_grove_frame(&self) -> (DVec3, DVec3, DVec3) {
+        let i = self.find("Jardin").unwrap();
+        let body = &self.bodies[i];
+        let t = 40.0;
+        let center = body.position(t);
+        let to_star = (self.bodies[0].position(t) - center).normalize();
+        let side = to_star.cross(DVec3::Y).normalize();
+        let up = side.cross(to_star).normalize();
+        let giant = (self.bodies[self.eye_body].position(t) - center).normalize();
+        let normal = (giant * 0.37 + side * 0.92 + up * 0.12).normalize();
+        let toward = (giant - normal * giant.dot(normal)).normalize();
+        let right = toward.cross(normal);
+        let forward = (toward + right * 0.65).normalize();
+        let inv = body.rotation(t).conjugate();
+        let n = inv.rotate(normal);
+        let f = inv.rotate(forward);
+        (n, f, f.cross(n))
     }
 }
 
