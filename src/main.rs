@@ -145,6 +145,7 @@ fn run_window(options: &Options) -> Result<(), String> {
         help: true,
         stats: true,
         age: 0.0,
+        hidden: false,
     };
     let mut tweaks = tweaks::Tweaks::default();
 
@@ -175,6 +176,9 @@ fn run_window(options: &Options) -> Result<(), String> {
         }
         if rl.is_key_pressed(KeyboardKey::KEY_F2) {
             hud.stats = !hud.stats;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_F9) {
+            hud.hidden = !hud.hidden;
         }
         if rl.is_key_pressed(KeyboardKey::KEY_Z) {
             app.settings.assist = !app.settings.assist;

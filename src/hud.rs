@@ -13,6 +13,8 @@ pub struct Hud {
     pub stats: bool,
     /// Segundos desde que se abrio la ventana (para la intro).
     pub age: f32,
+    /// Sin nada encima de la imagen (F9), para grabar o sacar fotos.
+    pub hidden: bool,
 }
 
 /// Segundos que dura el titulo al empezar.
@@ -27,6 +29,9 @@ const MARKER: Color = Color::new(255, 214, 120, 220);
 pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &Tweaks) {
     let width = d.get_screen_width();
     let height = d.get_screen_height();
+    if hud.hidden {
+        return;
+    }
 
     // Intro: el titulo aparece y se desvanece en los primeros segundos.
     if hud.age < INTRO {
@@ -176,7 +181,7 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
             "T: ajustes en vivo   M: sonido".to_string(),
             "R: rebobinar   [ ]: -30/+30 s   J: al colapso".to_string(),
             "F3: wireframe   F4: colores de LOD   F5: LOD on/off   F6: otra semilla   F7: congelar frustum".to_string(),
-            "F1: ayuda   F2: estadisticas   Esc: salir".to_string(),
+            "F1: ayuda   F2: estadisticas   F9: ocultar todo   Esc: salir".to_string(),
         ];
         let y = height - 10 - (lines.len() as i32 * LINE + 10);
         panel(d, 10, y, &lines, false, width);
