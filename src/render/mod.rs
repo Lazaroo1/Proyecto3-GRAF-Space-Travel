@@ -45,6 +45,7 @@ use crate::shaders::{Material, Uniforms};
 use bloom::Bloom;
 use particles::ParticleBins;
 pub use particles::Particle;
+pub use post::Ripple;
 use pipeline::{ClipVertex, ScreenSetup, TriChunk, VisibleDraw, TRIS_PER_CHUNK};
 pub use stats::Stats;
 
@@ -165,6 +166,8 @@ pub struct Renderer {
     /// otra camara y cuanto hay que sumarle a una posicion relativa a la
     /// camara actual para que quede relativa a esa otra.
     pub cull: Option<(View, Vec3)>,
+    /// Onda gravitacional que deforma la imagen final (el colapso).
+    pub ripple: Option<Ripple>,
     particle_bins: ParticleBins,
     pub exposure: f32,
     pub bloom_intensity: f32,
@@ -189,6 +192,7 @@ impl Renderer {
             bloom: Bloom::new(width, height),
             particles: Vec::new(),
             cull: None,
+            ripple: None,
             particle_bins: ParticleBins::new(),
             exposure: config::EXPOSURE,
             bloom_intensity: config::BLOOM_INTENSITY,
@@ -327,6 +331,7 @@ impl Renderer {
             exposure: self.exposure,
             bloom: self.bloom.result(),
             bloom_intensity: self.bloom_intensity,
+            ripple: self.ripple,
         };
         let hdr = &self.hdr;
         let block = width * 4 * POST_ROWS;
