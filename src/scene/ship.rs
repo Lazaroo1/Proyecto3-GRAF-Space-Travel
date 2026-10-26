@@ -164,9 +164,10 @@ pub fn step(
     s.rel_vel += (engine + gravity) * dt;
     s.rel_pos += s.rel_vel * dt;
 
-    // Colision con la superficie (por ahora una esfera): se empuja la nave
-    // afuera y se quita la velocidad hacia adentro, con un rebote pequeno.
-    let floor = body.radius + COLLISION_CLEARANCE;
+    // Colision con el terreno, con la misma funcion de altura que se dibuja:
+    // se empuja la nave afuera y se quita la velocidad hacia adentro, con un
+    // rebote pequeno.
+    let floor = body.radius + body.surface_height(s.rel_pos, t + dt) + COLLISION_CLEARANCE;
     let dist = s.rel_pos.length();
     let contact = dist < floor && dist > 0.0;
     if contact {

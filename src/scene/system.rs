@@ -7,12 +7,15 @@
 
 use std::f64::consts::TAU;
 use std::path::Path;
+use std::sync::Arc;
 
 use super::{icosphere, load_obj, Mesh};
 use crate::config;
 use crate::math::blackbody::planckian_rgb;
 use crate::math::{DQuat, DVec3, Perlin, Vec3};
-use crate::shaders::{heartbeat, Material, PlanetStyle, ShipStyle, SunStyle};
+use crate::shaders::{heartbeat, Material, ShipStyle, SkyCube, SunStyle};
+use crate::terrain::shapes::RequiemField;
+use crate::terrain::{HeightField, Terrain};
 
 pub struct Body {
     pub name: &'static str,
@@ -34,8 +37,11 @@ pub struct Body {
     pub mu: f64,
     /// Radio de la region donde este cuerpo es el marco de referencia de la nave.
     pub soi: f64,
+    /// Malla para los cuerpos sin terreno (la estrella).
     pub mesh: usize,
     pub material: Material,
+    /// Forma del terreno; `None` es una esfera lisa del radio base.
+    pub surface: Option<Arc<dyn HeightField>>,
 }
 
 impl Body {
@@ -78,23 +84,39 @@ impl Body {
     pub fn render_radius(&self, t: f64) -> f64 {
         self.radius * (1.0 + self.pulse * heartbeat(t, config::HEARTBEAT_PERIOD))
     }
+
+    /// Altura del terreno en la direccion `offset` (relativa al centro, en
+    /// ejes del mundo) en el instante `t`. El terreno gira con el planeta,
+    /// asi que la direccion se lleva primero al espacio del planeta.
+    pub fn surface_height(&self, offset: DVec3, t: f64) -> f64 {
+        match &self.surface {
+            None => 0.0,
+            Some(field) => {
+                let local = self.rotation(t).conjugate().rotate(offset);
+                field.sample(local.normalize().as_vec3()).height as f64
+            }
+        }
+    }
 }
 
 pub struct System {
     pub bodies: Vec<Body>,
+    /// Terreno de cada cuerpo, en el mismo orden que `bodies`.
+    pub terrains: Vec<Option<Terrain>>,
     pub meshes: Vec<Mesh>,
     pub ship_mesh: usize,
     /// Giro que alinea el modelo de la nave con -Z (adelante) y +Y (arriba).
     pub ship_fix: DQuat,
     pub ship_material: Material,
     pub noise: Perlin,
+    pub sky: SkyCube,
 }
 
 impl System {
     pub fn load(assets: &Path) -> Result<Self, String> {
         let mut ship = load_obj(&assets.join("naveGraficas.obj"))?;
         ship.normalize_size(config::SHIP_LENGTH as f32);
-        let meshes = vec![icosphere(5), icosphere(6), ship];
+        let meshes = vec![icosphere(5), ship];
 
         let star = Body {
             name: "Ocaso",
@@ -113,8 +135,10 @@ impl System {
                 temperature: 3400.0,
                 intensity: 3.0,
             }),
+            surface: None,
         };
         let requiem_radius = 160.0;
+        let requiem_field: Arc<dyn HeightField> = Arc::new(RequiemField::new(config::NOISE_SEED ^ 0x0E9));
         let requiem = Body {
             name: "Requiem",
             radius: requiem_radius,
@@ -128,14 +152,20 @@ impl System {
             // Gravedad de 4 u/s^2 en la superficie: g = mu / r^2.
             mu: 4.0 * requiem_radius * requiem_radius,
             soi: requiem_radius * 6.0,
-            mesh: 1,
-            material: Material::Planet(PlanetStyle::REQUIEM),
+            mesh: 0,
+            material: Material::Requiem,
+            surface: Some(requiem_field.clone()),
         };
+        let terrains = vec![
+            None,
+            Some(Terrain::new(requiem_radius, requiem_field, config::TERRAIN_FINEST)),
+        ];
 
         Ok(Self {
             bodies: vec![star, requiem],
+            terrains,
             meshes,
-            ship_mesh: 2,
+            ship_mesh: 1,
             // El modelo de Blender tiene la punta hacia +Z; adelante es -Z.
             ship_fix: DQuat::from_axis_angle(DVec3::Y, std::f64::consts::PI),
             ship_material: Material::Ship(ShipStyle {
@@ -143,6 +173,7 @@ impl System {
                 shininess: 40.0,
             }),
             noise: Perlin::new(config::NOISE_SEED),
+            sky: SkyCube::bake(config::SKY_SIZE, config::NOISE_SEED),
         })
     }
 
@@ -157,12 +188,16 @@ impl System {
     }
 }
 
-/// El cuerpo cuya superficie esta mas cerca de `p`, y la altitud sobre ella.
+/// El cuerpo cuya superficie esta mas cerca de `p`, y la altitud sobre ella
+/// (contando el relieve del terreno).
 pub fn nearest_surface(bodies: &[Body], p: DVec3, t: f64) -> (usize, f64) {
     bodies
         .iter()
         .enumerate()
-        .map(|(i, b)| (i, (p - b.position(t)).length() - b.radius))
+        .map(|(i, b)| {
+            let offset = p - b.position(t);
+            (i, offset.length() - b.radius - b.surface_height(offset, t))
+        })
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .unwrap_or((0, f64::INFINITY))
 }

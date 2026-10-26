@@ -24,6 +24,20 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud) {
     if hud.stats {
         let s = &app.stats;
         let t = &s.triangles;
+        let terrain = match app.terrain_stats() {
+            Some((name, ts)) => format!(
+                "terreno {name}: {} chunks (nivel {})  nuevos {}  pendientes {}  cache {}  horizonte -{}  frustum -{}{}",
+                ts.drawn,
+                ts.deepest,
+                ts.generated,
+                ts.pending,
+                ts.cached,
+                ts.culled_horizon,
+                ts.culled_frustum,
+                if app.lod.enabled { "" } else { "  [LOD APAGADO]" }
+            ),
+            None => "terreno: -".to_string(),
+        };
         let lines = [
             format!("FPS {fps}   frame {:.1} ms   {} hilos", s.ms_total, parallel::workers()),
             format!(
@@ -39,6 +53,7 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud) {
                 "recortados {}   rasterizados {}   pixeles {}",
                 t.clipped, t.emitted, s.pixels_shaded
             ),
+            terrain,
         ];
         panel(d, 10, 10, &lines, false, width);
     }
@@ -62,6 +77,7 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud) {
             "Mouse: apuntar   Clic derecho: mirar alrededor   Rueda: distancia".to_string(),
             "W/S: adelante/atras   A/D: lados   Espacio/Ctrl: subir/bajar".to_string(),
             "Q/E: alabeo   Shift: turbo   C: camara   P: foto   Tab: soltar el mouse".to_string(),
+            "F3: wireframe   F4: colores de LOD   F5: LOD on/off".to_string(),
             "F1: ayuda   F2: estadisticas   Esc: salir".to_string(),
         ];
         let y = height - 10 - (lines.len() as i32 * LINE + 10);

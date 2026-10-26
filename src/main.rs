@@ -13,6 +13,7 @@ mod parallel;
 mod render;
 mod scene;
 mod shaders;
+mod terrain;
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -32,19 +33,25 @@ struct Options {
     width: usize,
     height: usize,
     mode: Mode,
+    wireframe: bool,
+    lod_colors: bool,
 }
 
 const USAGE: &str = "\
 uso: ocaso [opciones]
   --res ANCHOxALTO      resolucion del render (por defecto 1280x720)
   --captura CARPETA     guarda vistas fijas como PNG sin abrir ventana
-  --bench FRAMES        mide el render en un recorrido fijo sin abrir ventana";
+  --bench FRAMES        mide cada vista fija FRAMES veces sin abrir ventana
+  --wire                empieza con el wireframe encendido (F3)
+  --lod                 empieza con los colores de LOD encendidos (F4)";
 
 fn parse_args() -> Result<Options, String> {
     let mut options = Options {
         width: config::DEFAULT_WIDTH,
         height: config::DEFAULT_HEIGHT,
         mode: Mode::Window,
+        wireframe: false,
+        lod_colors: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -67,6 +74,8 @@ fn parse_args() -> Result<Options, String> {
                 let frames = frames.parse().map_err(|_| "numero de frames invalido")?;
                 options.mode = Mode::Bench(frames);
             }
+            "--wire" => options.wireframe = true,
+            "--lod" => options.lod_colors = true,
             "-h" | "--help" | "--ayuda" => {
                 println!("{USAGE}");
                 std::process::exit(0);
@@ -96,8 +105,16 @@ fn main() {
     }
 }
 
-fn run_window(options: &Options) -> Result<(), String> {
+/// Crea el juego con las vistas de depuracion pedidas en la linea de comandos.
+fn new_app(options: &Options) -> Result<App, String> {
     let mut app = App::new(options.width, options.height)?;
+    app.debug.wireframe = options.wireframe;
+    app.debug.lod_colors = options.lod_colors;
+    Ok(app)
+}
+
+fn run_window(options: &Options) -> Result<(), String> {
+    let mut app = new_app(options)?;
     let (mut rl, thread) = raylib::init()
         .size(options.width as i32, options.height as i32)
         .title("OCASO - software renderer")
@@ -143,6 +160,15 @@ fn run_window(options: &Options) -> Result<(), String> {
         }
         if rl.is_key_pressed(KeyboardKey::KEY_C) {
             app.toggle_camera();
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_F3) {
+            app.debug.wireframe = !app.debug.wireframe;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_F4) {
+            app.debug.lod_colors = !app.debug.lod_colors;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_F5) {
+            app.lod.enabled = !app.lod.enabled;
         }
         let photo = rl.is_key_pressed(KeyboardKey::KEY_P);
 
@@ -209,13 +235,23 @@ fn save_photo(app: &App) {
     }
 }
 
+/// Renderiza hasta que el terreno termine de generar el detalle de la vista
+/// (o un maximo de frames), para no capturar ni medir la carga.
+fn settle(app: &mut App) {
+    for _ in 0..200 {
+        app.render();
+        if app.terrain_stats().is_none_or(|(_, s)| s.pending == 0 && s.generated == 0) {
+            break;
+        }
+    }
+}
+
 fn run_capture(options: &Options, dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let mut app = App::new(options.width, options.height)?;
+    let mut app = new_app(options)?;
     for preset in Preset::ALL {
         app.apply_preset(preset);
-        // El primer frame calienta el pool de hilos; se mide el segundo.
-        app.render();
+        settle(&mut app);
         let stats = app.render();
         let path = dir.join(format!("{}.png", preset.name()));
         render::png::write_rgba(
@@ -242,7 +278,7 @@ fn run_capture(options: &Options, dir: &Path) -> Result<(), String> {
 /// mediana lo filtra mucho mejor que la media de un recorrido.
 fn run_bench(options: &Options, frames: usize) -> Result<(), String> {
     let frames = frames.max(1);
-    let mut app = App::new(options.width, options.height)?;
+    let mut app = new_app(options)?;
     println!("{}x{}  {} frames por vista  {} hilos", options.width, options.height, frames, parallel::workers());
     println!(
         "{:<16} {:>7} {:>7} | {:>6} {:>6} {:>6} {:>6} {:>6} {:>7}  (medianas, ms)",
@@ -250,9 +286,7 @@ fn run_bench(options: &Options, frames: usize) -> Result<(), String> {
     );
     for preset in Preset::ALL {
         app.apply_preset(preset);
-        for _ in 0..5 {
-            app.render();
-        }
+        settle(&mut app);
         let samples: Vec<render::Stats> = (0..frames).map(|_| app.render()).collect();
         let median = |f: fn(&render::Stats) -> f32| {
             let mut values: Vec<f32> = samples.iter().map(f).collect();

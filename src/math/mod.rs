@@ -14,7 +14,7 @@ mod quat;
 mod vec;
 
 pub use mat::{DMat3, DMat4, Mat3, Mat4};
-pub use noise::Perlin;
+pub use noise::{hash_u32, Perlin};
 pub use quat::DQuat;
 pub use vec::{DVec3, Vec2, Vec3, Vec4};
 
