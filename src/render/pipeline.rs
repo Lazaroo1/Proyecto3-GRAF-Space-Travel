@@ -20,6 +20,7 @@
 use super::stats::TriCounters;
 use super::{Draw, View, TILE};
 use crate::math::{Vec2, Vec3, Vec4};
+use crate::scene::NO_TANGENT;
 use crate::shaders::atmosphere::{integrate_all, Fog};
 use crate::shaders::{self, Uniforms};
 
@@ -187,6 +188,7 @@ pub fn transform_vertices(
         let draw = &draws[v.draw];
         let mesh = draw.mesh;
         let deforms = draw.material.deforms();
+        let has_tangents = mesh.tangents.len() == mesh.positions.len();
         let lo = first.max(v.vert_offset);
         let hi = end.min(v.vert_offset + v.vert_count);
         for global in lo..hi {
@@ -216,10 +218,12 @@ pub fn transform_vertices(
                     color: mesh.colors[i],
                     fog_scatter: fog.scattered,
                     fog_trans: fog.transmittance,
-                    tangent: {
+                    tangent: if has_tangents {
                         let t = mesh.tangents[i];
                         let world = draw.normal.mul_vec(t.xyz());
                         Vec4::new(world.x, world.y, world.z, t.w)
+                    } else {
+                        NO_TANGENT
                     },
                 },
             };

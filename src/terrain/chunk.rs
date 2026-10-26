@@ -3,7 +3,7 @@
 //! altura del planeta.
 
 use super::{ChunkKey, HeightField};
-use crate::math::{DVec3, Vec2, Vec3, Vec4};
+use crate::math::{DVec3, Vec2, Vec3};
 use crate::scene::Mesh;
 
 /// Las seis caras: normal, eje u y eje v, con `u x v = normal`. Asi los
@@ -122,7 +122,6 @@ pub fn generate(key: ChunkKey, radius: f64, field: &dyn HeightField, n: usize) -
         normals: Vec::with_capacity(count),
         uvs: Vec::with_capacity(count),
         colors: Vec::with_capacity(count),
-        tangents: Vec::with_capacity(count),
         ..Default::default()
     };
     let (min_h, max_h) = field.height_range();
@@ -146,8 +145,6 @@ pub fn generate(key: ChunkKey, radius: f64, field: &dyn HeightField, n: usize) -
                 (1.0 - normal.dot(up)) as f32,
             ));
             mesh.colors.push(samples[k].attrs);
-            let tangent = du.normalize().as_vec3();
-            mesh.tangents.push(Vec4::new(tangent.x, tangent.y, tangent.z, 1.0));
         }
     }
 
@@ -160,12 +157,11 @@ pub fn generate(key: ChunkKey, radius: f64, field: &dyn HeightField, n: usize) -
             let i = index as usize;
             let p = mesh.positions[i].as_dvec3() + center;
             let lowered = p - p.normalize() * depth;
-            let (normal, uv, color, tangent) = (mesh.normals[i], mesh.uvs[i], mesh.colors[i], mesh.tangents[i]);
+            let (normal, uv, color) = (mesh.normals[i], mesh.uvs[i], mesh.colors[i]);
             mesh.positions.push((lowered - center).as_vec3());
             mesh.normals.push(normal);
             mesh.uvs.push(uv);
             mesh.colors.push(color);
-            mesh.tangents.push(tangent);
         }
     }
 

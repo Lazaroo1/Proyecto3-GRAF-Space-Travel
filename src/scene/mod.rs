@@ -11,6 +11,6 @@ pub mod ship;
 mod system;
 
 pub use icosphere::icosphere;
-pub use mesh::Mesh;
+pub use mesh::{Mesh, NO_TANGENT};
 pub use obj::load_obj;
 pub use system::{nearest_surface, Body, System};

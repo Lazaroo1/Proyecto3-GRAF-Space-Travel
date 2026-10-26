@@ -15,7 +15,8 @@ pub struct Mesh {
     pub colors: Vec<Vec3>,
     /// Hacia donde crece la `u` de la textura sobre la superficie; `w` (+1 o
     /// -1) dice hacia que lado queda la bitangente. Con la normal forman la
-    /// base TBN del mapeo de normales.
+    /// base TBN del mapeo de normales. Vacio en las mallas sin mapa de
+    /// normales (el terreno, la estrella, la nave): no gastan memoria en ellas.
     pub tangents: Vec<Vec4>,
     pub indices: Vec<[u32; 3]>,
     /// Esfera envolvente en el espacio del objeto (para el culling).
