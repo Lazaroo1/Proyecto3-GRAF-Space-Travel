@@ -22,6 +22,16 @@ luz de todo el cielo. Luego el ciclo vuelve a empezar.
 Recorrido completo (vuelo, acercamiento, vuelta a un planeta, alejamiento y
 el colapso): *pendiente de grabar*.
 
+Recorrido sugerido para grabarlo (F9 oculta el HUD):
+
+1. Desde el inicio, junto a Pira, alejarse con Shift para ver el chorro de
+   brasas cayendo a la estrella.
+2. Volar a Jardín y bajar hasta la superficie: el modo local se activa solo.
+3. Con O (crucero), dar la vuelta al planeta sobre el bosque de hongos.
+4. Subir y alejarse con Shift.
+5. J para ir a 20 s antes del colapso: la arritmia, el destello, la onda
+   gravitacional y Gargantúa formando su disco.
+
 ## Ejecutar
 
 Se necesita Rust (edición 2024) y CMake, que usa `raylib` para compilarse.
