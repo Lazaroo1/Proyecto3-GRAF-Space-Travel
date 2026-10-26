@@ -100,7 +100,7 @@ impl Tweaks {
                 star.pulse = (star.pulse + 0.004 * k).clamp(0.0, 0.2);
             }
             Row::Exposure => {
-                app.renderer.exposure = (app.renderer.exposure * scale(10.0) as f32).clamp(0.05, 20.0);
+                app.exposure = (app.exposure * scale(10.0) as f32).clamp(0.05, 20.0);
             }
             Row::Bloom => {
                 app.renderer.bloom_intensity = (app.renderer.bloom_intensity + 0.05 * steps as f32).clamp(0.0, 3.0);
@@ -125,7 +125,7 @@ impl Tweaks {
             format!("intensidad del shader: {gain}"),
             format!("semilla de objetos: {}", app.system.prop_seed),
             format!("latido de la estrella: {:.3}", app.system.bodies[0].pulse),
-            format!("exposicion: {:.2}", app.renderer.exposure),
+            format!("exposicion: {:.2}", app.exposure),
             format!("bloom: {:.2}", app.renderer.bloom_intensity),
             format!("factor de LOD: {:.1}", app.lod.factor),
         ];

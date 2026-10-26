@@ -80,7 +80,7 @@ impl SkyCube {
 /// necesita estar normalizada: el cubemap divide por el eje mayor y la
 /// corona normaliza solo si el pixel esta cerca de la estrella.
 pub fn shade(dir: Vec3, u: &Uniforms) -> Vec3 {
-    u.sky.sample(dir) + corona(dir, u)
+    u.sky.sample(dir) + corona(dir, u) * u.star_glow
 }
 
 /// Cara del cubo (el eje de mayor magnitud) y coordenadas en ella, en [-1, 1].
@@ -163,7 +163,7 @@ fn nebula(dir: Vec3, noise: &Perlin) -> Vec3 {
 /// La distancia angular se mide con la cuerda, `sqrt(2 (1 - cos))`, en vez
 /// de `acos`: para angulos pequenos son casi iguales, y lejos del disco la
 /// corona ya es despreciable.
-fn corona(dir: Vec3, u: &Uniforms) -> Vec3 {
+pub fn corona(dir: Vec3, u: &Uniforms) -> Vec3 {
     let dist2 = u.sun_pos.length_squared();
     let r2 = u.sun_radius * u.sun_radius;
     if dist2 <= r2 {
@@ -259,6 +259,11 @@ mod tests {
         let u = Uniforms {
             time: 0.0,
             beat: 0.0,
+            beat_phase: 0.0,
+            beat_rate: 0.5,
+            heart: 1.0,
+            star_glow: 1.0,
+            black_hole: None,
             sun_pos: Vec3::new(1000.0, 200.0, -3000.0),
             sun_radius: 300.0,
             sun_light: Vec3::new(1.5, 0.8, 0.4),

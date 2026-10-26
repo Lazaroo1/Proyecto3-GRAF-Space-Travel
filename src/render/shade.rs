@@ -46,11 +46,18 @@ pub fn shade_tile(tile: usize, vis: &[VisPixel], out: &mut [Vec3], ctx: &ShadeCo
             let pixel = vis[i];
             let dir = ctx.view.pixel_direction(px, py, inv_width, inv_height);
             let sky = pixel.id == VisPixel::EMPTY_ID;
-            let (color, depth) = if sky {
-                (shaders::sky(dir, ctx.uniforms), f32::INFINITY)
-            } else {
-                shaded += 1;
-                shade_surface(pixel.id, px, py, ctx)
+            let (color, depth) = match (sky, ctx.uniforms.black_hole) {
+                (true, None) => (shaders::sky(dir, ctx.uniforms), f32::INFINITY),
+                // Con Gargantua el cielo se ve a traves de su lente.
+                (true, Some(hole)) => hole.sky(dir.normalize(), ctx.uniforms),
+                (false, hole) => {
+                    shaded += 1;
+                    let (color, depth) = shade_surface(pixel.id, px, py, ctx);
+                    match hole {
+                        Some(hole) => hole.surface(dir.normalize(), color, depth),
+                        None => (color, depth),
+                    }
+                }
             };
             // Anillos (y en el cielo, atmosferas) contra la distancia resuelta.
             out[i] = if volumes {

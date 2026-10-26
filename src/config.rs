@@ -58,8 +58,10 @@ pub const PHYSICS_DT: f64 = 1.0 / PHYSICS_HZ;
 /// Un frame mas lento que esto cuenta como si durara esto (evita saltos).
 pub const MAX_FRAME_DT: f64 = 0.1;
 
-/// Periodo del latido de la estrella, en segundos.
+/// Periodo del latido de la estrella, en segundos (al principio del ciclo).
 pub const HEARTBEAT_PERIOD: f64 = 1.9;
+/// Rebobinar (R) va tantas veces mas rapido que el tiempo normal.
+pub const REWIND_SPEED: f64 = 8.0;
 
 // Nave -------------------------------------------------------------------
 

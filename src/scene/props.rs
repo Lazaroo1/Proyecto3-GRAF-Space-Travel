@@ -195,7 +195,7 @@ fn coral_branch(b: &mut MeshBuilder, origin: Vec3, dir: Vec3, length: f32, radiu
     if depth == 0 {
         // Bulbo en la punta: el color lo marca para que brille.
         b.color(TIP);
-        b.ellipsoid(end, Vec3::splat(radius * 1.7), 3, segments, false);
+        b.ellipsoid(end, Vec3::splat(radius * 1.35), 3, segments, false);
         b.color(Vec3::ONE);
         return;
     }

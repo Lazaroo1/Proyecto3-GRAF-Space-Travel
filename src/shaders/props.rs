@@ -6,8 +6,7 @@
 //! con la base TBN interpolada. El nivel de mipmap sale de cuanto mide un
 //! pixel sobre la superficie: de lejos se lee el promedio, que no parpadea.
 
-use super::{heartbeat, rings, Fragment, Uniforms};
-use crate::config::HEARTBEAT_PERIOD;
+use super::{rings, Fragment, Uniforms};
 use crate::math::blackbody::planckian_rgb;
 use crate::math::{smoothstep, Vec2, Vec3};
 use crate::scene::props::{PropKind, CORAL_TOP, WRECK_UV_SIZE};
@@ -199,8 +198,8 @@ fn coral(c: &Ctx) -> Vec3 {
     let albedo = Vec3::new(0.08, 0.02, 0.09).lerp(Vec3::new(0.45, 0.14, 0.32), height);
     // Los bulbos de las puntas vienen marcados con verde 0 en el color.
     let tips = 1.0 - f.color.y;
-    let pulse = heartbeat((u.time - height * 0.6) as f64, HEARTBEAT_PERIOD) as f32;
-    let glow = Vec3::new(0.95, 0.3, 0.7).lerp(Vec3::new(0.2, 0.95, 0.9), height) * (tips * (0.3 + 1.2 * pulse));
+    let pulse = u.beat_at(height * 0.6);
+    let glow = Vec3::new(0.95, 0.3, 0.7).lerp(Vec3::new(0.2, 0.95, 0.9), height) * (tips * (0.25 + 0.6 * pulse));
     lit(c, albedo, f.normal, 0.15, 24.0, 0.3) + glow * u.biolum
 }
 

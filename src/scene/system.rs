@@ -12,7 +12,6 @@ use std::sync::Arc;
 use super::props::{self, PropModel, PropSet};
 use super::{icosphere, load_obj, Mesh};
 use crate::config;
-use crate::math::blackbody::planckian_rgb;
 use crate::math::{DQuat, DVec3, Perlin, Vec3};
 use crate::shaders::{
     heartbeat, AtmosphereModel, AtmosphereParams, Material, ShipStyle, SkyCube, SunStyle, Textures,
@@ -363,16 +362,6 @@ impl System {
     pub fn scatter_props(&mut self, seed: u32) {
         self.prop_seed = seed;
         self.props = (0..self.bodies.len()).map(|index| self.scatter_body(index, seed)).collect();
-    }
-
-    /// Luz de la estrella que llega a los planetas: su color de cuerpo negro
-    /// por una intensidad que sube un poco con cada latido.
-    pub fn star_light(&self, t: f64) -> Vec3 {
-        let Material::Sun(style) = self.bodies[0].material else {
-            return Vec3::ONE;
-        };
-        let beat = heartbeat(t, config::HEARTBEAT_PERIOD) as f32;
-        planckian_rgb(style.temperature) * (1.5 * (1.0 + 0.06 * beat))
     }
 
     /// Indice de un cuerpo por nombre.

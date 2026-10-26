@@ -3,6 +3,7 @@
 
 mod builder;
 pub mod camera;
+pub mod cycle;
 pub mod effects;
 mod icosphere;
 mod mesh;
