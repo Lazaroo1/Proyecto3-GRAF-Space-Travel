@@ -4,7 +4,7 @@
 use super::{Uniforms, sky::corona};
 use crate::gargantua_p2::{
     self as p2,
-    disk::{GasTexture, Medium},
+    disk::{GasTexture, Medium, RadialTable},
     math::Vec3 as P2Vec,
     photon::Photon,
     relativity::RayFrame,
@@ -115,6 +115,7 @@ impl BlackHole<'_> {
             peak_temperature: self.peak,
             ..Medium::VARIANT
         };
+        let radial = RadialTable::shared();
         // El origen puede estar muy lejos del sistema: los pasos exteriores
         // son mayores sin saltarse la envoltura de 19 rs.
         for _ in 0..p2::config::MAX_STEPS {
@@ -145,7 +146,7 @@ impl BlackHole<'_> {
             if mid.x.hypot(mid.z) >= self.outer {
                 continue;
             }
-            if let Some(mut sample) = p2::disk::prepare(mid, step, frame, medium) {
+            if let Some(mut sample) = p2::disk::prepare_variant(mid, step, frame, medium, radial) {
                 sample.optical_depth *= self.density;
                 let (emission, alpha) = sample.shade(self.gas);
                 gas.light +=
