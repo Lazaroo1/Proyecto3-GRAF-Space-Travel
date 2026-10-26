@@ -9,11 +9,12 @@ use std::path::PathBuf;
 
 use crate::config;
 use crate::math::{smoothing, DMat4, DQuat, DVec3, Vec3};
-use crate::render::{Draw, Renderer, Stats};
+use crate::render::{Draw, Renderer, Stats, View};
 use crate::scene::camera::{Camera, CameraMode};
 use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
 use crate::scene::{nearest_surface, System};
-use crate::shaders::Uniforms;
+use crate::shaders::{DebugView, Uniforms};
+use crate::terrain::{LodSettings, TerrainStats, Viewer};
 
 /// Entrada de un frame, ya traducida de teclas y mouse.
 #[derive(Clone, Copy, Debug, Default)]
@@ -60,6 +61,8 @@ pub struct App {
     pub flight: FlightInfo,
     pub stats: Stats,
     pub camera_mode: CameraMode,
+    pub lod: LodSettings,
+    pub debug: DebugView,
     ship: ShipState,
     /// Estado del paso anterior: el render interpola entre los dos.
     ship_prev: ShipState,
@@ -72,8 +75,8 @@ pub struct App {
     accumulator: f64,
 }
 
-/// Carpeta de modelos: junto al ejecutable que se corre con cargo, o la del
-/// proyecto si se corre desde otro lugar.
+/// Carpeta de modelos: la del directorio actual o, si se corre desde otro
+/// lugar, la del proyecto.
 fn asset_dir() -> PathBuf {
     let local = PathBuf::from("assets");
     if local.exists() {
@@ -101,6 +104,13 @@ impl App {
             flight: FlightInfo::default(),
             stats: Stats::default(),
             camera_mode: CameraMode::Chase,
+            lod: LodSettings {
+                factor: config::LOD_FACTOR,
+                budget: config::LOD_BUDGET,
+                enabled: true,
+                fixed_level: config::LOD_FIXED_LEVEL,
+            },
+            debug: DebugView::default(),
             ship,
             ship_prev: ship,
             aim,
@@ -114,6 +124,13 @@ impl App {
 
     pub fn body_name(&self, index: usize) -> &'static str {
         self.system.bodies.get(index).map_or("?", |b| b.name)
+    }
+
+    /// Estadisticas del terreno del planeta mas cercano a la nave.
+    pub fn terrain_stats(&self) -> Option<(&'static str, TerrainStats)> {
+        let nearest = self.flight.nearest;
+        let terrain = self.system.terrains.get(nearest)?.as_ref()?;
+        Some((self.system.bodies[nearest].name, terrain.stats))
     }
 
     pub fn toggle_camera(&mut self) {
@@ -182,6 +199,8 @@ impl App {
 
         let camera = self.camera(ship_pos, ship_rot, t);
         let view = camera.view(self.renderer.width(), self.renderer.height());
+        self.update_terrain(t, &camera, &view);
+
         let show_ship = self.camera_mode == CameraMode::Chase;
         let draws = build_draws(&self.system, t, &camera, ship_pos, ship_rot, show_ship);
         let star = &self.system.bodies[0];
@@ -191,10 +210,33 @@ impl App {
             sun_radius: star.render_radius(t) as f32,
             sun_light: self.system.star_light(t),
             noise: &self.system.noise,
+            sky: &self.system.sky,
             pixel_angle: (2.0 * (camera.fov_y * 0.5).tan() / self.renderer.height() as f64) as f32,
+            debug: self.debug,
         };
         self.stats = self.renderer.render(&draws, &view, &uniforms);
         self.stats
+    }
+
+    /// Cada planeta con terreno elige sus chunks segun la camara. El recorrido
+    /// trabaja en el espacio del planeta: la camara se lleva a ese espacio y
+    /// las esferas de los nodos se llevan de vuelta para probarlas contra el
+    /// frustum.
+    fn update_terrain(&mut self, t: f64, camera: &Camera, view: &View) {
+        let bodies = &self.system.bodies;
+        for (body, terrain) in bodies.iter().zip(self.system.terrains.iter_mut()) {
+            let Some(terrain) = terrain else { continue };
+            let rotation = body.rotation(t);
+            let offset = body.position(t) - camera.pos;
+            let visible = |center: DVec3, radius: f64| {
+                view.sphere_visible((offset + rotation.rotate(center)).as_vec3(), radius as f32)
+            };
+            let viewer = Viewer {
+                position: rotation.conjugate().rotate(-offset),
+                visible: &visible,
+            };
+            terrain.update(&viewer, &self.lod);
+        }
     }
 
     fn camera(&self, ship_pos: DVec3, ship_rot: DQuat, t: f64) -> Camera {
@@ -211,12 +253,13 @@ impl App {
                 ship_pos + ship_rot.rotate(DVec3::new(x, y, z))
             }
         };
-        // La camara nunca se mete bajo la superficie, aunque la nave vuele pegada.
+        // La camara nunca se mete bajo el terreno, aunque la nave vuele pegada.
         let bodies = &self.system.bodies;
         let (index, altitude) = nearest_surface(bodies, pos, t);
         if altitude < config::CAMERA_CLEARANCE {
             let center = bodies[index].position(t);
-            pos = center + (pos - center).normalize() * (bodies[index].radius + config::CAMERA_CLEARANCE);
+            let offset = pos - center;
+            pos = center + offset.normalize() * (offset.length() + config::CAMERA_CLEARANCE - altitude);
         }
         Camera {
             pos,
@@ -226,7 +269,8 @@ impl App {
         }
     }
 
-    /// Coloca la nave y la camara en una vista fija.
+    /// Coloca la nave y la camara en una vista fija. Despues de colocarla se
+    /// renderizan unos frames para que el terreno termine de cargar el detalle.
     pub fn apply_preset(&mut self, preset: Preset) {
         let t = 40.0;
         let bodies = &self.system.bodies;
@@ -249,9 +293,10 @@ impl App {
             Preset::Surface => {
                 // Lado de dia, cerca del terminador: la estrella baja en el horizonte.
                 let normal = (side * 0.94 + to_star * 0.34).normalize();
-                let pos = center + normal * (r + 5.0);
+                let ground = planet.surface_height(normal, t);
+                let pos = center + normal * (r + ground + 6.0);
                 let horizon = (to_star - normal * to_star.dot(normal)).normalize();
-                ((pos), (horizon * 0.95 - normal * 0.12), normal, 0.6, (0.0, 0.0))
+                (pos, horizon * 0.95 - normal * 0.12, normal, 0.6, (0.0, 0.0))
             }
             Preset::Ship => {
                 let pos = center + (side * 0.6 + to_star * 0.7 + up * 0.25).normalize() * (r * 2.2);
@@ -270,11 +315,13 @@ impl App {
         // El render dibuja `sim_time - dt` cuando el acumulador esta vacio.
         self.sim_time = t + config::PHYSICS_DT;
         self.accumulator = 0.0;
+        self.flight.nearest = nearest_surface(&self.system.bodies, pos, t).0;
     }
 }
 
-/// Un dibujo por cuerpo y otro para la nave. Las matrices de modelo llevan la
-/// posicion **relativa a la camara**, restada en `f64`.
+/// Un dibujo por chunk de terreno visible, uno por cuerpo sin terreno y otro
+/// para la nave. Las matrices de modelo llevan la posicion **relativa a la
+/// camara**, restada en `f64`.
 fn build_draws<'a>(
     system: &'a System,
     t: f64,
@@ -283,22 +330,44 @@ fn build_draws<'a>(
     ship_rot: DQuat,
     show_ship: bool,
 ) -> Vec<Draw<'a>> {
-    let mut draws = Vec::with_capacity(system.bodies.len() + 1);
-    for body in &system.bodies {
-        let mesh = &system.meshes[body.mesh];
-        let radius = body.render_radius(t);
+    let mut draws = Vec::new();
+    for (body, terrain) in system.bodies.iter().zip(&system.terrains) {
         let rotation = body.rotation(t).to_mat3();
-        let offset = body.position(t) - camera.pos;
-        draws.push(Draw {
-            mesh,
-            indices: &mesh.indices,
-            local_offset: Vec3::ZERO,
-            model: DMat4::from_affine(&rotation.scale(radius), offset).to_f32(),
-            normal: rotation.to_f32(),
-            material: body.material,
-            bounds_center: offset.as_vec3(),
-            bounds_radius: (radius * mesh.bounds_radius as f64) as f32,
-        });
+        let center = body.position(t) - camera.pos;
+        match terrain {
+            Some(terrain) => {
+                let normal = rotation.to_f32();
+                for chunk in terrain.selected() {
+                    let offset = center + rotation.mul_vec(chunk.center);
+                    draws.push(Draw {
+                        mesh: &chunk.mesh,
+                        indices: terrain.indices(),
+                        local_offset: chunk.center.as_vec3(),
+                        model: DMat4::from_affine(&rotation, offset).to_f32(),
+                        normal,
+                        material: body.material,
+                        bounds_center: offset.as_vec3(),
+                        bounds_radius: chunk.radius,
+                        tag: chunk.key.level as u32 + 1,
+                    });
+                }
+            }
+            None => {
+                let mesh = &system.meshes[body.mesh];
+                let radius = body.render_radius(t);
+                draws.push(Draw {
+                    mesh,
+                    indices: &mesh.indices,
+                    local_offset: Vec3::ZERO,
+                    model: DMat4::from_affine(&rotation.scale(radius), center).to_f32(),
+                    normal: rotation.to_f32(),
+                    material: body.material,
+                    bounds_center: center.as_vec3(),
+                    bounds_radius: (radius * mesh.bounds_radius as f64) as f32,
+                    tag: 0,
+                });
+            }
+        }
     }
     if show_ship {
         let mesh = &system.meshes[system.ship_mesh];
@@ -313,6 +382,7 @@ fn build_draws<'a>(
             material: system.ship_material,
             bounds_center: (offset + rotation.mul_vec(mesh.bounds_center.as_dvec3())).as_vec3(),
             bounds_radius: mesh.bounds_radius,
+            tag: 0,
         });
     }
     draws

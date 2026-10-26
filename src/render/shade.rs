@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::pipeline::{ClipVertex, TriChunk, Varyings, EXTRA_VERTEX};
 use super::{Draw, View, VisPixel, TILE};
-use crate::math::Vec3;
+use crate::math::{smoothstep, Vec3};
 use crate::shaders::{self, Fragment, Uniforms};
 
 pub struct ShadeContext<'a> {
@@ -85,7 +85,33 @@ fn shade_surface(id: u32, px: f32, py: f32, ctx: &ShadeContext) -> Vec3 {
         uv: var.uv,
         color: var.color,
     };
-    shaders::shade(&ctx.draws[tri.draw as usize].material, &fragment, ctx.uniforms)
+    let draw = &ctx.draws[tri.draw as usize];
+    let mut color = shaders::shade(&draw.material, &fragment, ctx.uniforms);
+
+    let debug = ctx.uniforms.debug;
+    if debug.lod_colors && draw.tag > 0 {
+        let tint = shaders::lod_color(draw.tag - 1);
+        color = tint * (0.06 + 0.7 * color.luminance());
+    }
+    if debug.wireframe {
+        // Distancia en pixeles a cada arista: la baricentrica de pantalla
+        // dividida entre la longitud de su gradiente. Las tres se anulan
+        // justo sobre la arista opuesta a su vertice.
+        let g1 = (tri.l1[0], tri.l1[1]);
+        let g2 = (tri.l2[0], tri.l2[1]);
+        let g0 = (-g1.0 - g2.0, -g1.1 - g2.1);
+        let edge = (l0 / g0.0.hypot(g0.1))
+            .min(l1 / g1.0.hypot(g1.1))
+            .min(l2 / g2.0.hypot(g2.1));
+        let line = smoothstep(1.1, 0.25, edge);
+        let ink = if draw.tag > 0 {
+            shaders::lod_color(draw.tag - 1)
+        } else {
+            Vec3::splat(0.7)
+        };
+        color = color.lerp(ink * 0.5, line);
+    }
+    color
 }
 
 #[inline]

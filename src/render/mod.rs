@@ -71,6 +71,9 @@ pub struct Draw<'a> {
     /// Esfera envolvente en el mundo relativo a la camara.
     pub bounds_center: Vec3,
     pub bounds_radius: f32,
+    /// Dato para las vistas de depuracion: en el terreno, nivel de detalle
+    /// mas uno; 0 en lo demas.
+    pub tag: u32,
 }
 
 /// Camara del frame. El mundo llega relativo a ella: la camara es el origen.
@@ -109,12 +112,13 @@ impl View {
             && (-c.y + side_y) / norm_y <= radius
     }
 
-    /// Direccion en el mundo que ve el punto de pantalla `(x, y)` en pixeles.
+    /// Direccion en el mundo (sin normalizar) que ve el punto de pantalla
+    /// `(x, y)` en pixeles.
     #[inline]
     pub fn pixel_direction(&self, x: f32, y: f32, inv_width: f32, inv_height: f32) -> Vec3 {
         let u = x * inv_width * 2.0 - 1.0;
         let v = 1.0 - y * inv_height * 2.0;
-        (self.forward + self.right * u + self.up * v).normalize()
+        self.forward + self.right * u + self.up * v
     }
 }
 

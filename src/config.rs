@@ -24,6 +24,21 @@ pub const BLOOM_FALLOFF: f32 = 0.75;
 
 /// Semilla de todo el ruido procedural: la misma semilla, el mismo sistema.
 pub const NOISE_SEED: u32 = 1337;
+/// Lado de cada cara del cielo horneado. Con 512 el cubemap pesa 6 MB y cabe
+/// en la cache L3; con 1024 pesaria 25 MB y cada muestra esperaria a la RAM.
+/// Un texel mide 0.18 grados, poco mas de un pixel a 720p.
+pub const SKY_SIZE: usize = 512;
+
+// Terreno -----------------------------------------------------------------
+
+/// Lado del cuadro mas fino del terreno, en unidades del mundo.
+pub const TERRAIN_FINEST: f64 = 0.35;
+/// Se parte un chunk si la camara esta a menos de este factor por su tamano.
+pub const LOD_FACTOR: f64 = 1.8;
+/// Chunks nuevos por frame como maximo.
+pub const LOD_BUDGET: usize = 24;
+/// Nivel fijo cuando se apaga el LOD para comparar.
+pub const LOD_FIXED_LEVEL: u8 = 4;
 
 /// Fisica a paso fijo: la nave responde igual a 30 que a 300 fps.
 pub const PHYSICS_HZ: f64 = 120.0;
