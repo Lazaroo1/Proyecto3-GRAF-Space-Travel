@@ -20,7 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use raylib::prelude::*;
 
-use app::{App, FrameInput, Preset};
+use app::{App, FrameInput, PRESETS};
 use math::DVec3;
 
 enum Mode {
@@ -249,11 +249,11 @@ fn settle(app: &mut App) {
 fn run_capture(options: &Options, dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut app = new_app(options)?;
-    for preset in Preset::ALL {
+    for preset in &PRESETS {
         app.apply_preset(preset);
         settle(&mut app);
         let stats = app.render();
-        let path = dir.join(format!("{}.png", preset.name()));
+        let path = dir.join(format!("{}.png", preset.name));
         render::png::write_rgba(
             &path,
             options.width as u32,
@@ -263,7 +263,7 @@ fn run_capture(options: &Options, dir: &Path) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", path.display()))?;
         println!(
             "{:<16} {:6.1} ms   {:>7} triangulos rasterizados   {:>8} pixeles   -> {}",
-            preset.name(),
+            preset.name,
             stats.ms_total,
             stats.triangles.emitted,
             stats.pixels_shaded,
@@ -284,7 +284,7 @@ fn run_bench(options: &Options, frames: usize) -> Result<(), String> {
         "{:<16} {:>7} {:>7} | {:>6} {:>6} {:>6} {:>6} {:>6} {:>7}  (medianas, ms)",
         "vista", "min", "frame", "vert", "tri", "raster", "shade", "bloom", "tonemap"
     );
-    for preset in Preset::ALL {
+    for preset in &PRESETS {
         app.apply_preset(preset);
         settle(&mut app);
         let samples: Vec<render::Stats> = (0..frames).map(|_| app.render()).collect();
@@ -296,7 +296,7 @@ fn run_bench(options: &Options, frames: usize) -> Result<(), String> {
         let min = samples.iter().map(|s| s.ms_total).fold(f32::MAX, f32::min);
         println!(
             "{:<16} {:>7.2} {:>7.2} | {:>6.2} {:>6.2} {:>6.2} {:>6.2} {:>6.2} {:>7.2}",
-            preset.name(),
+            preset.name,
             min,
             median(|s| s.ms_total),
             median(|s| s.ms_vertex),

@@ -15,6 +15,7 @@ use super::Vec3;
 
 pub struct Perlin {
     perm: [u8; 512],
+    seed: u32,
 }
 
 impl Perlin {
@@ -28,7 +29,48 @@ impl Perlin {
         }
         Self {
             perm: std::array::from_fn(|i| p[i & 255]),
+            seed,
         }
+    }
+
+    /// Ruido celular de Worley: distancias al punto caracteristico mas
+    /// cercano (`f1`) y al segundo (`f2`). Cada celda de la grilla tiene un
+    /// punto al azar; basta revisar la celda propia y las 26 vecinas.
+    ///
+    /// `f2 - f1` vale cero justo en la frontera entre dos celdas: dibuja una
+    /// red de grietas (lava entre placas de costra, membranas entre celulas).
+    pub fn cells(&self, p: Vec3) -> (f32, f32) {
+        let (ix, iy, iz) = (floor_i(p.x), floor_i(p.y), floor_i(p.z));
+        let mut f1 = f32::MAX;
+        let mut f2 = f32::MAX;
+        for dz in -1..=1 {
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    let (cx, cy, cz) = (ix + dx, iy + dy, iz + dz);
+                    let h = hash_u32(
+                        (cx as u32).wrapping_mul(0x8DA6_B343)
+                            ^ (cy as u32).wrapping_mul(0xD816_3841)
+                            ^ (cz as u32).wrapping_mul(0xCB1A_B31F)
+                            ^ self.seed,
+                    );
+                    let h2 = hash_u32(h);
+                    let h3 = hash_u32(h2);
+                    let point = Vec3::new(
+                        cx as f32 + unit(h),
+                        cy as f32 + unit(h2),
+                        cz as f32 + unit(h3),
+                    );
+                    let d = (p - point).length_squared();
+                    if d < f1 {
+                        f2 = f1;
+                        f1 = d;
+                    } else if d < f2 {
+                        f2 = d;
+                    }
+                }
+            }
+        }
+        (f1.sqrt(), f2.sqrt())
     }
 
     /// Ruido de gradiente en `[-1, 1]` aproximadamente, continuo y con
@@ -164,6 +206,12 @@ fn grad(hash: u8, x: f32, y: f32, z: f32) -> f32 {
 fn floor_i(x: f32) -> i32 {
     let i = x as i32;
     i - i32::from(x < i as f32)
+}
+
+/// Un hash a `[0, 1)`, con los 24 bits altos.
+#[inline]
+fn unit(h: u32) -> f32 {
+    (h >> 8) as f32 / 16_777_216.0
 }
 
 /// Finalizador de MurmurHash3: mezcla bien los bits de un entero.

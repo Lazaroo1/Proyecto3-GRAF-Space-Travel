@@ -224,7 +224,7 @@ impl Renderer {
         self.verts.resize(vert_total, ClipVertex::default());
         let visible = &self.visible;
         parallel::chunks_mut(&mut self.verts, VERTS_PER_JOB, VERTS_PER_JOB, |job, out| {
-            pipeline::transform_vertices(job * VERTS_PER_JOB, out, visible, draws, view);
+            pipeline::transform_vertices(job * VERTS_PER_JOB, out, visible, draws, view, uniforms);
         });
         let t_vertex = Instant::now();
 
