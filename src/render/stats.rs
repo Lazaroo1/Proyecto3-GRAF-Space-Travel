@@ -42,6 +42,7 @@ pub struct Stats {
     pub ms_triangles: f32,
     pub ms_raster: f32,
     pub ms_shade: f32,
+    pub ms_bloom: f32,
     pub ms_post: f32,
     pub ms_total: f32,
 }

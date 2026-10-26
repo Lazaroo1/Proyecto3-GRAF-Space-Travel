@@ -172,15 +172,15 @@ pub fn transform_vertices(
         let hi = end.min(v.vert_offset + v.vert_count);
         for global in lo..hi {
             let i = global - v.vert_offset;
-            let local = mesh.positions[i];
+            let position = mesh.positions[i];
             // Modelo: al mundo relativo a la camara. Vista y proyeccion: a clip.
-            let world = draw.model.transform_affine(local);
+            let world = draw.model.transform_affine(position);
             out[global - first] = ClipVertex {
                 clip: view.view_proj.transform_point(world),
                 var: Varyings {
                     pos: world,
                     normal: draw.normal.mul_vec(mesh.normals[i]),
-                    local,
+                    local: position + draw.local_offset,
                     uv: mesh.uvs[i],
                     color: mesh.colors[i],
                 },
@@ -214,11 +214,11 @@ pub fn process_chunk(
     let mut k = visible.partition_point(|v| v.tri_offset + v.tri_count <= start);
     while k < visible.len() && visible[k].tri_offset < end {
         let v = &visible[k];
-        let mesh = draws[v.draw].mesh;
+        let indices = draws[v.draw].indices;
         let lo = start.max(v.tri_offset) - v.tri_offset;
         let hi = end.min(v.tri_offset + v.tri_count) - v.tri_offset;
         let base = v.vert_offset as u32;
-        for tri in &mesh.indices[lo..hi] {
+        for tri in &indices[lo..hi] {
             let ids = [base + tri[0], base + tri[1], base + tri[2]];
             process_triangle(out, verts, ids, v.draw as u32, screen);
         }

@@ -23,6 +23,7 @@
 //! framebuffer. Los buffers se guardan por tiles (no por filas) para que cada
 //! hilo reciba un bloque contiguo de memoria con `chunks_mut`.
 
+mod bloom;
 mod pipeline;
 pub mod png;
 mod post;
@@ -30,14 +31,16 @@ mod raster;
 mod shade;
 mod stats;
 
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
+use crate::config;
 use crate::math::{Mat3, Mat4, Vec3};
-use crate::parallel;
+use crate::parallel::{self, DisjointMut};
 use crate::scene::Mesh;
 use crate::shaders::{Material, Uniforms};
 
+use bloom::Bloom;
 use pipeline::{ClipVertex, ScreenSetup, TriChunk, VisibleDraw, TRIS_PER_CHUNK};
 pub use stats::Stats;
 
@@ -46,10 +49,20 @@ pub const TILE: usize = 64;
 pub const TILE_PIXELS: usize = TILE * TILE;
 /// Vertices por trabajo de la etapa de vertices.
 const VERTS_PER_JOB: usize = 2048;
+/// Filas por trabajo del tonemap: bloques chicos reparten mejor entre hilos.
+const POST_ROWS: usize = 8;
 
 /// Un objeto a dibujar en este frame.
 pub struct Draw<'a> {
     pub mesh: &'a Mesh,
+    /// Triangulos a dibujar. Normalmente `&mesh.indices`; los chunks de
+    /// terreno comparten una sola lista porque todos tienen la misma topologia.
+    pub indices: &'a [[u32; 3]],
+    /// Se suma a la posicion de cada vertice para formar la coordenada del
+    /// objeto que ven los shaders. Un chunk de terreno guarda sus vertices
+    /// relativos a su propio centro (mas precision cerca de la camara) y aqui
+    /// recupera la posicion respecto al centro del planeta.
+    pub local_offset: Vec3,
     /// Objeto -> mundo relativo a la camara (rotacion, escala y traslacion).
     pub model: Mat4,
     /// Rotacion de las normales del objeto al mundo (la escala es uniforme).
@@ -136,7 +149,9 @@ pub struct Renderer {
     visible: Vec<VisibleDraw>,
     verts: Vec<ClipVertex>,
     chunks: Vec<TriChunk>,
+    bloom: Bloom,
     pub exposure: f32,
+    pub bloom_intensity: f32,
 }
 
 impl Renderer {
@@ -155,7 +170,9 @@ impl Renderer {
             visible: Vec::new(),
             verts: Vec::new(),
             chunks: Vec::new(),
-            exposure: crate::config::EXPOSURE,
+            bloom: Bloom::new(width, height),
+            exposure: config::EXPOSURE,
+            bloom_intensity: config::BLOOM_INTENSITY,
         }
     }
 
@@ -186,7 +203,7 @@ impl Renderer {
                 continue;
             }
             let vert_count = draw.mesh.positions.len();
-            let tri_count = draw.mesh.indices.len();
+            let tri_count = draw.indices.len();
             self.visible.push(VisibleDraw {
                 draw: index,
                 vert_offset: vert_total,
@@ -228,18 +245,15 @@ impl Renderer {
         }
         let t_triangles = Instant::now();
 
-        // 4. Raster por tile al visibility buffer.
+        // 4. Por tile, en una sola pasada: raster al visibility buffer,
+        //    shading diferido y extraccion del brillo para el bloom. El tile
+        //    recien rasterizado se sombrea mientras sigue en la cache.
         let chunks = &self.chunks[..n_chunks];
         let (tiles_x, width, height) = (self.tiles_x, self.width, self.height);
-        parallel::chunks_mut(&mut self.vbuf, TILE_PIXELS, TILE_PIXELS, |tile, pixels| {
-            raster::raster_tile(tile, pixels, chunks, tiles_x, width as i32, height as i32);
-        });
-        let t_raster = Instant::now();
-
-        // 5. Shading diferido.
         let shaded = AtomicU64::new(0);
+        let raster_ns = AtomicU64::new(0);
+        let shade_ns = AtomicU64::new(0);
         let context = shade::ShadeContext {
-            vbuf: &self.vbuf,
             chunks,
             verts,
             draws,
@@ -250,27 +264,60 @@ impl Renderer {
             tiles_x,
             shaded: &shaded,
         };
-        parallel::chunks_mut(&mut self.hdr, TILE_PIXELS, TILE_PIXELS, |tile, out| {
-            shade::shade_tile(tile, out, &context);
+        let base = self.bloom.base_mut();
+        let (base_w, base_h) = (base.width, base.height);
+        let base = DisjointMut::new(&mut base.pixels);
+        let vbuf = DisjointMut::new(&mut self.vbuf);
+        let hdr = DisjointMut::new(&mut self.hdr);
+        parallel::for_each(self.tiles_x * self.tiles_y, |tile| {
+            let t0 = Instant::now();
+            // SAFETY: cada tile toca solo su propio rango de cada buffer.
+            let vis = unsafe { vbuf.range(tile * TILE_PIXELS, TILE_PIXELS) };
+            raster::raster_tile(tile, vis, chunks, tiles_x, width as i32, height as i32);
+            let t1 = Instant::now();
+            let out = unsafe { hdr.range(tile * TILE_PIXELS, TILE_PIXELS) };
+            shade::shade_tile(tile, vis, out, &context);
+            let visible = (
+                TILE.min(width - (tile % tiles_x) * TILE),
+                TILE.min(height - (tile / tiles_x) * TILE),
+            );
+            bloom::extract_tile(tile, out, &base, base_w, base_h, tiles_x, visible, config::BLOOM_THRESHOLD);
+            let t2 = Instant::now();
+            raster_ns.fetch_add((t1 - t0).as_nanos() as u64, Ordering::Relaxed);
+            shade_ns.fetch_add((t2 - t1).as_nanos() as u64, Ordering::Relaxed);
         });
         stats.pixels_shaded = shaded.into_inner();
-        let t_shade = Instant::now();
+        let t_tiles = Instant::now();
 
-        // 6. Tonemap a RGBA8, por bandas de una fila de tiles.
+        // 5. Bloom y tonemap a RGBA8.
+        self.bloom.process();
+        let t_bloom = Instant::now();
+        let params = post::PostParams {
+            width,
+            height,
+            tiles_x,
+            exposure: self.exposure,
+            bloom: self.bloom.result(),
+            bloom_intensity: self.bloom_intensity,
+        };
         let hdr = &self.hdr;
-        let band = width * TILE * 4;
-        let exposure = self.exposure;
-        parallel::chunks_mut(&mut self.rgba, band, band, |index, out| {
-            post::tonemap_band(index, out, hdr, width, tiles_x, exposure);
+        let block = width * 4 * POST_ROWS;
+        parallel::chunks_mut(&mut self.rgba, block, block, |index, out| {
+            post::tonemap_rows(index * POST_ROWS, out, hdr, &params);
         });
         let t_post = Instant::now();
 
         let ms = |a: Instant, b: Instant| (b - a).as_secs_f32() * 1000.0;
         stats.ms_vertex = ms(start, t_vertex);
         stats.ms_triangles = ms(t_vertex, t_triangles);
-        stats.ms_raster = ms(t_triangles, t_raster);
-        stats.ms_shade = ms(t_raster, t_shade);
-        stats.ms_post = ms(t_shade, t_post);
+        // La pasada por tiles se reparte entre raster y shading segun el
+        // tiempo que cada parte sumo en todos los hilos.
+        let tiles_ms = ms(t_triangles, t_tiles);
+        let (r, s) = (raster_ns.into_inner() as f32, shade_ns.into_inner() as f32);
+        stats.ms_raster = tiles_ms * r / (r + s).max(1.0);
+        stats.ms_shade = tiles_ms - stats.ms_raster;
+        stats.ms_bloom = ms(t_tiles, t_bloom);
+        stats.ms_post = ms(t_bloom, t_post);
         stats.ms_total = ms(start, t_post);
         stats
     }

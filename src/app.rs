@@ -8,7 +8,7 @@ use std::f64::consts::PI;
 use std::path::PathBuf;
 
 use crate::config;
-use crate::math::{smoothing, DMat4, DQuat, DVec3};
+use crate::math::{smoothing, DMat4, DQuat, DVec3, Vec3};
 use crate::render::{Draw, Renderer, Stats};
 use crate::scene::camera::{Camera, CameraMode};
 use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
@@ -263,26 +263,6 @@ impl App {
         (self.look_yaw, self.look_pitch) = look;
     }
 
-    /// Recorrido fijo del benchmark: de 3000 unidades de altitud hasta rozar
-    /// la superficie, girando hacia el horizonte. `progress` va de 0 a 1.
-    pub fn apply_bench_frame(&mut self, progress: f64) {
-        let t = 40.0 + progress * 60.0;
-        let planet = &self.system.bodies[1];
-        let center = planet.position(t);
-        let to_star = (self.system.bodies[0].position(t) - center).normalize();
-        let side = to_star.cross(DVec3::Y).normalize();
-        let altitude = (3000f64.ln() + (4f64.ln() - 3000f64.ln()) * progress).exp();
-        let angle = progress * 1.2;
-        let normal = (side * angle.cos() + to_star * angle.sin()).normalize();
-        let pos = center + normal * (planet.radius + altitude);
-        let tangent = normal.cross(DVec3::Y).normalize();
-        let p = 0.15 + 0.85 * progress * progress;
-        let forward = (-normal * (1.0 - p) + tangent * p).normalize();
-        self.place(pos, DQuat::look_rotation(forward, normal), t);
-        self.zoom = 1.0;
-        (self.look_yaw, self.look_pitch) = (0.0, 0.0);
-    }
-
     fn place(&mut self, pos: DVec3, rot: DQuat, t: f64) {
         self.ship = ShipState::new(&self.system.bodies, pos, rot, t);
         self.ship_prev = self.ship;
@@ -311,6 +291,8 @@ fn build_draws<'a>(
         let offset = body.position(t) - camera.pos;
         draws.push(Draw {
             mesh,
+            indices: &mesh.indices,
+            local_offset: Vec3::ZERO,
             model: DMat4::from_affine(&rotation.scale(radius), offset).to_f32(),
             normal: rotation.to_f32(),
             material: body.material,
@@ -324,6 +306,8 @@ fn build_draws<'a>(
         let offset = ship_pos - camera.pos;
         draws.push(Draw {
             mesh,
+            indices: &mesh.indices,
+            local_offset: Vec3::ZERO,
             model: DMat4::from_affine(&rotation, offset).to_f32(),
             normal: rotation.to_f32(),
             material: system.ship_material,

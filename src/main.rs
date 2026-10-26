@@ -237,54 +237,41 @@ fn run_capture(options: &Options, dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Mide cada vista fija `frames` veces y reporta medianas por etapa. Con la
+/// vista fija, la diferencia entre frames es solo ruido de la maquina, y la
+/// mediana lo filtra mucho mejor que la media de un recorrido.
 fn run_bench(options: &Options, frames: usize) -> Result<(), String> {
+    let frames = frames.max(1);
     let mut app = App::new(options.width, options.height)?;
-    app.apply_bench_frame(0.0);
-    app.render();
-    let mut totals = Vec::with_capacity(frames);
-    let mut sum = [0f64; 5];
-    let mut emitted = 0u64;
-    for i in 0..frames {
-        app.apply_bench_frame(i as f64 / frames.saturating_sub(1).max(1) as f64);
-        let s = app.render();
-        totals.push(s.ms_total);
-        for (acc, value) in sum
-            .iter_mut()
-            .zip([s.ms_vertex, s.ms_triangles, s.ms_raster, s.ms_shade, s.ms_post])
-        {
-            *acc += value as f64;
+    println!("{}x{}  {} frames por vista  {} hilos", options.width, options.height, frames, parallel::workers());
+    println!(
+        "{:<16} {:>7} {:>7} | {:>6} {:>6} {:>6} {:>6} {:>6} {:>7}  (medianas, ms)",
+        "vista", "min", "frame", "vert", "tri", "raster", "shade", "bloom", "tonemap"
+    );
+    for preset in Preset::ALL {
+        app.apply_preset(preset);
+        for _ in 0..5 {
+            app.render();
         }
-        emitted += s.triangles.emitted as u64;
+        let samples: Vec<render::Stats> = (0..frames).map(|_| app.render()).collect();
+        let median = |f: fn(&render::Stats) -> f32| {
+            let mut values: Vec<f32> = samples.iter().map(f).collect();
+            values.sort_by(f32::total_cmp);
+            values[values.len() / 2]
+        };
+        let min = samples.iter().map(|s| s.ms_total).fold(f32::MAX, f32::min);
+        println!(
+            "{:<16} {:>7.2} {:>7.2} | {:>6.2} {:>6.2} {:>6.2} {:>6.2} {:>6.2} {:>7.2}",
+            preset.name(),
+            min,
+            median(|s| s.ms_total),
+            median(|s| s.ms_vertex),
+            median(|s| s.ms_triangles),
+            median(|s| s.ms_raster),
+            median(|s| s.ms_shade),
+            median(|s| s.ms_bloom),
+            median(|s| s.ms_post),
+        );
     }
-    if frames == 0 {
-        return Ok(());
-    }
-    totals.sort_by(f32::total_cmp);
-    let n = frames as f64;
-    let mean = totals.iter().map(|&v| v as f64).sum::<f64>() / n;
-    let p95 = totals[((frames as f64 * 0.95) as usize).min(frames - 1)];
-    println!(
-        "{}x{}  {} frames  {} hilos",
-        options.width,
-        options.height,
-        frames,
-        parallel::workers()
-    );
-    println!(
-        "frame: media {:.2} ms ({:.0} fps)   mediana {:.2} ms   p95 {:.2} ms",
-        mean,
-        1000.0 / mean,
-        totals[frames / 2],
-        p95
-    );
-    println!(
-        "etapas (media): vert {:.2}  tri {:.2}  raster {:.2}  shade {:.2}  post {:.2} ms",
-        sum[0] / n,
-        sum[1] / n,
-        sum[2] / n,
-        sum[3] / n,
-        sum[4] / n
-    );
-    println!("triangulos rasterizados por frame: {:.0}", emitted as f64 / n);
     Ok(())
 }
