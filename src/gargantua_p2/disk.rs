@@ -342,6 +342,190 @@ impl GasTexture {
     }
 }
 
+/// Lo que `prepare` calcula solo con el radio, tabulado para la Variante.
+/// Las potencias, raices y rampas del perfil del disco eran la mitad del
+/// costo de cada muestra; con la tabla quedan unas interpolaciones.
+/// `prepare` sigue intacto como referencia (ver las pruebas).
+pub struct RadialTable {
+    entries: Vec<Radial>,
+    /// Color de cuerpo negro en escala logaritmica de temperatura.
+    planck: Vec<Vec3>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Radial {
+    emitted: f32,
+    omega: f32,
+    emitter_time_sqrt: f32,
+    opacity: f32,
+    ramp_fade: f32,
+    cooling: f32,
+    falloff: f32,
+    cool_fraction: f32,
+}
+
+impl Radial {
+    fn of(radius: f32) -> Self {
+        Self {
+            emitted: relativity::disk_temperature(radius),
+            omega: relativity::keplerian_omega(radius),
+            emitter_time_sqrt: (1.0 - 3.0 * config::BLACK_HOLE_MASS / radius)
+                .max(RADIAL_EPSILON)
+                .sqrt(),
+            opacity: opacity(radius),
+            ramp_fade: curves::smoothstep(config::OUTER_GAS_START, config::OUTER_GAS_PEAK, radius)
+                * (1.0
+                    - curves::smoothstep(config::OUTER_GAS_FADE, config::OUTER_GAS_END, radius)),
+            cooling: curves::smoothstep(config::OUTER_GAS_START, config::DISK_OUTER_RADIUS, radius),
+            falloff: (-config::OUTER_GAS_LIGHT_FALLOFF
+                * (radius - config::OUTER_GAS_START).max(0.0))
+            .exp(),
+            cool_fraction: curves::smoothstep(
+                config::DISK_FADE_RADIUS,
+                config::DISK_OUTER_RADIUS,
+                radius,
+            ),
+        }
+    }
+
+    fn lerp(self, o: Self, t: f32) -> Self {
+        let m = |a: f32, b: f32| a + (b - a) * t;
+        Self {
+            emitted: m(self.emitted, o.emitted),
+            omega: m(self.omega, o.omega),
+            emitter_time_sqrt: m(self.emitter_time_sqrt, o.emitter_time_sqrt),
+            opacity: m(self.opacity, o.opacity),
+            ramp_fade: m(self.ramp_fade, o.ramp_fade),
+            cooling: m(self.cooling, o.cooling),
+            falloff: m(self.falloff, o.falloff),
+            cool_fraction: m(self.cool_fraction, o.cool_fraction),
+        }
+    }
+}
+
+const RADIAL_EPSILON: f32 = 1.0e-6;
+const RADIAL_SIZE: usize = 4096;
+const PLANCK_SIZE: usize = 1024;
+const PLANCK_MIN: f32 = 1667.0;
+const PLANCK_MAX: f32 = 25_000.0;
+
+impl RadialTable {
+    pub fn shared() -> &'static Self {
+        static TABLE: std::sync::OnceLock<RadialTable> = std::sync::OnceLock::new();
+        TABLE.get_or_init(|| {
+            let span = config::OUTER_GAS_END - config::DISK_INNER_RADIUS;
+            // En `sqrt(r - r_in)`: mas entradas junto al borde interno, donde
+            // la temperatura sube con pendiente infinita.
+            let entries = (0..RADIAL_SIZE)
+                .map(|i| {
+                    let u = i as f32 / (RADIAL_SIZE - 1) as f32;
+                    Radial::of(config::DISK_INNER_RADIUS + span * u * u)
+                })
+                .collect();
+            let planck = (0..PLANCK_SIZE)
+                .map(|i| {
+                    let x = i as f32 / (PLANCK_SIZE - 1) as f32;
+                    blackbody::planckian_rgb(PLANCK_MIN * (PLANCK_MAX / PLANCK_MIN).powf(x))
+                })
+                .collect();
+            Self { entries, planck }
+        })
+    }
+
+    #[inline]
+    fn at(&self, radius: f32) -> Radial {
+        let span = config::OUTER_GAS_END - config::DISK_INNER_RADIUS;
+        let u = ((radius - config::DISK_INNER_RADIUS) / span).max(0.0).sqrt();
+        let f = (u * (RADIAL_SIZE - 1) as f32).min((RADIAL_SIZE - 1) as f32);
+        let i = (f as usize).min(RADIAL_SIZE - 2);
+        self.entries[i].lerp(self.entries[i + 1], f - i as f32)
+    }
+
+    #[inline]
+    fn planck(&self, temperature: f32) -> Vec3 {
+        let t = temperature.clamp(PLANCK_MIN, PLANCK_MAX);
+        let x = (t / PLANCK_MIN).ln() / (PLANCK_MAX / PLANCK_MIN).ln();
+        let f = x * (PLANCK_SIZE - 1) as f32;
+        let i = (f as usize).min(PLANCK_SIZE - 2);
+        self.planck[i].lerp(self.planck[i + 1], f - i as f32)
+    }
+}
+
+/// `prepare` para la Variante con la tabla radial: el mismo gas, sin
+/// evaluar el perfil del disco en cada muestra.
+#[inline]
+pub fn prepare_variant(
+    hit: Vec3,
+    affine_step: f32,
+    ray: RayFrame,
+    medium: Medium,
+    table: &RadialTable,
+) -> Option<DiskSample> {
+    debug_assert!(medium.enhanced);
+    let radius = Vec2::new(hit.x, hit.z).length();
+    if !(config::DISK_INNER_RADIUS..config::OUTER_GAS_END).contains(&radius) {
+        return None;
+    }
+    let height = radius * config::DISK_HEIGHT_RATIO;
+    let atmosphere_height = radius * medium.atmosphere_ratio;
+    let z = hit.y / height;
+    let atmosphere_z = hit.y / atmosphere_height;
+    let outer_height = radius * medium.outer_ratio;
+    let outer_z = hit.y / outer_height;
+    if atmosphere_z.abs() > 3.5 && outer_z.abs() > 3.5 {
+        return None;
+    }
+    let e = table.at(radius);
+    let observer_time = (1.0 - config::SCHWARZSCHILD_RADIUS / ray.observer_radius)
+        .max(RADIAL_EPSILON);
+    let doppler = 1.0 - e.omega * ray.lz_over_e;
+    let shift = if doppler.abs() < RADIAL_EPSILON {
+        0.0
+    } else {
+        e.emitter_time_sqrt / (doppler * observer_time.sqrt())
+    };
+    let temperature_scale = medium.peak_temperature / config::DISK_TEMPERATURE_PEAK;
+    let observed = e.emitted * shift * temperature_scale;
+    if observed <= 0.0 {
+        return None;
+    }
+    let brightness = (e.emitted * shift / config::DISK_TEMPERATURE_PEAK).powi(4);
+    let thermal_source = table.planck(observed) * brightness * config::DISK_BRIGHTNESS;
+    let thermal_density = if atmosphere_z.abs() <= 3.5 {
+        e.opacity
+            * (config::DISK_OPTICAL_DEPTH * (-0.5 * z * z).exp() / height
+                + medium.atmosphere_depth * (-0.5 * atmosphere_z * atmosphere_z).exp()
+                    / atmosphere_height)
+    } else {
+        0.0
+    };
+    let outer_density = config::OUTER_GAS_OPTICAL_DEPTH
+        * e.ramp_fade
+        * (-0.5 * outer_z * outer_z).exp()
+        / outer_height;
+    let tint = Vec3::new(1.0, 0.82, 0.68).lerp(Vec3::new(0.94, 0.96, 1.0), e.cooling);
+    let outer_source = tint * config::OUTER_GAS_BRIGHTNESS * shift.powi(4) * e.falloff;
+    let cooled = thermal_density * e.cool_fraction;
+    let (thermal_density, outer_density) = (thermal_density - cooled, outer_density + cooled);
+    let density = thermal_density + outer_density;
+    if density <= 1e-10 {
+        return None;
+    }
+    let angle = crate::math::fast_atan2(hit.z, hit.x);
+    let outer_radius = config::OUTER_GAS_END;
+    Some(DiskSample {
+        tex_x: angle.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU
+            * config::PREVIEW_GAS_TEXTURE_WIDTH as f32,
+        tex_y: ((radius - config::DISK_INNER_RADIUS) / (outer_radius - config::DISK_INNER_RADIUS)
+            * (config::PREVIEW_GAS_TEXTURE_HEIGHT - 1) as f32)
+            .clamp(0.0, (config::PREVIEW_GAS_TEXTURE_HEIGHT - 1) as f32),
+        tex_z: ((outer_z / 7.0 + 0.5) * (config::PREVIEW_GAS_TEXTURE_LAYERS - 1) as f32)
+            .clamp(0.0, (config::PREVIEW_GAS_TEXTURE_LAYERS - 1) as f32),
+        emission: (thermal_source * thermal_density + outer_source * outer_density) / density,
+        optical_depth: density / 2.506_628 * affine_step / shift,
+    })
+}
+
 fn opacity(radius: f32) -> f32 {
     let inner = curves::smoothstep(
         config::DISK_INNER_RADIUS,
@@ -451,6 +635,45 @@ fn layer(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_radial_table_matches_prepare() {
+        use super::*;
+        let table = RadialTable::shared();
+        let medium = Medium::VARIANT;
+        let mut checked = 0;
+        for i in 0..20_000u32 {
+            let h = |k: u32| {
+                let x = (i.wrapping_mul(2_654_435_761) ^ k.wrapping_mul(40_503)) % 10_007;
+                x as f32 / 10_007.0
+            };
+            let radius = 2.9 + 16.3 * h(1);
+            let angle = std::f32::consts::TAU * h(2);
+            let y = (h(3) - 0.5) * 0.25 * radius;
+            let hit = Vec3::new(radius * angle.cos(), y, radius * angle.sin());
+            let ray = RayFrame {
+                lz_over_e: (h(4) - 0.5) * 30.0,
+                observer_radius: 20.0 + 100.0 * h(5),
+            };
+            let exact = prepare(hit, 0.1, ray, medium);
+            let fast = prepare_variant(hit, 0.1, ray, medium, table);
+            match (exact, fast) {
+                (None, None) => {}
+                (Some(a), Some(b)) => {
+                    let close = |a: f32, b: f32| (a - b).abs() <= 2e-3 * a.abs().max(b.abs()) + 1e-6;
+                    assert!(close(a.optical_depth, b.optical_depth), "{a:?} {b:?}");
+                    for (p, q) in [(a.emission.x, b.emission.x), (a.emission.y, b.emission.y), (a.emission.z, b.emission.z)] {
+                        assert!(close(p, q), "{a:?} {b:?}");
+                    }
+                    assert!((a.tex_x - b.tex_x).abs() < 0.01 || (a.tex_x - b.tex_x).abs() > 383.0);
+                    assert!((a.tex_y - b.tex_y).abs() < 1e-3 && (a.tex_z - b.tex_z).abs() < 1e-3);
+                    checked += 1;
+                }
+                (a, b) => panic!("una da gas y la otra no: {a:?} {b:?}"),
+            }
+        }
+        assert!(checked > 2000, "pocas muestras con gas: {checked}");
+    }
+
     use super::*;
     #[test]
     fn outer_gas_is_gray_and_fades_to_vacuum() {
