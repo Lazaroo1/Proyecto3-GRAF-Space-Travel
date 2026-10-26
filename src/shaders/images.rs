@@ -4,13 +4,13 @@ use std::{
     path::Path,
     sync::{Arc, OnceLock},
 };
-struct Level {
+struct Level<const N: usize> {
     w: usize,
     h: usize,
-    data: Vec<[u8; 3]>,
+    data: Vec<[u8; N]>,
 }
 pub struct ImageMap {
-    levels: Vec<Level>,
+    levels: Vec<Level<3>>,
     srgb: bool,
 }
 fn linear(v: u8) -> f32 {
@@ -25,50 +25,78 @@ fn table() -> &'static [f32; 256] {
     static T: OnceLock<[f32; 256]> = OnceLock::new();
     T.get_or_init(|| std::array::from_fn(|i| linear(i as u8)))
 }
-impl ImageMap {
-    pub fn load(path: &Path, srgb: bool) -> Result<Self, String> {
-        let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        if b.len() < 8 {
-            return Err("imagen sin cabecera".into());
-        }
-        let w = u32::from_le_bytes(b[..4].try_into().unwrap()) as usize;
-        let h = u32::from_le_bytes(b[4..8].try_into().unwrap()) as usize;
-        if w == 0 || h == 0 || w > 16384 || h > 16384 || b.len() != 8 + w * h * 3 {
-            return Err(format!("imagen RGB invalida: {}", path.display()));
-        }
-        let data = b[8..].chunks_exact(3).map(|p| [p[0], p[1], p[2]]).collect();
-        let mut levels = vec![Level { w, h, data }];
-        while levels.last().unwrap().w > 1 || levels.last().unwrap().h > 1 {
-            let prev = levels.last().unwrap();
-            let w = (prev.w / 2).max(1);
-            let h = (prev.h / 2).max(1);
-            let mut data = Vec::with_capacity(w * h);
-            for y in 0..h {
-                for x in 0..w {
-                    let mut sum = [0u32; 3];
-                    for dy in 0..2 {
-                        for dx in 0..2 {
-                            let p = prev.data[(y * 2 + dy).min(prev.h - 1) * prev.w
-                                + (x * 2 + dx).min(prev.w - 1)];
-                            for c in 0..3 {
-                                sum[c] += p[c] as u32;
-                            }
+/// Lee un `.rgb`: ancho y alto `u32` LE y tres bytes por pixel.
+fn read_rgb(path: &Path) -> Result<Level<3>, String> {
+    let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if b.len() < 8 {
+        return Err("imagen sin cabecera".into());
+    }
+    let w = u32::from_le_bytes(b[..4].try_into().unwrap()) as usize;
+    let h = u32::from_le_bytes(b[4..8].try_into().unwrap()) as usize;
+    if w == 0 || h == 0 || w > 16384 || h > 16384 || b.len() != 8 + w * h * 3 {
+        return Err(format!("imagen RGB invalida: {}", path.display()));
+    }
+    let data = b[8..].chunks_exact(3).map(|p| [p[0], p[1], p[2]]).collect();
+    Ok(Level { w, h, data })
+}
+/// Piramide de mipmaps por promedio de 2x2, canal por canal.
+fn pyramid<const N: usize>(base: Level<N>) -> Vec<Level<N>> {
+    let mut levels = vec![base];
+    while levels.last().unwrap().w > 1 || levels.last().unwrap().h > 1 {
+        let prev = levels.last().unwrap();
+        let w = (prev.w / 2).max(1);
+        let h = (prev.h / 2).max(1);
+        let mut data = Vec::with_capacity(w * h);
+        for y in 0..h {
+            for x in 0..w {
+                let mut sum = [0u32; N];
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let p = prev.data[(y * 2 + dy).min(prev.h - 1) * prev.w
+                            + (x * 2 + dx).min(prev.w - 1)];
+                        for c in 0..N {
+                            sum[c] += p[c] as u32;
                         }
                     }
-                    data.push(sum.map(|v| ((v + 2) / 4) as u8));
                 }
+                data.push(sum.map(|v| ((v + 2) / 4) as u8));
             }
-            levels.push(Level { w, h, data });
         }
-        Ok(Self { levels, srgb })
+        levels.push(Level { w, h, data });
+    }
+    levels
+}
+/// Nivel de mipmap (con su fraccion) para una huella de `footprint` en uv.
+#[inline]
+fn mip_level(footprint: f32, width: usize, levels: usize) -> (usize, f32) {
+    let lod = (footprint * width as f32)
+        .max(1.0)
+        .log2()
+        .min((levels - 1) as f32);
+    let i = lod as usize;
+    (i, lod - i as f32)
+}
+/// Esquina de abajo a la izquierda y pesos de la bilineal en un nivel.
+#[inline]
+fn corners(w: usize, h: usize, uv: Vec2) -> ([usize; 4], f32, f32) {
+    let x = uv.x * w as f32 - 0.5;
+    let y = uv.y * h as f32 - 0.5;
+    let (fx, fy) = (x.floor(), y.floor());
+    let (ix, iy) = (fx as i32, fy as i32);
+    let col = |x: i32| x.rem_euclid(w as i32) as usize;
+    let row = |y: i32| y.rem_euclid(h as i32) as usize * w;
+    let (x0, x1, y0, y1) = (col(ix), col(ix + 1), row(iy), row(iy + 1));
+    ([y0 + x0, y0 + x1, y1 + x0, y1 + x1], x - fx, y - fy)
+}
+impl ImageMap {
+    pub fn load(path: &Path, srgb: bool) -> Result<Self, String> {
+        Ok(Self {
+            levels: pyramid(read_rgb(path)?),
+            srgb,
+        })
     }
     pub fn sample(&self, uv: Vec2, footprint: f32) -> Vec3 {
-        let lod = (footprint * self.levels[0].w as f32)
-            .max(1.0)
-            .log2()
-            .min((self.levels.len() - 1) as f32);
-        let i = lod as usize;
-        let t = lod - i as f32;
+        let (i, t) = mip_level(footprint, self.levels[0].w, self.levels.len());
         let mut c = self.bilinear(i, uv);
         if t > 0.0 && i + 1 < self.levels.len() {
             c = c.lerp(self.bilinear(i + 1, uv), t);
@@ -77,15 +105,9 @@ impl ImageMap {
     }
     fn bilinear(&self, i: usize, uv: Vec2) -> Vec3 {
         let l = &self.levels[i];
-        let x = uv.x * l.w as f32 - 0.5;
-        let y = uv.y * l.h as f32 - 0.5;
-        let ix = x.floor() as i32;
-        let iy = y.floor() as i32;
-        let fx = x - x.floor();
-        let fy = y - y.floor();
-        let pixel = |x: i32, y: i32| {
-            let p =
-                l.data[y.rem_euclid(l.h as i32) as usize * l.w + x.rem_euclid(l.w as i32) as usize];
+        let ([a, b, c, d], fx, fy) = corners(l.w, l.h, uv);
+        let pixel = |index: usize| {
+            let p = l.data[index];
             if self.srgb {
                 let t = table();
                 Vec3::new(t[p[0] as usize], t[p[1] as usize], t[p[2] as usize])
@@ -93,15 +115,93 @@ impl ImageMap {
                 Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32) / 255.0
             }
         };
-        pixel(ix, iy)
-            .lerp(pixel(ix + 1, iy), fx)
-            .lerp(pixel(ix, iy + 1).lerp(pixel(ix + 1, iy + 1), fx), fy)
+        pixel(a)
+            .lerp(pixel(b), fx)
+            .lerp(pixel(c).lerp(pixel(d), fx), fy)
     }
     pub fn sphere(&self, p: Vec3, footprint: f32) -> Vec3 {
         let p = p.normalize();
         let u = p.z.atan2(p.x) / std::f32::consts::TAU + 0.5;
         let v = p.y.clamp(-1.0, 1.0).acos() / std::f32::consts::PI;
         self.sample(Vec2::new(u, v.clamp(0.0001, 0.9999)), footprint)
+    }
+}
+/// Los cuatro mapas de la roca (color, normal, rugosidad y oclusion) en un
+/// solo texel de 8 bytes. Separados, cada muestra triplanar leia cuatro
+/// imagenes distintas; juntos, una sola linea de cache por texel.
+pub struct RockMap {
+    levels: Vec<Level<8>>,
+}
+/// Una muestra de la roca. El color sale lineal; la normal, la rugosidad y
+/// la oclusion quedan como estan en sus archivos (0 a 1).
+pub struct RockTexel {
+    pub color: Vec3,
+    pub normal: Vec3,
+    pub rough: f32,
+    pub ao: f32,
+}
+impl RockMap {
+    fn load(base: &Path) -> Result<Self, String> {
+        let color = read_rgb(&base.join("rock-color.rgb"))?;
+        let normal = read_rgb(&base.join("rock-normal.rgb"))?;
+        let rough = read_rgb(&base.join("rock-rough.rgb"))?;
+        let ao = read_rgb(&base.join("rock-ao.rgb"))?;
+        if [&normal, &rough, &ao]
+            .iter()
+            .any(|l| l.w != color.w || l.h != color.h)
+        {
+            return Err("los mapas de la roca no miden lo mismo".into());
+        }
+        let data = (0..color.data.len())
+            .map(|i| {
+                let (c, n) = (color.data[i], normal.data[i]);
+                [c[0], c[1], c[2], n[0], n[1], n[2], rough.data[i][0], ao.data[i][0]]
+            })
+            .collect();
+        Ok(Self {
+            levels: pyramid(Level {
+                w: color.w,
+                h: color.h,
+                data,
+            }),
+        })
+    }
+    pub fn sample(&self, uv: Vec2, footprint: f32) -> RockTexel {
+        let (i, t) = mip_level(footprint, self.levels[0].w, self.levels.len());
+        let mut c = self.bilinear(i, uv);
+        if t > 0.0 && i + 1 < self.levels.len() {
+            let d = self.bilinear(i + 1, uv);
+            for k in 0..8 {
+                c[k] += (d[k] - c[k]) * t;
+            }
+        }
+        RockTexel {
+            color: Vec3::new(c[0], c[1], c[2]),
+            normal: Vec3::new(c[3], c[4], c[5]),
+            rough: c[6],
+            ao: c[7],
+        }
+    }
+    fn bilinear(&self, i: usize, uv: Vec2) -> [f32; 8] {
+        let l = &self.levels[i];
+        let ([a, b, c, d], fx, fy) = corners(l.w, l.h, uv);
+        let srgb = table();
+        let texel = |index: usize| {
+            let p = l.data[index];
+            let k = 1.0 / 255.0;
+            [
+                srgb[p[0] as usize],
+                srgb[p[1] as usize],
+                srgb[p[2] as usize],
+                p[3] as f32 * k,
+                p[4] as f32 * k,
+                p[5] as f32 * k,
+                p[6] as f32 * k,
+                p[7] as f32 * k,
+            ]
+        };
+        let lerp = |p: [f32; 8], q: [f32; 8], t: f32| std::array::from_fn(|k| p[k] + (q[k] - p[k]) * t);
+        lerp(lerp(texel(a), texel(b), fx), lerp(texel(c), texel(d), fx), fy)
     }
 }
 pub struct ShipMaterial {
@@ -115,10 +215,7 @@ pub struct Resources {
     pub ship: Vec<ShipMaterial>,
     pub jupiter: ImageMap,
     pub moon: ImageMap,
-    pub rock: ImageMap,
-    pub rock_normal: ImageMap,
-    pub rock_rough: ImageMap,
-    pub rock_ao: ImageMap,
+    pub rock: RockMap,
 }
 impl Resources {
     pub fn shared() -> Arc<Self> {
@@ -168,10 +265,7 @@ impl Resources {
             ship,
             jupiter: ImageMap::load(&base.join("jupiter.rgb"), true)?,
             moon: ImageMap::load(&base.join("moon.rgb"), true)?,
-            rock: ImageMap::load(&base.join("rock-color.rgb"), true)?,
-            rock_normal: ImageMap::load(&base.join("rock-normal.rgb"), false)?,
-            rock_rough: ImageMap::load(&base.join("rock-rough.rgb"), false)?,
-            rock_ao: ImageMap::load(&base.join("rock-ao.rgb"), false)?,
+            rock: RockMap::load(base)?,
         })
     }
 }

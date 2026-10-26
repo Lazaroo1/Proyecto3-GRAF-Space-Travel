@@ -38,16 +38,17 @@ pub fn rock(f: &Fragment, u: &super::Uniforms, scale: f32, footprint: f32, stren
         if weight < 0.015 {
             continue;
         }
-        color += maps.rock.sample(uv, footprint * scale) * weight;
-        let normal = maps.rock_normal.sample(uv, footprint * scale) * 2.0 - Vec3::ONE;
+        let texel = maps.rock.sample(uv, footprint * scale);
+        color += texel.color * weight;
+        let normal = texel.normal * 2.0 - Vec3::ONE;
         let slope = Vec2::new(-normal.x, -normal.y) * (1.0 / normal.z.max(0.25));
         grad += match axis {
             0 => Vec3::new(0.0, slope.x, slope.y),
             1 => Vec3::new(slope.y, 0.0, slope.x),
             _ => Vec3::new(slope.x, slope.y, 0.0),
         } * weight;
-        rough += maps.rock_rough.sample(uv, footprint * scale).x * weight;
-        ao += maps.rock_ao.sample(uv, footprint * scale).x * weight;
+        rough += texel.rough * weight;
+        ao += texel.ao * weight;
     }
     let grad = f.object_to_world.mul_vec(grad);
     Rock {
