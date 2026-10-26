@@ -20,6 +20,7 @@
 use super::stats::TriCounters;
 use super::{Draw, View, TILE};
 use crate::math::{Vec2, Vec3, Vec4};
+use crate::shaders::atmosphere::{integrate_all, Fog};
 use crate::shaders::{self, Uniforms};
 
 /// Bits de subpixel del punto fijo: 1/256 de pixel.
@@ -49,6 +50,9 @@ pub struct Varyings {
     pub local: Vec3,
     pub uv: Vec2,
     pub color: Vec3,
+    /// Atmosfera entre la camara y el vertice: luz dispersada y transmitancia.
+    pub fog_scatter: Vec3,
+    pub fog_trans: Vec3,
 }
 
 impl Varyings {
@@ -60,6 +64,8 @@ impl Varyings {
             local: self.local.lerp(o.local, t),
             uv: self.uv + (o.uv - self.uv) * t,
             color: self.color.lerp(o.color, t),
+            fog_scatter: self.fog_scatter.lerp(o.fog_scatter, t),
+            fog_trans: self.fog_trans.lerp(o.fog_trans, t),
         }
     }
 
@@ -72,9 +78,15 @@ impl Varyings {
             local: a.local * wa + b.local * wb + c.local * wc,
             uv: a.uv * wa + b.uv * wb + c.uv * wc,
             color: a.color * wa + b.color * wb + c.color * wc,
+            fog_scatter: a.fog_scatter * wa + b.fog_scatter * wb + c.fog_scatter * wc,
+            fog_trans: a.fog_trans * wa + b.fog_trans * wb + c.fog_trans * wc,
         }
     }
 }
+
+/// Pasos de la atmosfera por vertice. Basta con pocos: la atmosfera cambia
+/// suave y el resultado se interpola entre vertices.
+const FOG_STEPS: usize = 5;
 
 /// Vertice ya transformado: coordenadas de clip y atributos.
 #[derive(Clone, Copy, Debug, Default)]
@@ -183,6 +195,13 @@ pub fn transform_vertices(
             }
             // Modelo: al mundo relativo a la camara. Vista y proyeccion: a clip.
             let world = draw.model.transform_affine(position);
+            // Atmosfera entre la camara y el vertice (aerial perspective).
+            let fog = if uniforms.atmospheres.is_empty() {
+                Fog::CLEAR
+            } else {
+                let distance = world.length();
+                integrate_all(uniforms.atmospheres, world / distance, distance, uniforms.sun_light, FOG_STEPS)
+            };
             out[global - first] = ClipVertex {
                 clip: view.view_proj.transform_point(world),
                 var: Varyings {
@@ -191,6 +210,8 @@ pub fn transform_vertices(
                     local: position + draw.local_offset,
                     uv: mesh.uvs[i],
                     color: mesh.colors[i],
+                    fog_scatter: fog.scattered,
+                    fog_trans: fog.transmittance,
                 },
             };
         }

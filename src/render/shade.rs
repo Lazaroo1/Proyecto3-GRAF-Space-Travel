@@ -45,15 +45,16 @@ pub fn shade_tile(tile: usize, vis: &[VisPixel], out: &mut [Vec3], ctx: &ShadeCo
             let px = (x0 + lx) as f32 + 0.5;
             let pixel = vis[i];
             let dir = ctx.view.pixel_direction(px, py, inv_width, inv_height);
-            let (color, depth) = if pixel.id == VisPixel::EMPTY_ID {
+            let sky = pixel.id == VisPixel::EMPTY_ID;
+            let (color, depth) = if sky {
                 (shaders::sky(dir, ctx.uniforms), f32::INFINITY)
             } else {
                 shaded += 1;
                 shade_surface(pixel.id, px, py, ctx)
             };
-            // Anillos y atmosferas, contra la distancia ya resuelta.
+            // Anillos (y en el cielo, atmosferas) contra la distancia resuelta.
             out[i] = if volumes {
-                shaders::volumes(color, dir, depth, ctx.uniforms)
+                shaders::volumes(color, dir, depth, sky, ctx.uniforms)
             } else {
                 color
             };
@@ -94,9 +95,13 @@ fn shade_surface(id: u32, px: f32, py: f32, ctx: &ShadeContext) -> (Vec3, f32) {
         color: var.color,
     };
     let draw = &ctx.draws[tri.draw as usize];
-    let mut color = shaders::shade(&draw.material, &fragment, ctx.uniforms);
+    // Superficie vista a traves de la atmosfera calculada en los vertices.
+    let mut color = shaders::shade(&draw.material, &fragment, ctx.uniforms) * var.fog_trans + var.fog_scatter;
 
     let debug = ctx.uniforms.debug;
+    if debug.fog_only {
+        color = var.fog_scatter;
+    }
     if debug.lod_colors && draw.tag > 0 {
         let tint = shaders::lod_color(draw.tag - 1);
         color = tint * (0.06 + 0.7 * color.luminance());

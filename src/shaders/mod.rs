@@ -9,6 +9,7 @@
 //! - **Volumenes**: lo que no es una superficie (anillos, atmosferas) se
 //!   calcula por pixel contra la profundidad ya resuelta (`volumes`).
 
+pub mod atmosphere;
 mod cementerio;
 mod jardin;
 mod pira;
@@ -21,6 +22,7 @@ mod vigia;
 
 use crate::math::{Perlin, Vec2, Vec3};
 
+pub use atmosphere::{AtmosphereFrame, AtmosphereModel, AtmosphereParams, SkyView};
 pub use rings::RingInfo;
 pub use ship::ShipStyle;
 pub use sky::{shade as sky, SkyCube};
@@ -33,6 +35,8 @@ pub struct DebugView {
     pub lod_colors: bool,
     /// Dibuja las aristas de los triangulos.
     pub wireframe: bool,
+    /// Muestra solo la luz que la atmosfera agrega en cada superficie.
+    pub fog_only: bool,
 }
 
 /// Valores comunes a todos los pixeles del frame.
@@ -53,6 +57,11 @@ pub struct Uniforms<'a> {
     pub eye_dir: Vec3,
     /// Anillos de Cementerio, si existen.
     pub ring: Option<RingInfo>,
+    /// Atmosferas visibles, de la mas lejana a la mas cercana.
+    pub atmospheres: &'a [AtmosphereFrame<'a>],
+    /// Cielo precalculado de la atmosfera en la que esta la camara, si esta
+    /// dentro de alguna.
+    pub sky_view: Option<&'a SkyView>,
     /// Intensidad de la bioluminiscencia de Jardin (1 normal; sube cuando la
     /// estrella se apaga).
     pub biolum: f32,
@@ -143,17 +152,34 @@ pub fn limb_haze(f: &Fragment, color: Vec3, strength: f32, ndl: f32) -> Vec3 {
 /// Si hay algun volumen que componer este frame.
 #[inline]
 pub fn has_volumes(u: &Uniforms) -> bool {
-    u.ring.is_some()
+    u.ring.is_some() || !u.atmospheres.is_empty()
 }
 
+/// Pasos de la atmosfera por pixel de cielo: ahi esta el detalle fino del
+/// limbo visto desde la orbita.
+const SKY_FOG_STEPS: usize = 6;
+
 /// Mezcla los volumenes que cruza el rayo `dir` (sin normalizar) antes de
-/// llegar a la distancia `depth` (infinita en el cielo).
+/// llegar a la distancia `depth` (infinita en el cielo). Las atmosferas solo
+/// se calculan aqui para el cielo: en las superficies ya vienen de los
+/// vertices.
 #[inline]
-pub fn volumes(color: Vec3, dir: Vec3, depth: f32, u: &Uniforms) -> Vec3 {
+pub fn volumes(color: Vec3, dir: Vec3, depth: f32, sky: bool, u: &Uniforms) -> Vec3 {
     let dir = dir.normalize();
     let mut color = color;
     if let Some(ring) = &u.ring {
         color = rings::composite(color, dir, depth, ring, u);
+    }
+    if sky {
+        // De la mas lejana a la mas cercana; la que rodea a la camara sale
+        // de la tabla del cielo en vez de integrarse.
+        for (i, atmosphere) in u.atmospheres.iter().enumerate() {
+            let fog = match u.sky_view {
+                Some(view) if view.index == i => view.sample(dir),
+                _ => atmosphere.integrate(dir, depth, u.sun_light, SKY_FOG_STEPS),
+            };
+            color = fog.apply(color);
+        }
     }
     color
 }

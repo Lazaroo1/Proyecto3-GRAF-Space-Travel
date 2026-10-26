@@ -69,8 +69,8 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     // un tubo que brilla por dentro, no una franja plana.
     let a = artery(u.noise, dir);
     let artery_aa = (step * ARTERY_FREQUENCY).max(0.003);
-    let halo = smoothstep(0.93, 1.0, a);
-    let arteries = line(a, 0.008, artery_aa) + halo * halo * 0.12;
+    let halo = smoothstep(0.97, 1.0, a);
+    let arteries = line(a, 0.008, artery_aa) + halo * halo * 0.08;
     let capillary_aa = (step * CAPILLARY_FREQUENCY).max(0.004);
     let capillaries = if capillary_aa < 0.1 {
         let value = 1.0 - u.noise.noise(dir * CAPILLARY_FREQUENCY + Vec3::new(4.0, 9.0, -2.0)).abs();
@@ -81,7 +81,10 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
 
     let delay = (u.noise.noise(dir * 1.2) * 0.5 + 0.5) * 2.5;
     let beat = heartbeat((t - delay) as f64, HEARTBEAT_PERIOD) as f32;
-    let veins = VEIN_CYAN.lerp(VEIN_MAGENTA, fold) * (arteries * (0.3 + 1.8 * beat))
+    // Cada arteria es cian o magenta: mezclarlas a medias daria lavanda
+    // casi blanco.
+    let vein_color = VEIN_CYAN.lerp(VEIN_MAGENTA, smoothstep(0.45, 0.55, fold));
+    let veins = vein_color * (arteries * (0.3 + 1.8 * beat))
         + VEIN_CYAN * (capillaries * (0.1 + 0.45 * beat));
     // Poros: solo su borde brilla, como un anillo alrededor de la boca.
     let flicker = (t * 1.3 + f.local.x * 0.05 + f.local.z * 0.07).sin() * 0.5 + 0.5;

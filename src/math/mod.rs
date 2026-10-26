@@ -25,6 +25,20 @@ pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// `e^x` rapido para las atmosferas (error relativo menor que 3e-4).
+///
+/// Se calcula como `2^(x / ln 2)`: la parte entera de la potencia se arma
+/// directo en los bits del exponente de un `f32`, y `2^f` de la parte
+/// fraccionaria sale de un polinomio cubico ajustado en `[0, 1)`.
+#[inline]
+pub fn fast_exp(x: f32) -> f32 {
+    let y = (x * std::f32::consts::LOG2_E).clamp(-126.0, 126.0);
+    let i = y.floor();
+    let f = y - i;
+    let p = 1.0 + f * (0.695_976 + f * (0.224_940 + f * 0.079_440));
+    f32::from_bits(((i as i32 + 127) as u32) << 23) * p
+}
+
 /// Factor de suavizado exponencial independiente de los fps: con `rate` en
 /// 1/s, avanzar `1 - e^(-rate*dt)` por frame da el mismo movimiento a 30 o a
 /// 300 fps. Un `lerp(a, b, 0.1)` fijo por frame no lo da.
