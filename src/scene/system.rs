@@ -13,7 +13,7 @@ use super::props::{self, PropModel, PropSet};
 use super::{icosphere, load_obj, Mesh};
 use crate::config;
 use crate::math::blackbody::planckian_rgb;
-use crate::math::{hash_u32, DQuat, DVec3, Perlin, Vec3};
+use crate::math::{DQuat, DVec3, Perlin, Vec3};
 use crate::shaders::{
     heartbeat, AtmosphereModel, AtmosphereParams, Material, ShipStyle, SkyCube, SunStyle, Textures,
 };
@@ -362,20 +362,7 @@ impl System {
     /// el mismo patron.
     pub fn scatter_props(&mut self, seed: u32) {
         self.prop_seed = seed;
-        self.props = self
-            .bodies
-            .iter()
-            .enumerate()
-            .map(|(index, body)| {
-                let Some(field) = &body.surface else {
-                    return PropSet::default();
-                };
-                let rules = props::rules_for(body.name);
-                let planet_seed = hash_u32(seed ^ hash_u32(index as u32 + 1));
-                let instances = props::scatter(body.radius, &**field, &rules, planet_seed);
-                PropSet::new(instances, &self.prop_models)
-            })
-            .collect();
+        self.props = (0..self.bodies.len()).map(|index| self.scatter_body(index, seed)).collect();
     }
 
     /// Luz de la estrella que llega a los planetas: su color de cuerpo negro

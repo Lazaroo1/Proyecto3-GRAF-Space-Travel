@@ -8,12 +8,14 @@ use std::f64::consts::PI;
 use std::path::PathBuf;
 
 use crate::config;
-use crate::math::{smoothing, DMat4, DQuat, DVec3, Vec3};
-use crate::render::{Draw, Renderer, Stats, View};
+use crate::math::{smoothing, DMat3, DMat4, DQuat, DVec3, Vec3};
+use crate::render::{Draw, Particle, Renderer, Stats, View};
 use crate::scene::camera::{Camera, CameraMode};
+use crate::scene::effects::{self, EXHAUST_COUNT, SPORE_COUNT, STREAM_COUNT};
 use crate::scene::props::{self, Instance, PropKind, PropStats, PropView};
 use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
-use crate::scene::{nearest_surface, System};
+use crate::scene::trajectory::{self, Prediction};
+use crate::scene::{nearest_surface, ribbon, Mesh, System};
 use crate::shaders::{self, heartbeat, AtmosphereFrame, DebugView, Material, PropStyle, RingInfo, SkyView, Uniforms};
 use crate::terrain::{LodSettings, TerrainStats, Viewer};
 
@@ -46,6 +48,12 @@ pub enum Shot {
     Surface { body: &'static str, azimuth: f64, elevation: f64, altitude: f64 },
     /// La nave de cerca, con el planeta detras.
     Ship { body: &'static str },
+    /// La nave sin asistente, de costado a `distance` radios del planeta y
+    /// con `speed` veces la velocidad de una orbita circular: se ve la
+    /// trayectoria que predice la gravedad.
+    Coast { body: &'static str, distance: f64, speed: f64 },
+    /// El chorro de brasas que Pira pierde hacia la estrella, de lejos.
+    Stream,
     /// Un objeto de la superficie de cerca. `distance` en unidades del mundo;
     /// `sun` es el seno de la altura del sol que se busca sobre su horizonte
     /// (bajo y de lado marca el relieve; bajo cero, de noche, se luce lo que
@@ -60,7 +68,7 @@ pub struct Preset {
     pub shot: Shot,
 }
 
-pub const PRESETS: [Preset; 13] = [
+pub const PRESETS: [Preset; 15] = [
     Preset { name: "01_sistema", shot: Shot::Overview },
     Preset { name: "02_pira", shot: Shot::Orbit { body: "Pira", distance: 3.2, azimuth: 0.5, elevation: 0.2 } },
     Preset { name: "03_pira_noche", shot: Shot::Orbit { body: "Pira", distance: 2.8, azimuth: 2.6, elevation: 0.15 } },
@@ -95,6 +103,11 @@ pub const PRESETS: [Preset; 13] = [
         name: "13_naufragio",
         shot: Shot::Landmark { body: "Cementerio", kind: PropKind::Wreck, distance: 40.0, sun: 0.35 },
     },
+    Preset { name: "14_chorro", shot: Shot::Stream },
+    Preset {
+        name: "15_trayectoria",
+        shot: Shot::Coast { body: "Requiem", distance: 2.2, speed: 0.85 },
+    },
 ];
 
 pub struct App {
@@ -108,6 +121,19 @@ pub struct App {
     pub debug: DebugView,
     /// Objetos de la superficie del ultimo frame.
     pub prop_stats: PropStats,
+    /// Trayectoria predicha: siempre (`Some(true)`), nunca (`Some(false)`) o
+    /// solo sin asistente (`None`).
+    pub path_mode: Option<bool>,
+    /// Si el ultimo frame mostro la trayectoria y si termina en un choque.
+    pub path_shown: bool,
+    pub path_impact: bool,
+    /// Cinta de la trayectoria, rehecha cada frame.
+    path_mesh: Mesh,
+    /// Empuje que se ve en los motores, suavizado.
+    throttle: f32,
+    /// Vertical del modo local en el frame anterior: al moverse sobre la
+    /// curvatura, la mira se transporta con ella.
+    local_up: Option<DVec3>,
     ship: ShipState,
     /// Estado del paso anterior: el render interpola entre los dos.
     ship_prev: ShipState,
@@ -161,6 +187,12 @@ impl App {
             },
             debug: DebugView::default(),
             prop_stats: PropStats::default(),
+            path_mode: None,
+            path_shown: false,
+            path_impact: false,
+            path_mesh: Mesh::default(),
+            throttle: 0.0,
+            local_up: None,
             ship,
             ship_prev: ship,
             aim,
@@ -221,6 +253,10 @@ impl App {
             self.sim_time += config::PHYSICS_DT;
             self.accumulator -= config::PHYSICS_DT;
         }
+        // El fuego de los motores sigue al empuje (y al crucero).
+        let cruise = if self.flight.local && self.settings.cruise { config::CRUISE_THRUST } else { 0.0 };
+        let push = (input.thrust.length().min(1.0).max(cruise) * if input.boost { 1.0 } else { 0.6 }) as f32;
+        self.throttle += (push - self.throttle) * smoothing(8.0, frame_dt) as f32;
         // El ojo de Vigia gira despacio hacia la nave.
         let target = eye_target(&self.system, self.ship.world_pos, self.sim_time);
         self.eye = self.eye.lerp(target, smoothing(0.35, frame_dt)).normalize();
@@ -239,13 +275,41 @@ impl App {
             let k = smoothing(6.0, dt);
             self.look_yaw -= self.look_yaw * k;
             self.look_pitch -= self.look_pitch * k;
-            let yaw = DQuat::from_axis_angle(DVec3::Y, -dx * sens);
-            let pitch = DQuat::from_axis_angle(DVec3::X, -dy * sens);
-            self.aim = self.aim * yaw * pitch;
         }
-        let roll = DQuat::from_axis_angle(DVec3::Z, input.roll * config::ROLL_RATE * dt);
-        self.aim = (self.aim * roll).normalize();
+        let (mx, my) = if input.free_look { (0.0, 0.0) } else { (dx * sens, dy * sens) };
+        if self.flight.local {
+            self.steer_local(mx, my, dt);
+        } else {
+            self.local_up = None;
+            let yaw = DQuat::from_axis_angle(DVec3::Y, -mx);
+            let pitch = DQuat::from_axis_angle(DVec3::X, -my);
+            let roll = DQuat::from_axis_angle(DVec3::Z, input.roll * config::ROLL_RATE * dt);
+            self.aim = (self.aim * yaw * pitch * roll).normalize();
+        }
         self.zoom = (self.zoom * (1.0 - 0.1 * input.zoom)).clamp(0.35, 8.0);
+    }
+
+    /// Mira del modo local, como en Mario Galaxy: el "arriba" es siempre la
+    /// vertical del planeta bajo la nave. El mouse gira el rumbo alrededor de
+    /// esa vertical y cabecea con un tope; la mira se transporta con la
+    /// curvatura (el giro que lleva la vertical anterior a la nueva), asi que
+    /// avanzar derecho rodea el planeta por un circulo maximo. El alabeo se
+    /// quita suave: al entrar al modo la nave se nivela sin saltar.
+    fn steer_local(&mut self, dx: f64, dy: f64, dt: f64) {
+        let body = &self.system.bodies[self.ship.frame];
+        let up = (self.ship.world_pos - body.position(self.sim_time)).normalize();
+        if let Some(previous) = self.local_up {
+            self.aim = DQuat::from_rotation_arc(previous, up) * self.aim;
+        }
+        self.local_up = Some(up);
+        let yaw = DQuat::from_axis_angle(up, -dx);
+        let mut aim = yaw * self.aim * DQuat::from_axis_angle(DVec3::X, -dy);
+        // Cabeceo maximo de 75 grados: mas alla se deshace el del mouse.
+        if aim.forward().dot(up).abs() > 75f64.to_radians().sin() {
+            aim = yaw * self.aim;
+        }
+        let level = DQuat::look_rotation(aim.forward(), up);
+        self.aim = aim.slerp(level, smoothing(5.0, dt)).normalize();
     }
 
     /// Renderiza el estado interpolado entre los dos ultimos pasos de fisica.
@@ -262,8 +326,24 @@ impl App {
 
         let show_ship = self.camera_mode == CameraMode::Chase;
         let pixel_angle = 2.0 * (camera.fov_y * 0.5).tan() / self.renderer.height() as f64;
+        self.build_path(t, &camera, pixel_angle);
+        self.emit_particles(t, &camera, ship_pos, ship_rot, show_ship);
         let mut draws = build_draws(&self.system, t, &camera, ship_pos, ship_rot, show_ship);
         self.prop_stats = prop_draws(&self.system, t, &camera, &view, pixel_angle, &mut draws);
+        if !self.path_mesh.indices.is_empty() {
+            let mesh = &self.path_mesh;
+            draws.push(Draw {
+                mesh,
+                indices: &mesh.indices,
+                local_offset: Vec3::ZERO,
+                model: DMat4::from_affine(&DMat3::IDENTITY, DVec3::ZERO).to_f32(),
+                normal: DMat3::IDENTITY.to_f32(),
+                material: Material::Line(Vec3::ONE),
+                bounds_center: mesh.bounds_center,
+                bounds_radius: mesh.bounds_radius,
+                tag: 0,
+            });
+        }
         let atmospheres = atmosphere_frames(&self.system, t, &camera, &view);
         let sun_light = self.system.star_light(t);
         // Si la camara esta dentro de una atmosfera, su cielo sale de una tabla.
@@ -292,6 +372,81 @@ impl App {
         };
         self.stats = self.renderer.render(&draws, &view, &uniforms);
         self.stats
+    }
+
+    /// Cinta con la caida libre predicha de la nave: cian mientras sigue en
+    /// el marco de su cuerpo, naranja despues de cambiar de region, y un aro
+    /// rojo donde chocaria.
+    fn build_path(&mut self, t: f64, camera: &Camera, pixel_angle: f64) {
+        let mesh = &mut self.path_mesh;
+        *mesh = Mesh::default();
+        let show = self.path_mode.unwrap_or(!self.settings.assist);
+        self.path_shown = show;
+        self.path_impact = false;
+        if !show {
+            return;
+        }
+        let bodies = &self.system.bodies;
+        let Prediction { legs, impact } = trajectory::predict(&self.ship, bodies, t);
+        let pixel = pixel_angle as f32;
+        for (k, leg) in legs.iter().enumerate() {
+            let base = bodies[leg.frame].position(t) - camera.pos;
+            let points: Vec<Vec3> = leg.points.iter().map(|p| (base + *p).as_vec3()).collect();
+            let color = if k == 0 { Vec3::new(0.2, 0.85, 1.0) } else { Vec3::new(1.0, 0.55, 0.15) };
+            ribbon(mesh, &points, 2.5, pixel, color * 1.4);
+        }
+        if let (Some(hit), Some(leg)) = (impact, legs.last()) {
+            self.path_impact = true;
+            let base = bodies[leg.frame].position(t) - camera.pos;
+            let up = hit.normalize();
+            let (a, b) = {
+                let helper = if up.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
+                let a = helper.cross(up).normalize();
+                (a, up.cross(a))
+            };
+            let ring: Vec<Vec3> = (0..=32)
+                .map(|i| {
+                    let angle = i as f64 / 32.0 * std::f64::consts::TAU;
+                    (base + hit + up * 0.5 + (a * angle.cos() + b * angle.sin()) * 4.0).as_vec3()
+                })
+                .collect();
+            ribbon(mesh, &ring, 3.0, pixel, Vec3::new(2.5, 0.3, 0.2));
+        }
+        mesh.update_bounds();
+    }
+
+    /// Particulas del frame: el chorro de brasas de Pira, las esporas de
+    /// Jardin si la camara esta cerca de su suelo y el fuego de los motores.
+    fn emit_particles(&mut self, t: f64, camera: &Camera, ship_pos: DVec3, ship_rot: DQuat, show_ship: bool) {
+        let blank = Particle {
+            pos: Vec3::ZERO,
+            radius: 0.0,
+            color: Vec3::ZERO,
+        };
+        let mut out = std::mem::take(&mut self.renderer.particles);
+        out.clear();
+        let system = &self.system;
+        let star = &system.bodies[0];
+        if let Some(i) = system.find("Pira") {
+            out.resize(STREAM_COUNT, blank);
+            effects::pira_stream(&mut out, &system.bodies[i], star, t, camera.pos);
+        }
+        if let Some(i) = system.find("Jardin") {
+            let jardin = &system.bodies[i];
+            let altitude = (camera.pos - jardin.position(t)).length() - jardin.radius;
+            if altitude < 120.0 {
+                let start = out.len();
+                out.resize(start + SPORE_COUNT, blank);
+                let night = effects::night_at(jardin, star, camera.pos, t);
+                effects::spores(&mut out[start..], jardin, t, camera.pos, night, 1.0);
+            }
+        }
+        if show_ship && self.throttle > 0.01 {
+            let start = out.len();
+            out.resize(start + EXHAUST_COUNT, blank);
+            effects::exhaust(&mut out[start..], ship_pos, ship_rot, self.throttle, config::SHIP_LENGTH, t, camera.pos);
+        }
+        self.renderer.particles = out;
     }
 
     /// Cada planeta con terreno elige sus chunks segun la camara. El recorrido
@@ -395,11 +550,38 @@ impl App {
                 let pos = center + dir * (bodies[i].radius * 2.2);
                 (pos, center - pos, up, 0.55, (0.7, -0.2))
             }
+            Shot::Coast { body, distance, .. } => {
+                // De costado al planeta, en el plano de su orbita, mirando
+                // hacia donde va: la orbita queda acostada frente a la camara.
+                let i = index(body);
+                let (center, to_star, side, up) = frame(i);
+                let pos = center + side * (bodies[i].radius * distance);
+                (pos, to_star, up, 3.5, (0.35, -0.45))
+            }
+            Shot::Stream => {
+                // Por encima del plano de la orbita, viendo de Pira a la estrella.
+                let i = index("Pira");
+                let (center, to_star, side, up) = frame(i);
+                let star = center + to_star * (center.length());
+                let middle = (center + star) * 0.5;
+                let pos = middle + up * 900.0 + side * 700.0 - to_star * 250.0;
+                (pos, middle - pos, up, 1.0, (0.0, 0.0))
+            }
             Shot::Landmark { body, kind, distance, sun } => {
                 let i = index(body);
                 let (pos, target, up) = self.landmark(i, kind, distance, sun, t);
                 (pos, target - pos, up, 1.0, (0.0, 0.0))
             }
+        };
+        // Para la vista sin asistente: hacia donde va la orbita y su gravedad.
+        let coast = match preset.shot {
+            Shot::Coast { body, speed, .. } => {
+                let i = index(body);
+                let (_, to_star, side, _) = frame(i);
+                let _ = side;
+                Some((to_star, bodies[i].mu, speed))
+            }
+            _ => None,
         };
         self.place(pos, DQuat::look_rotation(forward, view_up), t);
         self.zoom = zoom;
@@ -407,9 +589,20 @@ impl App {
         // En la vista del sistema y frente a los objetos la nave estorbaria:
         // se mira desde la cabina.
         self.camera_mode = match preset.shot {
-            Shot::Overview | Shot::Landmark { .. } => CameraMode::Cockpit,
+            Shot::Overview | Shot::Landmark { .. } | Shot::Stream => CameraMode::Cockpit,
             _ => CameraMode::Chase,
         };
+        // Sin asistente y con velocidad de orbita: la gravedad manda.
+        self.settings.assist = true;
+        self.path_mode = None;
+        if let Some((along, mu, speed)) = coast {
+            let rel = self.ship.rel_pos;
+            let r = rel.length();
+            let tangent = (along - rel * (along.dot(rel) / (r * r))).normalize();
+            self.ship.rel_vel = tangent * ((mu / r).sqrt() * speed);
+            self.ship_prev = self.ship;
+            self.settings.assist = false;
+        }
     }
 
     /// Encuadre de un objeto de tipo `kind` del cuerpo `index`: devuelve la
@@ -417,9 +610,8 @@ impl App {
     ///
     /// Entre todos los objetos de ese tipo elige el que tiene el sol mas cerca
     /// de la altura pedida y, en los monolitos, una cara con el glifo de lado
-    /// al sol. La camara se para
-    /// frente a esa cara, o a 60 grados del sol en los demas; si una loma
-    /// tapa el objeto, prueba otros angulos alrededor.
+    /// al sol. La camara se para frente a esa cara, o a 60 grados del sol en
+    /// los demas; si una loma tapa el objeto, prueba otros angulos alrededor.
     fn landmark(&self, index: usize, kind: PropKind, distance: f64, sun_height: f64, t: f64) -> (DVec3, DVec3, DVec3) {
         let body = &self.system.bodies[index];
         let center = body.position(t);
@@ -494,6 +686,7 @@ impl App {
         self.sim_time = t + config::PHYSICS_DT;
         self.accumulator = 0.0;
         self.flight.nearest = nearest_surface(&self.system.bodies, pos, t).0;
+        self.local_up = None;
         self.eye = eye_target(&self.system, pos, t);
     }
 }
@@ -685,4 +878,41 @@ fn build_draws<'a>(
         });
     }
     draws
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// La app completa, sin ventana: en el modo local, mantener W rodea el
+    /// planeta con la mira nivelada y la altura sostenida.
+    #[test]
+    fn holding_forward_in_local_mode_circles_the_planet_level() {
+        let mut app = App::new(64, 36).unwrap();
+        let preset = Preset {
+            name: "prueba",
+            shot: Shot::Surface { body: "Jardin", azimuth: 0.4, elevation: 0.2, altitude: 20.0 },
+        };
+        app.apply_preset(&preset);
+        let jardin = app.system.find("Jardin").unwrap();
+        let start = app.ship.world_pos - app.system.bodies[jardin].position(app.sim_time);
+        let input = FrameInput {
+            thrust: DVec3::new(0.0, 0.0, -1.0),
+            ..FrameInput::default()
+        };
+        for _ in 0..(30 * 60) {
+            app.update(1.0 / 60.0, &input);
+        }
+        let body = &app.system.bodies[jardin];
+        let rel = app.ship.world_pos - body.position(app.sim_time);
+        let up = rel.normalize();
+        assert!(app.flight.local, "el modo local deberia estar activo");
+        // La mira no tiene alabeo: su derecha es horizontal.
+        assert!(app.aim.right().dot(up).abs() < 0.02, "alabeo {}", app.aim.right().dot(up));
+        // Avanzo un buen trecho sobre la superficie y sigue a su altura.
+        let traveled = rel.normalize().dot(start.normalize()).clamp(-1.0, 1.0).acos() * body.radius;
+        assert!(traveled > 100.0, "recorrio {traveled}");
+        let altitude = rel.length() - body.radius - body.surface_height(rel, app.sim_time);
+        assert!(altitude > 8.0 && altitude < 40.0, "altitud {altitude}");
+    }
 }

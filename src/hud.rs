@@ -62,8 +62,8 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud) {
                 t.input, t.frustum, t.backface, t.small
             ),
             format!(
-                "recortados {}   rasterizados {}   pixeles {}",
-                t.clipped, t.emitted, s.pixels_shaded
+                "recortados {}   rasterizados {}   pixeles {}   particulas {}",
+                t.clipped, t.emitted, s.pixels_shaded, s.particles
             ),
             terrain,
             props,
@@ -73,6 +73,19 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud) {
 
     let f = &app.flight;
     let contact = if f.contact { "   CONTACTO" } else { "" };
+    let local = match (app.settings.local, f.local, f.hold) {
+        (false, _, _) => "OFF".to_string(),
+        (true, true, Some(h)) => format!("ACTIVO sobre {}, sostiene {:.0}", app.body_name(f.frame), h),
+        (true, true, None) => format!("ACTIVO sobre {}", app.body_name(f.frame)),
+        (true, false, _) if !app.settings.assist => "ON (necesita asistencia)".to_string(),
+        (true, false, _) => "ON (lejos de un planeta)".to_string(),
+    };
+    let path = match app.path_mode {
+        None => "AUTO",
+        Some(true) => "ON",
+        Some(false) => "OFF",
+    };
+    let impact = if app.path_shown && app.path_impact { "   CHOQUE PREDICHO" } else { "" };
     let lines = [
         format!("velocidad {:.1} u/s   (max {:.0})", f.speed, f.max_speed),
         format!("altitud {:.1} sobre {}", f.altitude, app.body_name(f.nearest)),
@@ -82,6 +95,11 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud) {
             on_off(app.settings.assist),
             on_off(app.settings.gravity)
         ),
+        format!("modo local [L]: {local}"),
+        format!(
+            "crucero [O] {}   trayectoria [V] {path}{impact}",
+            on_off(app.settings.cruise)
+        ),
     ];
     panel(d, 10, 10, &lines, true, width);
 
@@ -90,6 +108,7 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud) {
             "Mouse: apuntar   Clic derecho: mirar alrededor   Rueda: distancia".to_string(),
             "W/S: adelante/atras   A/D: lados   Espacio/Ctrl: subir/bajar".to_string(),
             "Q/E: alabeo   Shift: turbo   C: camara   P: foto   Tab: soltar el mouse".to_string(),
+            "L: modo local   O: crucero (rodea el planeta)   V: trayectoria".to_string(),
             "F3: wireframe   F4: colores de LOD   F5: LOD on/off   F6: otra semilla".to_string(),
             "F1: ayuda   F2: estadisticas   Esc: salir".to_string(),
         ];

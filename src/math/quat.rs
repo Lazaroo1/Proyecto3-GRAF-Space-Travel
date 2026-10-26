@@ -112,6 +112,22 @@ impl DQuat {
 
     /// Orientacion cuyo -Z apunta a `forward` y cuyo +Y queda lo mas cerca
     /// posible de `up`.
+    /// El giro mas corto que lleva la direccion unitaria `a` a `b`.
+    pub fn from_rotation_arc(a: DVec3, b: DVec3) -> Self {
+        let axis = a.cross(b);
+        let sin = axis.length();
+        let cos = a.dot(b);
+        if sin < 1e-12 {
+            if cos > 0.0 {
+                return Self::IDENTITY;
+            }
+            // Opuestas: media vuelta alrededor de cualquier perpendicular.
+            let helper = if a.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+            return Self::from_axis_angle(a.cross(helper).normalize(), std::f64::consts::PI);
+        }
+        Self::from_axis_angle(axis / sin, sin.atan2(cos))
+    }
+
     pub fn look_rotation(forward: DVec3, up: DVec3) -> Self {
         let z = -forward.normalize();
         let mut x = up.cross(z);

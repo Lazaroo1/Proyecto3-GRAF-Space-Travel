@@ -7,6 +7,7 @@
 //!  -> triangulos: descarte, recorte, setup y reparto en tiles        (paralelo)
 //!  -> raster por tile: profundidad + id del triangulo visible        (paralelo)
 //!  -> shading diferido: un fragment shader por pixel visible         (paralelo)
+//!  -> particulas: luz que se suma delante de la superficie            (paralelo)
 //!  -> tonemap HDR -> RGBA8                                            (paralelo)
 //! ```
 //!
@@ -24,6 +25,7 @@
 //! hilo reciba un bloque contiguo de memoria con `chunks_mut`.
 
 mod bloom;
+mod particles;
 mod pipeline;
 pub mod png;
 mod post;
@@ -41,6 +43,8 @@ use crate::scene::Mesh;
 use crate::shaders::{Material, Uniforms};
 
 use bloom::Bloom;
+use particles::ParticleBins;
+pub use particles::Particle;
 use pipeline::{ClipVertex, ScreenSetup, TriChunk, VisibleDraw, TRIS_PER_CHUNK};
 pub use stats::Stats;
 
@@ -154,6 +158,10 @@ pub struct Renderer {
     verts: Vec<ClipVertex>,
     chunks: Vec<TriChunk>,
     bloom: Bloom,
+    /// Particulas del proximo frame, relativas a la camara. El juego las
+    /// llena antes de llamar a `render`.
+    pub particles: Vec<Particle>,
+    particle_bins: ParticleBins,
     pub exposure: f32,
     pub bloom_intensity: f32,
 }
@@ -175,6 +183,8 @@ impl Renderer {
             verts: Vec::new(),
             chunks: Vec::new(),
             bloom: Bloom::new(width, height),
+            particles: Vec::new(),
+            particle_bins: ParticleBins::new(),
             exposure: config::EXPOSURE,
             bloom_intensity: config::BLOOM_INTENSITY,
         }
@@ -247,6 +257,9 @@ impl Renderer {
         for chunk in &self.chunks[..n_chunks] {
             stats.triangles.accumulate(&chunk.counters);
         }
+        let tiles = self.tiles_x * self.tiles_y;
+        self.particle_bins.build(&self.particles, view, self.width, self.height, self.tiles_x, tiles);
+        stats.particles = self.particle_bins.splats.len() as u32;
         let t_triangles = Instant::now();
 
         // 4. Por tile, en una sola pasada: raster al visibility buffer,
@@ -273,7 +286,8 @@ impl Renderer {
         let base = DisjointMut::new(&mut base.pixels);
         let vbuf = DisjointMut::new(&mut self.vbuf);
         let hdr = DisjointMut::new(&mut self.hdr);
-        parallel::for_each(self.tiles_x * self.tiles_y, |tile| {
+        let particle_bins = &self.particle_bins;
+        parallel::for_each(tiles, |tile| {
             let t0 = Instant::now();
             // SAFETY: cada tile toca solo su propio rango de cada buffer.
             let vis = unsafe { vbuf.range(tile * TILE_PIXELS, TILE_PIXELS) };
@@ -281,6 +295,7 @@ impl Renderer {
             let t1 = Instant::now();
             let out = unsafe { hdr.range(tile * TILE_PIXELS, TILE_PIXELS) };
             shade::shade_tile(tile, vis, out, &context);
+            particles::splat_tile(tile, vis, out, particle_bins, tiles_x, width, height);
             let visible = (
                 TILE.min(width - (tile % tiles_x) * TILE),
                 TILE.min(height - (tile / tiles_x) * TILE),

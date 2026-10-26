@@ -88,6 +88,12 @@ pub const MOUSE_SENSITIVITY: f64 = 0.0022;
 pub const COLLISION_CLEARANCE: f64 = 1.5;
 /// Fraccion de la velocidad contra la superficie que rebota al chocar.
 pub const RESTITUTION: f64 = 0.25;
+/// El modo local se activa por debajo de esta altitud, en radios del planeta.
+pub const LOCAL_RANGE: f64 = 1.5;
+/// Ganancia (1/s) con la que el modo local recupera la altura que sostiene.
+pub const HOLD_GAIN: f64 = 1.5;
+/// Empuje hacia adelante del crucero (fraccion de la velocidad maxima).
+pub const CRUISE_THRUST: f64 = 0.6;
 
 // Camara -----------------------------------------------------------------
 

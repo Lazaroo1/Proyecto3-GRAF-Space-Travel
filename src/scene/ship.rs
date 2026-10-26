@@ -18,6 +18,15 @@
 //! corrigen la diferencia con aceleracion limitada: la nave acelera, frena y
 //! se detiene de forma progresiva, y compensa la gravedad. Sin asistente es
 //! newtoniana pura: soltar las teclas no la detiene y la gravedad la curva.
+//!
+//! # Modo local
+//! Cerca de un planeta el vuelo se mide contra su **superficie**, que gira:
+//! quedarse quieto es flotar sobre el mismo punto del suelo. Las teclas
+//! mueven sobre el plano tangente siguiendo la curvatura, y la nave sostiene
+//! sola su altura sobre el terreno (mirando el suelo que viene adelante).
+//! Rodear un planeta es mantener W presionada; el crucero lo hace solo.
+
+use std::f64::consts::TAU;
 
 use super::{nearest_surface, Body};
 use crate::config::*;
@@ -34,6 +43,8 @@ pub struct ShipState {
     pub ang_vel: DVec3,
     /// Posicion en el mundo al final del ultimo paso.
     pub world_pos: DVec3,
+    /// Altura sobre el terreno que sostiene el modo local.
+    pub hold: Option<f64>,
 }
 
 /// Lo que el piloto pide en este paso.
@@ -50,6 +61,10 @@ pub struct Controls {
 pub struct FlightSettings {
     pub assist: bool,
     pub gravity: bool,
+    /// Modo local cerca de los planetas (necesita el asistente).
+    pub local: bool,
+    /// Crucero: en el modo local, avanza solo rodeando el planeta.
+    pub cruise: bool,
 }
 
 impl Default for FlightSettings {
@@ -57,6 +72,8 @@ impl Default for FlightSettings {
         Self {
             assist: true,
             gravity: true,
+            local: true,
+            cruise: false,
         }
     }
 }
@@ -70,6 +87,10 @@ pub struct FlightInfo {
     pub nearest: usize,
     pub frame: usize,
     pub contact: bool,
+    /// Si el modo local estuvo activo en este paso.
+    pub local: bool,
+    /// Altura sobre el terreno que sostiene el modo local.
+    pub hold: Option<f64>,
 }
 
 impl ShipState {
@@ -83,6 +104,7 @@ impl ShipState {
             rot,
             ang_vel: DVec3::ZERO,
             world_pos,
+            hold: None,
         }
     }
 
@@ -103,9 +125,32 @@ impl ShipState {
     }
 }
 
+/// Velocidad angular del giro de un cuerpo sobre su eje, en ejes del mundo.
+/// El giro es `Rz(inclinacion) * Ry(angulo)`: el eje es +Y inclinado.
+pub fn angular_velocity(body: &Body) -> DVec3 {
+    if body.spin_period == 0.0 {
+        return DVec3::ZERO;
+    }
+    DQuat::from_axis_angle(DVec3::Z, body.axial_tilt).rotate(DVec3::Y) * (TAU / body.spin_period)
+}
+
+/// Rumbo sobre el plano tangente a `up`: el frente de la mira sin su
+/// inclinacion, y su derecha. Mirando justo arriba o abajo, el rumbo sale
+/// del "arriba" de la mira.
+pub fn heading(aim: DQuat, up: DVec3) -> (DVec3, DVec3) {
+    let look = aim.forward();
+    let mut forward = look - up * look.dot(up);
+    if forward.length_squared() < 1e-8 {
+        let top = aim.up() * -look.dot(up).signum();
+        forward = top - up * top.dot(up);
+    }
+    let forward = forward.normalize();
+    (forward, forward.cross(up))
+}
+
 /// El cuerpo de region mas pequena que contiene a `p`. La estrella tiene
 /// region infinita: es el marco cuando no hay otro.
-fn dominant_body(bodies: &[Body], p: DVec3, t: f64) -> usize {
+pub fn dominant_body(bodies: &[Body], p: DVec3, t: f64) -> usize {
     let mut best = 0;
     let mut best_soi = f64::INFINITY;
     for (i, body) in bodies.iter().enumerate() {
@@ -150,8 +195,20 @@ pub fn step(
         DVec3::ZERO
     };
 
-    let thrust = controls.thrust.clamp_length(1.0);
-    let engine = if settings.assist {
+    // Altura sobre el terreno del cuerpo de referencia.
+    let frame_altitude = s.rel_pos.length() - body.radius - body.surface_height(s.rel_pos, t);
+    let local = settings.assist && settings.local && s.frame != 0 && frame_altitude < LOCAL_RANGE * body.radius;
+    if !local {
+        s.hold = None;
+    }
+
+    let mut thrust = controls.thrust.clamp_length(1.0);
+    let engine = if local {
+        if settings.cruise && thrust.z == 0.0 {
+            thrust.z = -CRUISE_THRUST;
+        }
+        local_engine(s, body, controls.aim, thrust, max_speed, max_accel, gravity, t)
+    } else if settings.assist {
         let local_vel = s.rot.conjugate().rotate(s.rel_vel);
         let correction = s.rot.rotate((thrust * max_speed - local_vel) * ASSIST_GAIN);
         (correction - gravity).clamp_length(max_accel)
@@ -187,7 +244,49 @@ pub fn step(
         nearest,
         frame: s.frame,
         contact,
+        local,
+        hold: s.hold,
     }
+}
+
+/// Empuje del modo local. La velocidad que se pide es relativa a la
+/// superficie que gira; ademas de corregir la diferencia, los propulsores
+/// pagan la aceleracion de girar con el planeta y anulan la gravedad.
+#[allow(clippy::too_many_arguments)]
+fn local_engine(
+    s: &mut ShipState,
+    body: &Body,
+    aim: DQuat,
+    thrust: DVec3,
+    max_speed: f64,
+    max_accel: f64,
+    gravity: DVec3,
+    t: f64,
+) -> DVec3 {
+    let up = s.rel_pos.normalize();
+    let omega = angular_velocity(body);
+    let surface = omega.cross(s.rel_pos);
+    let (forward, right) = heading(aim, up);
+    // Empuje en ejes de la nave: x derecha, z atras.
+    let horizontal = (right * thrust.x - forward * thrust.z) * max_speed;
+    let altitude_at = |p: DVec3| p.length() - body.radius - body.surface_height(p, t);
+    let vertical = if thrust.y != 0.0 {
+        s.hold = None;
+        thrust.y * max_speed
+    } else {
+        let now = altitude_at(s.rel_pos);
+        let target = *s.hold.get_or_insert(now);
+        // Lo que importa es el suelo mas alto entre el de ahora y el que se
+        // tendra debajo en medio segundo y en un segundo.
+        let lowest = [0.5, 1.0]
+            .iter()
+            .map(|&secs| altitude_at(s.rel_pos + horizontal * secs))
+            .fold(now, f64::min);
+        ((target - lowest) * HOLD_GAIN).clamp(-max_speed, max_speed)
+    };
+    let desired = surface + horizontal + up * vertical;
+    let follow = omega.cross(surface);
+    ((desired - s.rel_vel) * ASSIST_GAIN + follow - gravity).clamp_length(max_accel)
 }
 
 #[cfg(test)]
@@ -218,6 +317,78 @@ mod tests {
         let altitude = (ship.world_pos - planet.position(t)).length() - planet.radius;
         assert!((altitude - 20.0).abs() < 0.5, "altitud {altitude}");
         assert!(ship.rel_vel.length() < 0.2);
+    }
+
+    #[test]
+    fn local_mode_keeps_the_altitude_and_goes_around_the_planet() {
+        let sys = system();
+        let planet = &sys.bodies[2];
+        let t0 = 20.0;
+        let dir = DVec3::new(0.3, 0.8, 0.5).normalize();
+        let ground = planet.surface_height(dir, t0);
+        let pos = planet.position(t0) + dir * (planet.radius + ground + 25.0);
+        let aim = DQuat::look_rotation(dir.cross(DVec3::X), dir);
+        let mut ship = ShipState::new(&sys.bodies, pos, aim, t0);
+        let settings = FlightSettings {
+            cruise: true,
+            ..FlightSettings::default()
+        };
+        let controls = Controls {
+            aim,
+            ..Controls::default()
+        };
+        let mut t = t0;
+        let mut info = FlightInfo::default();
+        let (mut low, mut high) = (f64::MAX, f64::MIN);
+        for k in 0..(20.0 * PHYSICS_HZ) as usize {
+            info = step(&mut ship, &controls, &settings, &sys.bodies, t, PHYSICS_DT);
+            t += PHYSICS_DT;
+            if k > (2.0 * PHYSICS_HZ) as usize {
+                let rel = ship.world_pos - planet.position(t);
+                let altitude = rel.length() - planet.radius - planet.surface_height(rel, t);
+                low = low.min(altitude);
+                high = high.max(altitude);
+            }
+        }
+        assert!(info.local);
+        assert!(low > 12.0 && high < 40.0, "altitud entre {low} y {high}");
+        // Avanzo sobre la superficie: el angulo recorrido es grande.
+        let rel = (ship.world_pos - planet.position(t)).normalize();
+        assert!(rel.dot(dir) < 0.95, "avance {}", rel.dot(dir).acos());
+    }
+
+    #[test]
+    fn local_mode_hovers_over_the_same_ground_while_the_planet_spins() {
+        let sys = system();
+        let planet = &sys.bodies[2];
+        let t0 = 30.0;
+        let dir = DVec3::new(0.9, 0.1, 0.2).normalize();
+        let pos = planet.position(t0) + dir * (planet.radius + planet.surface_height(dir, t0) + 15.0);
+        let aim = DQuat::look_rotation(dir.cross(DVec3::Y), dir);
+        let mut ship = ShipState::new(&sys.bodies, pos, aim, t0);
+        // El punto del suelo bajo la nave, en el espacio del planeta.
+        let below = |s: &ShipState, t: f64| {
+            planet.rotation(t).conjugate().rotate(s.world_pos - planet.position(t)).normalize()
+        };
+        let controls = Controls {
+            aim,
+            ..Controls::default()
+        };
+        let mut t = t0;
+        let mut run = |ship: &mut ShipState, seconds: f64| {
+            for _ in 0..(seconds * PHYSICS_HZ) as usize {
+                step(ship, &controls, &FlightSettings::default(), &sys.bodies, t, PHYSICS_DT);
+                t += PHYSICS_DT;
+            }
+            t
+        };
+        // Al empezar la nave esta quieta y el suelo gira: el asistente tarda
+        // un momento en igualarlo. Despues ya no se desliza.
+        let settled = run(&mut ship, 3.0);
+        let start = below(&ship, settled);
+        let end = run(&mut ship, 10.0);
+        let drift = below(&ship, end).dot(start).clamp(-1.0, 1.0).acos() * planet.radius;
+        assert!(drift < 1.0, "se deslizo {drift} sobre el suelo");
     }
 
     #[test]

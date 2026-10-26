@@ -178,6 +178,20 @@ fn run_window(options: &Options) -> Result<(), String> {
         if rl.is_key_pressed(KeyboardKey::KEY_F6) {
             app.reseed_props();
         }
+        if rl.is_key_pressed(KeyboardKey::KEY_L) {
+            app.settings.local = !app.settings.local;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_O) {
+            app.settings.cruise = !app.settings.cruise;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_V) {
+            // AUTO -> ON -> OFF -> AUTO
+            app.path_mode = match app.path_mode {
+                None => Some(true),
+                Some(true) => Some(false),
+                Some(false) => None,
+            };
+        }
         let photo = rl.is_key_pressed(KeyboardKey::KEY_P);
 
         let input = read_input(&rl, captured && !skip_mouse);

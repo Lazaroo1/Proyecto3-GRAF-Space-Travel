@@ -64,11 +64,14 @@ impl PropKind {
     }
 
     /// Cuanto cuenta su tamano en pantalla para decidir si se dibuja. Los
-    /// monumentos (1) se ven desde lejos; la vegetacion y las espinas (0.5)
-    /// necesitan el doble de tamano: desde la orbita solo ensuciarian.
+    /// naufragios (1) se ven desde lejos; los monumentos, delgados, un poco
+    /// menos (en el borde del planeta parecerian pelos); la vegetacion y las
+    /// espinas (0.5) necesitan el doble de tamano: desde la orbita solo
+    /// ensuciarian.
     pub fn visibility(self) -> f32 {
         match self {
-            Self::Monolith | Self::Obelisk | Self::Wreck => 1.0,
+            Self::Wreck => 1.0,
+            Self::Monolith | Self::Obelisk => 0.75,
             Self::Mushroom | Self::Coral | Self::Spike => 0.5,
         }
     }
