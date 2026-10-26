@@ -8,12 +8,13 @@ use std::f64::consts::PI;
 use std::path::PathBuf;
 
 use crate::config;
-use crate::math::{smoothing, DMat4, DQuat, DVec3, Vec3};
+use crate::math::{smoothing, smoothstep, DMat4, DQuat, DVec3, Vec3};
 use crate::render::{Draw, Renderer, Stats, View};
 use crate::scene::camera::{Camera, CameraMode};
+use crate::scene::props::{self, Instance, PropKind, PropStats, PropView};
 use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
 use crate::scene::{nearest_surface, System};
-use crate::shaders::{AtmosphereFrame, DebugView, RingInfo, SkyView, Uniforms};
+use crate::shaders::{self, AtmosphereFrame, DebugView, Material, RingInfo, SkyView, Uniforms};
 use crate::terrain::{LodSettings, TerrainStats, Viewer};
 
 /// Entrada de un frame, ya traducida de teclas y mouse.
@@ -45,6 +46,11 @@ pub enum Shot {
     Surface { body: &'static str, azimuth: f64, elevation: f64, altitude: f64 },
     /// La nave de cerca, con el planeta detras.
     Ship { body: &'static str },
+    /// Un objeto de la superficie de cerca. `distance` en unidades del mundo;
+    /// `sun` es el seno de la altura del sol que se busca sobre su horizonte
+    /// (bajo y de lado marca el relieve; bajo cero, de noche, se luce lo que
+    /// brilla).
+    Landmark { body: &'static str, kind: PropKind, distance: f64, sun: f64 },
 }
 
 /// Una vista fija con nombre, para capturas y para el benchmark.
@@ -54,7 +60,7 @@ pub struct Preset {
     pub shot: Shot,
 }
 
-pub const PRESETS: [Preset; 9] = [
+pub const PRESETS: [Preset; 13] = [
     Preset { name: "01_sistema", shot: Shot::Overview },
     Preset { name: "02_pira", shot: Shot::Orbit { body: "Pira", distance: 3.2, azimuth: 0.5, elevation: 0.2 } },
     Preset { name: "03_pira_noche", shot: Shot::Orbit { body: "Pira", distance: 2.8, azimuth: 2.6, elevation: 0.15 } },
@@ -73,6 +79,22 @@ pub const PRESETS: [Preset; 9] = [
         shot: Shot::Orbit { body: "Cementerio", distance: 5.0, azimuth: 0.9, elevation: 0.35 },
     },
     Preset { name: "09_nave", shot: Shot::Ship { body: "Requiem" } },
+    Preset {
+        name: "10_monolito",
+        shot: Shot::Landmark { body: "Requiem", kind: PropKind::Monolith, distance: 16.0, sun: 0.42 },
+    },
+    Preset {
+        name: "11_hongos",
+        shot: Shot::Landmark { body: "Jardin", kind: PropKind::Mushroom, distance: 22.0, sun: -0.12 },
+    },
+    Preset {
+        name: "12_espinas",
+        shot: Shot::Landmark { body: "Pira", kind: PropKind::Spike, distance: 26.0, sun: 0.3 },
+    },
+    Preset {
+        name: "13_naufragio",
+        shot: Shot::Landmark { body: "Cementerio", kind: PropKind::Wreck, distance: 40.0, sun: 0.35 },
+    },
 ];
 
 pub struct App {
@@ -84,6 +106,8 @@ pub struct App {
     pub camera_mode: CameraMode,
     pub lod: LodSettings,
     pub debug: DebugView,
+    /// Objetos de la superficie del ultimo frame.
+    pub prop_stats: PropStats,
     ship: ShipState,
     /// Estado del paso anterior: el render interpola entre los dos.
     ship_prev: ShipState,
@@ -136,6 +160,7 @@ impl App {
                 fixed_level: config::LOD_FIXED_LEVEL,
             },
             debug: DebugView::default(),
+            prop_stats: PropStats::default(),
             ship,
             ship_prev: ship,
             aim,
@@ -156,6 +181,12 @@ impl App {
         let nearest = self.flight.nearest;
         let terrain = self.system.terrains.get(nearest)?.as_ref()?;
         Some((self.system.bodies[nearest].name, terrain.stats))
+    }
+
+    /// Vuelve a colocar los objetos de la superficie con otra semilla.
+    pub fn reseed_props(&mut self) {
+        let seed = self.system.prop_seed.wrapping_add(1);
+        self.system.scatter_props(seed);
     }
 
     pub fn toggle_camera(&mut self) {
@@ -230,7 +261,9 @@ impl App {
         self.update_terrain(t, &camera, &view);
 
         let show_ship = self.camera_mode == CameraMode::Chase;
-        let draws = build_draws(&self.system, t, &camera, ship_pos, ship_rot, show_ship);
+        let pixel_angle = 2.0 * (camera.fov_y * 0.5).tan() / self.renderer.height() as f64;
+        let mut draws = build_draws(&self.system, t, &camera, ship_pos, ship_rot, show_ship);
+        self.prop_stats = prop_draws(&self.system, t, &camera, &view, pixel_angle, &mut draws);
         let atmospheres = atmosphere_frames(&self.system, t, &camera, &view);
         let sun_light = self.system.star_light(t);
         // Si la camara esta dentro de una atmosfera, su cielo sale de una tabla.
@@ -247,7 +280,8 @@ impl App {
             sun_light,
             noise: &self.system.noise,
             sky: &self.system.sky,
-            pixel_angle: (2.0 * (camera.fov_y * 0.5).tan() / self.renderer.height() as f64) as f32,
+            textures: &self.system.textures,
+            pixel_angle: pixel_angle as f32,
             eye_dir: self.eye.as_vec3(),
             ring: ring_info(&self.system, t, camera.pos),
             atmospheres: &atmospheres,
@@ -360,15 +394,95 @@ impl App {
                 let pos = center + dir * (bodies[i].radius * 2.2);
                 (pos, center - pos, up, 0.55, (0.7, -0.2))
             }
+            Shot::Landmark { body, kind, distance, sun } => {
+                let i = index(body);
+                let (pos, target, up) = self.landmark(i, kind, distance, sun, t);
+                (pos, target - pos, up, 1.0, (0.0, 0.0))
+            }
         };
         self.place(pos, DQuat::look_rotation(forward, view_up), t);
         self.zoom = zoom;
         (self.look_yaw, self.look_pitch) = look;
-        // En la vista del sistema la nave estorbaria: se mira desde la cabina.
+        // En la vista del sistema y frente a los objetos la nave estorbaria:
+        // se mira desde la cabina.
         self.camera_mode = match preset.shot {
-            Shot::Overview => CameraMode::Cockpit,
+            Shot::Overview | Shot::Landmark { .. } => CameraMode::Cockpit,
             _ => CameraMode::Chase,
         };
+    }
+
+    /// Encuadre de un objeto de tipo `kind` del cuerpo `index`: devuelve la
+    /// posicion de la camara, el punto que mira y la vertical.
+    ///
+    /// Entre todos los objetos de ese tipo elige el que tiene el sol mas cerca
+    /// de la altura pedida y, en los monolitos, una cara con el glifo de lado
+    /// al sol. La camara se para
+    /// frente a esa cara, o a 60 grados del sol en los demas; si una loma
+    /// tapa el objeto, prueba otros angulos alrededor.
+    fn landmark(&self, index: usize, kind: PropKind, distance: f64, sun_height: f64, t: f64) -> (DVec3, DVec3, DVec3) {
+        let body = &self.system.bodies[index];
+        let center = body.position(t);
+        let rotation = body.rotation(t);
+        let to_star = (self.system.bodies[0].position(t) - center).normalize();
+        // Vertical, direccion horizontal del sol y frente del objeto.
+        let axes = |p: &Instance| {
+            let up = rotation.rotate(p.position.normalize());
+            let sun = (to_star - up * to_star.dot(up)).normalize();
+            let front = rotation.rotate(p.rotation.rotate(DVec3::Z));
+            (up, sun, front)
+        };
+        let score = |p: &Instance| {
+            let (up, sun, front) = axes(p);
+            let elevation = (up.dot(to_star) - sun_height).abs();
+            let facing = if kind == PropKind::Monolith { (front.dot(sun).abs() - 0.6).abs() } else { 0.0 };
+            elevation + facing
+        };
+        let Some(best) = self.system.props[index]
+            .instances
+            .iter()
+            .filter(|p| p.kind == kind)
+            .min_by(|a, b| score(a).total_cmp(&score(b)))
+        else {
+            // Sin objetos de ese tipo: el planeta desde la orbita.
+            let pos = center + to_star * (body.radius * 3.0);
+            return (pos, center, DVec3::Y);
+        };
+        let (up, sun, front) = axes(best);
+        let base = center + rotation.rotate(best.position);
+        let model = &self.system.prop_models[kind.index()].lods[0];
+        let scale = best.scale as f64;
+        let side = up.cross(sun);
+        let (target, directions) = if kind == PropKind::Monolith {
+            // Frente al glifo (a 10.2 unidades del suelo), primero la cara
+            // iluminada.
+            let face = if front.dot(sun) >= 0.0 { front } else { -front };
+            (base + up * (10.2 * scale), vec![face, -face])
+        } else {
+            let around = [60.0f64, -60.0, 100.0, -100.0, 30.0, -30.0, 140.0, -140.0, 0.0, 180.0];
+            let dirs = around.iter().map(|a| sun * a.to_radians().cos() + side * a.to_radians().sin()).collect();
+            (base + up * (model.bounds_center.y as f64 * scale), dirs)
+        };
+        // Altura sobre el terreno en un punto del mundo.
+        let altitude = |p: DVec3| {
+            let offset = p - center;
+            offset.length() - body.radius - body.surface_height(offset, t)
+        };
+        let camera_at = |dir: DVec3| {
+            let mut pos = target + dir * distance + up * (distance * 0.12);
+            let lift = 2.5 - altitude(pos);
+            if lift > 0.0 {
+                pos += up * lift;
+            }
+            pos
+        };
+        // Linea de vision: ningun punto del camino queda bajo el suelo.
+        let clear = |pos: DVec3| (1..12).all(|k| altitude(pos.lerp(target, k as f64 / 12.0)) > 0.3);
+        let pos = directions
+            .iter()
+            .map(|&dir| camera_at(dir))
+            .find(|&pos| clear(pos))
+            .unwrap_or_else(|| camera_at(directions[0]) + up * distance);
+        (pos, target, up)
     }
 
     fn place(&mut self, pos: DVec3, rot: DQuat, t: f64) {
@@ -431,6 +545,78 @@ fn ring_info(system: &System, t: f64, camera: DVec3) -> Option<RingInfo> {
         outer: (outer * body.radius) as f32,
         planet_radius: body.radius as f32,
     })
+}
+
+/// Un dibujo por objeto de la superficie visible. Cada objeto vive en el
+/// espacio de su planeta: su matriz es la del planeta por la suya, y la
+/// traslacion se resta en `f64` como en todo lo demas. Si la superficie
+/// respira (Jardin), el objeto sube y baja con ella.
+fn prop_draws<'a>(
+    system: &'a System,
+    t: f64,
+    camera: &Camera,
+    view: &View,
+    pixel_angle: f64,
+    draws: &mut Vec<Draw<'a>>,
+) -> PropStats {
+    let mut stats = PropStats::default();
+    let mut chosen = Vec::new();
+    let star = &system.bodies[0];
+    let (star_pos, star_radius) = (star.position(t), star.render_radius(t));
+    for (body, set) in system.bodies.iter().zip(&system.props) {
+        let Some(field) = &body.surface else { continue };
+        if set.instances.is_empty() {
+            continue;
+        }
+        let quat = body.rotation(t);
+        let rotation = quat.to_mat3();
+        let body_pos = body.position(t);
+        let center = body_pos - camera.pos;
+        let (low, high) = field.height_range();
+        let visible = |c: DVec3, r: f64| view.sphere_visible((center + rotation.mul_vec(c)).as_vec3(), r as f32);
+        let prop_view = PropView {
+            camera: quat.conjugate().rotate(-center),
+            occluder: body.radius + low as f64,
+            surface_top: body.radius + high as f64,
+            pixel_angle,
+            visible: &visible,
+        };
+        chosen.clear();
+        props::select(set, &system.prop_models, &prop_view, &mut stats, &mut chosen);
+        for pick in &chosen {
+            let instance = &set.instances[pick.index];
+            let mesh = &system.prop_models[instance.kind.index()].lods[pick.lod];
+            // Los modelos nacen en su base: al encogerse se hunden en el suelo.
+            let scale = (instance.scale * pick.grow) as f64;
+            let lift = shaders::displace(&body.material, instance.position.as_vec3(), t as f32, &system.noise);
+            let position = instance.position + instance.position.normalize() * lift as f64;
+            let rot = rotation.mul(&instance.rotation.to_mat3());
+            let offset = center + rotation.mul_vec(position);
+            // Cuanto del disco de la estrella asoma sobre su horizonte.
+            let to_star = star_pos - (body_pos + rotation.mul_vec(position));
+            let distance = to_star.length();
+            let up = rotation.mul_vec(instance.position.normalize());
+            let elevation = (up.dot(to_star) / distance).clamp(-1.0, 1.0).asin();
+            let disc = (star_radius / distance).min(1.0).asin();
+            let light = smoothstep(-disc as f32, disc as f32, elevation as f32);
+            draws.push(Draw {
+                mesh,
+                indices: &mesh.indices,
+                local_offset: Vec3::ZERO,
+                model: DMat4::from_affine(&rot.scale(scale), offset).to_f32(),
+                normal: rot.to_f32(),
+                material: Material::Prop {
+                    kind: instance.kind,
+                    scale: scale as f32,
+                    light,
+                },
+                bounds_center: (offset + rot.mul_vec(mesh.bounds_center.as_dvec3() * scale)).as_vec3(),
+                bounds_radius: mesh.bounds_radius * scale as f32,
+                tag: pick.lod as u32 + 1,
+            });
+        }
+    }
+    stats
 }
 
 /// Un dibujo por chunk de terreno visible, uno por cuerpo sin terreno y otro

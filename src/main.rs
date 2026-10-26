@@ -175,6 +175,9 @@ fn run_window(options: &Options) -> Result<(), String> {
         if rl.is_key_pressed(KeyboardKey::KEY_F5) {
             app.lod.enabled = !app.lod.enabled;
         }
+        if rl.is_key_pressed(KeyboardKey::KEY_F6) {
+            app.reseed_props();
+        }
         let photo = rl.is_key_pressed(KeyboardKey::KEY_P);
 
         let input = read_input(&rl, captured && !skip_mouse);
@@ -254,6 +257,15 @@ fn settle(app: &mut App) {
 fn run_capture(options: &Options, dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut app = new_app(options)?;
+    let counts: Vec<String> = app
+        .system
+        .bodies
+        .iter()
+        .zip(&app.system.props)
+        .filter(|(_, set)| !set.instances.is_empty())
+        .map(|(body, set)| format!("{} {}", body.name, set.instances.len()))
+        .collect();
+    println!("objetos de la superficie: {}", counts.join(", "));
     for preset in &PRESETS {
         app.apply_preset(preset);
         settle(&mut app);

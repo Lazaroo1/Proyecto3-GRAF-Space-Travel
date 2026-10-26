@@ -280,4 +280,26 @@ impl Vec4 {
             self.w + (o.w - self.w) * t,
         )
     }
+
+    /// Las tres primeras componentes.
+    #[inline]
+    pub fn xyz(self) -> Vec3 {
+        Vec3::new(self.x, self.y, self.z)
+    }
+}
+
+impl Add for Vec4 {
+    type Output = Self;
+    #[inline]
+    fn add(self, o: Self) -> Self {
+        Self::new(self.x + o.x, self.y + o.y, self.z + o.z, self.w + o.w)
+    }
+}
+
+impl Mul<f32> for Vec4 {
+    type Output = Self;
+    #[inline]
+    fn mul(self, s: f32) -> Self {
+        Self::new(self.x * s, self.y * s, self.z * s, self.w * s)
+    }
 }

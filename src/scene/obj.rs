@@ -99,6 +99,7 @@ pub fn parse_obj(text: &str, materials: &HashMap<String, Vec3>) -> Result<Mesh, 
                         mesh.normals.push(vn.map_or(Vec3::ZERO, |i| normals[i]));
                         mesh.uvs.push(vt.map_or(Vec2::ZERO, |i| uvs[i]));
                         mesh.colors.push(color);
+                        mesh.tangents.push(super::mesh::NO_TANGENT);
                         has_normal.push(vn.is_some());
                         (mesh.positions.len() - 1) as u32
                     });

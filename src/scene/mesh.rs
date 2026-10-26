@@ -1,6 +1,9 @@
 //! Malla de triangulos indexada.
 
-use crate::math::{Vec2, Vec3};
+use crate::math::{Vec2, Vec3, Vec4};
+
+/// Tangente por defecto para mallas sin textura.
+pub const NO_TANGENT: Vec4 = Vec4::new(1.0, 0.0, 0.0, 1.0);
 
 /// Todos los arreglos por vertice miden lo mismo; cada triangulo guarda tres
 /// indices en orden antihorario visto desde afuera.
@@ -10,6 +13,10 @@ pub struct Mesh {
     pub normals: Vec<Vec3>,
     pub uvs: Vec<Vec2>,
     pub colors: Vec<Vec3>,
+    /// Hacia donde crece la `u` de la textura sobre la superficie; `w` (+1 o
+    /// -1) dice hacia que lado queda la bitangente. Con la normal forman la
+    /// base TBN del mapeo de normales.
+    pub tangents: Vec<Vec4>,
     pub indices: Vec<[u32; 3]>,
     /// Esfera envolvente en el espacio del objeto (para el culling).
     pub bounds_center: Vec3,

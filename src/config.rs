@@ -40,6 +40,18 @@ pub const LOD_BUDGET: usize = 24;
 /// Nivel fijo cuando se apaga el LOD para comparar.
 pub const LOD_FIXED_LEVEL: u8 = 4;
 
+// Objetos de la superficie --------------------------------------------------
+
+/// Semilla de la distribucion de los objetos; F6 la cambia en vivo.
+pub const PROP_SEED: u32 = 2024;
+/// Radio en pixeles a partir del que un objeto usa el detalle 0 y el 1.
+pub const PROP_LOD_PIXELS: [f32; 2] = [70.0, 18.0];
+/// Radio en pixeles debajo del que un objeto ya no se dibuja (menos que eso
+/// solo parpadearia al moverse la camara) y radio desde el que se dibuja
+/// completo. Entre los dos se encoge hacia el suelo: no aparece de golpe.
+pub const PROP_MIN_PIXELS: f32 = 2.5;
+pub const PROP_FULL_PIXELS: f32 = 6.0;
+
 /// Fisica a paso fijo: la nave responde igual a 30 que a 300 fps.
 pub const PHYSICS_HZ: f64 = 120.0;
 pub const PHYSICS_DT: f64 = 1.0 / PHYSICS_HZ;

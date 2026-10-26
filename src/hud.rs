@@ -38,6 +38,18 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud) {
             ),
             None => "terreno: -".to_string(),
         };
+        let p = &app.prop_stats;
+        let props = format!(
+            "objetos {} (detalle {}/{}/{})  chicos -{}  horizonte -{}  frustum -{}  semilla {}",
+            p.drawn_total(),
+            p.drawn[0],
+            p.drawn[1],
+            p.drawn[2],
+            p.small,
+            p.horizon,
+            p.frustum,
+            app.system.prop_seed
+        );
         let lines = [
             format!("FPS {fps}   frame {:.1} ms   {} hilos", s.ms_total, parallel::workers()),
             format!(
@@ -54,6 +66,7 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud) {
                 t.clipped, t.emitted, s.pixels_shaded
             ),
             terrain,
+            props,
         ];
         panel(d, 10, 10, &lines, false, width);
     }
@@ -77,7 +90,7 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud) {
             "Mouse: apuntar   Clic derecho: mirar alrededor   Rueda: distancia".to_string(),
             "W/S: adelante/atras   A/D: lados   Espacio/Ctrl: subir/bajar".to_string(),
             "Q/E: alabeo   Shift: turbo   C: camara   P: foto   Tab: soltar el mouse".to_string(),
-            "F3: wireframe   F4: colores de LOD   F5: LOD on/off".to_string(),
+            "F3: wireframe   F4: colores de LOD   F5: LOD on/off   F6: otra semilla".to_string(),
             "F1: ayuda   F2: estadisticas   Esc: salir".to_string(),
         ];
         let y = height - 10 - (lines.len() as i32 * LINE + 10);

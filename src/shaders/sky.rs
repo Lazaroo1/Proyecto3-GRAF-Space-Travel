@@ -255,6 +255,7 @@ mod tests {
     fn medir_cielo() {
         let sky = SkyCube::bake(crate::config::SKY_SIZE, 1);
         let noise = Perlin::new(1);
+        let textures = super::super::Textures::generate();
         let u = Uniforms {
             time: 0.0,
             sun_pos: Vec3::new(1000.0, 200.0, -3000.0),
@@ -262,6 +263,7 @@ mod tests {
             sun_light: Vec3::new(1.5, 0.8, 0.4),
             noise: &noise,
             sky: &sky,
+            textures: &textures,
             pixel_angle: 0.002,
             eye_dir: Vec3::Z,
             ring: None,

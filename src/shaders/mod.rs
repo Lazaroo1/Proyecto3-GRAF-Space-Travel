@@ -4,6 +4,8 @@
 //!   atributos ya interpolados del pixel visible (posicion, normal,
 //!   coordenadas del objeto, uv, color) y devuelve su color HDR lineal.
 //!   Corren en el pase de shading diferido: una vez por pixel visible.
+//! - **Mapeo de normales**: los objetos de la superficie leen mapas de
+//!   normales generados al arrancar (`textures`), con mipmaps.
 //! - **Deformacion de vertices**: algunos materiales mueven sus vertices
 //!   antes de proyectarlos (`displace`), como la respiracion de Jardin.
 //! - **Volumenes**: lo que no es una superficie (anillos, atmosferas) se
@@ -13,20 +15,24 @@ pub mod atmosphere;
 mod cementerio;
 mod jardin;
 mod pira;
+mod props;
 mod requiem;
 pub mod rings;
 mod ship;
 mod sky;
 mod sun;
+pub mod textures;
 mod vigia;
 
-use crate::math::{Perlin, Vec2, Vec3};
+use crate::math::{Perlin, Vec2, Vec3, Vec4};
+use crate::scene::props::PropKind;
 
 pub use atmosphere::{AtmosphereFrame, AtmosphereModel, AtmosphereParams, SkyView};
 pub use rings::RingInfo;
 pub use ship::ShipStyle;
 pub use sky::{shade as sky, SkyCube};
 pub use sun::{heartbeat, SunStyle};
+pub use textures::Textures;
 
 /// Vistas de depuracion para demostrar el trabajo del renderer.
 #[derive(Clone, Copy, Debug, Default)]
@@ -51,6 +57,8 @@ pub struct Uniforms<'a> {
     pub noise: &'a Perlin,
     /// Estrellas y nebulosa horneadas.
     pub sky: &'a SkyCube,
+    /// Mapas de normales de los objetos de la superficie.
+    pub textures: &'a Textures,
     /// Angulo que cubre un pixel, en radianes.
     pub pixel_angle: f32,
     /// Hacia donde mira el ojo de Vigia, en el espacio de Vigia.
@@ -80,9 +88,26 @@ pub struct Fragment {
     pub uv: Vec2,
     /// Color del material, o mascaras del terreno.
     pub color: Vec3,
+    /// Tangente en el mundo (sin normalizar) y signo de la bitangente.
+    pub tangent: Vec4,
 }
 
 impl Fragment {
+    /// Normal perturbada por un mapa de normales: `sample` es la normal en
+    /// el espacio tangente (x sobre la tangente, y sobre la bitangente, z
+    /// sobre la normal) y `strength` escala la inclinacion.
+    ///
+    /// La base TBN se reconstruye en cada pixel: la tangente interpolada se
+    /// vuelve a hacer perpendicular a la normal (Gram-Schmidt) y la
+    /// bitangente sale del producto cruz con su signo.
+    #[inline]
+    pub fn perturb(&self, sample: Vec3, strength: f32) -> Vec3 {
+        let n = self.normal;
+        let t = (self.tangent.xyz() - n * n.dot(self.tangent.xyz())).normalize();
+        let b = n.cross(t) * self.tangent.w;
+        (t * (sample.x * strength) + b * (sample.y * strength) + n * sample.z).normalize()
+    }
+
     /// Direccion unitaria hacia la camara.
     #[inline]
     pub fn view_dir(&self) -> Vec3 {
@@ -105,6 +130,11 @@ pub enum Material {
     Requiem,
     Cementerio,
     Ship(ShipStyle),
+    /// Un objeto de la superficie con datos de esa instancia: su escala (los
+    /// mapas de normales la usan para elegir su mipmap) y cuanto del disco de
+    /// la estrella queda sobre su horizonte (0 de noche: la sombra del
+    /// planeta, que las caras verticales no sabrian ver solas).
+    Prop { kind: PropKind, scale: f32, light: f32 },
 }
 
 impl Material {
@@ -124,14 +154,17 @@ pub fn shade(material: &Material, f: &Fragment, u: &Uniforms) -> Vec3 {
         Material::Requiem => requiem::shade(f, u),
         Material::Cementerio => cementerio::shade(f, u),
         Material::Ship(style) => ship::shade(f, u, style),
+        Material::Prop { kind, scale, light } => props::shade(*kind, *scale, *light, f, u),
     }
 }
 
-/// Desplazamiento del vertice sobre su normal, en unidades del mundo.
+/// Desplazamiento del vertice sobre su normal, en unidades del mundo. Solo
+/// depende del tiempo y del ruido: los objetos que se paran sobre una
+/// superficie que se mueve lo usan para moverse con ella.
 #[inline]
-pub fn displace(material: &Material, local: Vec3, u: &Uniforms) -> f32 {
+pub fn displace(material: &Material, local: Vec3, time: f32, noise: &Perlin) -> f32 {
     match material {
-        Material::Jardin => jardin::breathe(local, u),
+        Material::Jardin => jardin::breathe(local, time, noise),
         _ => 0.0,
     }
 }

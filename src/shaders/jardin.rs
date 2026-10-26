@@ -18,7 +18,7 @@ use std::f32::consts::TAU;
 
 use super::{heartbeat, limb_haze, Fragment, Uniforms};
 use crate::config::HEARTBEAT_PERIOD;
-use crate::math::{smoothstep, Vec3};
+use crate::math::{smoothstep, Perlin, Vec3};
 use crate::terrain::shapes::{artery, ARTERY_FREQUENCY};
 
 const TISSUE_DARK: Vec3 = Vec3::new(0.10, 0.03, 0.10);
@@ -34,10 +34,10 @@ const BREATH_PERIOD: f32 = 7.0;
 const BREATH_DEPTH: f32 = 0.7;
 
 /// Desplazamiento de un vertice sobre su normal.
-pub fn breathe(local: Vec3, u: &Uniforms) -> f32 {
-    let breath = (u.time * TAU / BREATH_PERIOD).sin() * 0.5 + 0.5;
+pub fn breathe(local: Vec3, time: f32, noise: &Perlin) -> f32 {
+    let breath = (time * TAU / BREATH_PERIOD).sin() * 0.5 + 0.5;
     // No todo se hincha igual: algunas zonas casi no se mueven.
-    let variation = u.noise.noise(local * 0.02) * 0.5 + 0.5;
+    let variation = noise.noise(local * 0.02) * 0.5 + 0.5;
     breath * BREATH_DEPTH * (0.3 + 0.7 * variation)
 }
 
