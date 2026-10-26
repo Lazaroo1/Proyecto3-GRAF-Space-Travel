@@ -116,6 +116,8 @@ fn parse_args() -> Result<Options, String> {
 }
 
 fn main() {
+    // El hilo principal tambien trabaja en las pasadas paralelas.
+    parallel::flush_denormals();
     let options = match parse_args() {
         Ok(options) => options,
         Err(error) => {

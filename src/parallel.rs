@@ -122,7 +122,24 @@ fn worker_count() -> usize {
     if logical >= 12 { logical * 3 / 4 } else { logical }
 }
 
+/// Redondea a cero los floats desnormalizados (FTZ y DAZ). Un `exp` muy
+/// negativo (la caida gaussiana del gas, la transmitancia de una atmosfera
+/// espesa) deja valores tan chicos que cada operacion con ellos toma cientos
+/// de ciclos; a cero no cambian nada que se vea. Cada hilo tiene su propio
+/// registro de control, asi que se llama en cada uno.
+pub fn flush_denormals() {
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: solo cambia el modo de redondeo de este hilo; SSE siempre
+    // existe en x86_64.
+    #[allow(deprecated)]
+    unsafe {
+        use std::arch::x86_64::{_mm_getcsr, _mm_setcsr};
+        _mm_setcsr(_mm_getcsr() | 0x8040);
+    }
+}
+
 fn worker(pool: &'static Pool) {
+    flush_denormals();
     // Una pasada pedida desde dentro de un trabajo corre en serie.
     ACTIVE.set(true);
     let mut seen = 0u64;
