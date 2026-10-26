@@ -196,6 +196,9 @@ fn run_window(options: &Options) -> Result<(), String> {
         if rl.is_key_pressed(KeyboardKey::KEY_F6) {
             app.reseed_props();
         }
+        if rl.is_key_pressed(KeyboardKey::KEY_F7) {
+            app.toggle_freeze();
+        }
         if rl.is_key_pressed(KeyboardKey::KEY_L) {
             app.settings.local = !app.settings.local;
         }
@@ -337,11 +340,24 @@ fn run_capture(options: &Options, dir: &Path) -> Result<(), String> {
         .map(|(body, set)| format!("{} {}", body.name, set.instances.len()))
         .collect();
     println!("objetos de la superficie: {}", counts.join(", "));
-    for preset in &PRESETS {
-        app.apply_preset(preset);
+    let mut shots: Vec<(String, Option<&app::Preset>)> = PRESETS.iter().map(|p| (p.name.to_string(), Some(p))).collect();
+    // Demostracion del culling: se congela el frustum sobre Requiem y la
+    // camara se aleja hacia atras y arriba.
+    shots.push(("21_frustum_congelado".to_string(), None));
+    for (name, preset) in shots {
+        match preset {
+            Some(preset) => app.apply_preset(preset),
+            None => {
+                app.apply_preset(&PRESETS[6]);
+                settle(&mut app);
+                app.toggle_freeze();
+                let back = app.aim().rotate(DVec3::new(0.0, 0.6, 1.0)).normalize();
+                app.nudge(back * 520.0);
+            }
+        }
         settle(&mut app);
         let stats = app.render();
-        let path = dir.join(format!("{}.png", preset.name));
+        let path = dir.join(format!("{name}.png"));
         render::png::write_rgba(
             &path,
             options.width as u32,
@@ -351,7 +367,7 @@ fn run_capture(options: &Options, dir: &Path) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", path.display()))?;
         println!(
             "{:<16} {:6.1} ms   {:>7} triangulos rasterizados   {:>8} pixeles   -> {}",
-            preset.name,
+            name,
             stats.ms_total,
             stats.triangles.emitted,
             stats.pixels_shaded,

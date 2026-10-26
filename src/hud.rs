@@ -17,6 +17,7 @@ const FONT: i32 = 18;
 const LINE: i32 = 21;
 const TEXT: Color = Color::new(236, 226, 214, 255);
 const PANEL: Color = Color::new(0, 0, 0, 150);
+const MARKER: Color = Color::new(255, 214, 120, 220);
 
 pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &Tweaks) {
     let width = d.get_screen_width();
@@ -112,6 +113,29 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
     ];
     panel(d, 10, 10, &lines, true, width);
 
+    // Nombres de los cuerpos sobre su posicion en pantalla.
+    for m in &app.markers {
+        let label = if m.distance >= 1000.0 {
+            format!("{} {:.1}k", m.name, m.distance / 1000.0)
+        } else {
+            format!("{} {:.0}", m.name, m.distance)
+        };
+        let w = d.measure_text(&label, 16);
+        let (x, y) = (m.x as i32, m.y as i32);
+        d.draw_triangle(
+            Vector2::new(x as f32, y as f32 - 2.0),
+            Vector2::new(x as f32 + 5.0, y as f32 - 9.0),
+            Vector2::new(x as f32 - 5.0, y as f32 - 9.0),
+            MARKER,
+        );
+        d.draw_text(&label, x - w / 2, y - 28, 16, MARKER);
+    }
+    if app.freeze.is_some() {
+        let text = "FRUSTUM CONGELADO (F7): el culling y el LOD se calculan desde la camara amarilla";
+        let w = d.measure_text(text, FONT);
+        d.draw_text(text, (width - w) / 2, height - 40, FONT, MARKER);
+    }
+
     if tweaks.open {
         let lines = tweaks.lines(app);
         let y = (height - (lines.len() as i32 * LINE + 10)) / 2;
@@ -126,7 +150,7 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
             "L: modo local   O: crucero (rodea el planeta)   V: trayectoria".to_string(),
             "T: ajustes en vivo   M: sonido".to_string(),
             "R: rebobinar   [ ]: -30/+30 s   J: al colapso".to_string(),
-            "F3: wireframe   F4: colores de LOD   F5: LOD on/off   F6: otra semilla".to_string(),
+            "F3: wireframe   F4: colores de LOD   F5: LOD on/off   F6: otra semilla   F7: congelar frustum".to_string(),
             "F1: ayuda   F2: estadisticas   Esc: salir".to_string(),
         ];
         let y = height - 10 - (lines.len() as i32 * LINE + 10);

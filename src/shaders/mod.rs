@@ -225,12 +225,13 @@ pub fn shade(material: &Material, f: &Fragment, u: &Uniforms) -> Vec3 {
     }
 }
 
-/// Cinta de luz: brilla mas en el centro que en los bordes (uv.y va de un
-/// borde al otro) y se apaga hacia el final del camino (uv.x).
+/// Cinta de luz: el color de sus vertices por el del material; brilla mas
+/// en el centro que en los bordes (uv.y va de un borde al otro) y se apaga
+/// hacia el final del camino (uv.x).
 #[inline]
 fn line(f: &Fragment, color: Vec3) -> Vec3 {
     let core = 1.0 - (f.uv.y * 2.0 - 1.0).abs();
-    color * (core.sqrt() * (1.0 - 0.75 * f.uv.x))
+    f.color * color * (core.sqrt() * (1.0 - 0.75 * f.uv.x))
 }
 
 /// Desplazamiento del vertice sobre su normal, en unidades del mundo. Solo

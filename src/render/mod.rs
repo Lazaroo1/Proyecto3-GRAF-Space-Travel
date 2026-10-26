@@ -161,6 +161,10 @@ pub struct Renderer {
     /// Particulas del proximo frame, relativas a la camara. El juego las
     /// llena antes de llamar a `render`.
     pub particles: Vec<Particle>,
+    /// Frustum congelado para el culling (vista de depuracion): la vista de
+    /// otra camara y cuanto hay que sumarle a una posicion relativa a la
+    /// camara actual para que quede relativa a esa otra.
+    pub cull: Option<(View, Vec3)>,
     particle_bins: ParticleBins,
     pub exposure: f32,
     pub bloom_intensity: f32,
@@ -184,6 +188,7 @@ impl Renderer {
             chunks: Vec::new(),
             bloom: Bloom::new(width, height),
             particles: Vec::new(),
+            cull: None,
             particle_bins: ParticleBins::new(),
             exposure: config::EXPOSURE,
             bloom_intensity: config::BLOOM_INTENSITY,
@@ -212,7 +217,11 @@ impl Renderer {
         let (mut vert_total, mut tri_total) = (0, 0);
         for (index, draw) in draws.iter().enumerate() {
             stats.objects += 1;
-            if !view.sphere_visible(draw.bounds_center, draw.bounds_radius) {
+            let visible = match &self.cull {
+                Some((frozen, offset)) => frozen.sphere_visible(draw.bounds_center + *offset, draw.bounds_radius),
+                None => view.sphere_visible(draw.bounds_center, draw.bounds_radius),
+            };
+            if !visible {
                 stats.objects_culled += 1;
                 continue;
             }
