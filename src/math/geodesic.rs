@@ -107,17 +107,13 @@ pub struct Lookup {
 impl LensTable {
     /// Integra la tabla para una camara a `observer` radios de Schwarzschild.
     pub fn build(observer: f32) -> Self {
-        let observer = observer.max(3.0);
-        let lapse = (1.0 - 1.0 / observer).sqrt();
-        let shadow = (CRITICAL_IMPACT * lapse / observer).min(1.0).asin();
-        let span = table_span(observer).max(shadow * 1.5);
         let mut table = Self {
-            observer,
-            shadow,
-            span,
-            lapse,
-            angles: Vec::new(),
-            far: Vec::new(),
+            observer: 0.0,
+            shadow: 0.0,
+            span: 0.0,
+            lapse: 0.0,
+            angles: vec![0.0; RAYS],
+            far: vec![(1.0, 0.0); FAR],
             far_start: 0.0,
             far_scale: 0.0,
             paths: vec![
@@ -131,10 +127,26 @@ impl LensTable {
             ],
             radius: vec![0.0; RAYS * PHI_SAMPLES],
         };
-        table.angles = (0..RAYS).map(|i| table.angle_of(i as f32 / (RAYS - 1) as f32)).collect();
-        let angles = &table.angles;
-        let paths = DisjointMut::new(&mut table.paths);
-        let radius = DisjointMut::new(&mut table.radius);
+        table.rebuild(observer);
+        table
+    }
+
+    /// Vuelve a integrar la tabla para otra distancia, reusando su memoria.
+    /// La tolerancia de `fits` es chica a proposito: el disco se dibuja como
+    /// se ve desde la distancia de la tabla, y con mas error su borde saltaria
+    /// unos pixeles en cada reconstruccion.
+    pub fn rebuild(&mut self, observer: f32) {
+        let observer = observer.max(3.0);
+        self.observer = observer;
+        self.lapse = (1.0 - 1.0 / observer).sqrt();
+        self.shadow = (CRITICAL_IMPACT * self.lapse / observer).min(1.0).asin();
+        self.span = table_span(observer).max(self.shadow * 1.5);
+        for i in 0..RAYS {
+            self.angles[i] = self.angle_of(i as f32 / (RAYS - 1) as f32);
+        }
+        let angles = &self.angles;
+        let paths = DisjointMut::new(&mut self.paths);
+        let radius = DisjointMut::new(&mut self.radius);
         parallel::for_each(RAYS, |i| {
             // SAFETY: cada rayo escribe solo su casilla y su fila.
             let path = unsafe { &mut paths.range(i, 1)[0] };
@@ -143,17 +155,19 @@ impl LensTable {
         });
         // Tabla uniforme del giro: el pixel a un angulo `s` del agujero mira
         // con angulo `pi - s` desde el eje; sale con `exit`. El giro es la
-        // diferencia.
-        table.far_start = (shadow * FAR_START).min(span);
-        table.far_scale = (FAR - 1) as f32 / (span - table.far_start).max(1e-6);
-        table.far = (0..FAR)
-            .map(|i| {
-                let s = table.far_start + i as f32 / table.far_scale;
-                let turn = table.lookup(s).path.exit - (PI - s);
-                (turn.cos(), turn.sin())
-            })
-            .collect();
-        table
+        // diferencia. Se llena en paralelo, en bloques.
+        self.far_start = (self.shadow * FAR_START).min(self.span);
+        self.far_scale = (FAR - 1) as f32 / (self.span - self.far_start).max(1e-6);
+        let mut far = std::mem::take(&mut self.far);
+        let this = &*self;
+        parallel::chunks_mut(&mut far, 512, 512, |job, chunk| {
+            for (k, slot) in chunk.iter_mut().enumerate() {
+                let s = this.far_start + (job * 512 + k) as f32 / this.far_scale;
+                let turn = this.lookup(s).path.exit - (PI - s);
+                *slot = (turn.cos(), turn.sin());
+            }
+        });
+        self.far = far;
     }
 
     /// Giro `(cos d, sin d)` del cielo para un rayo a un angulo `s` del
@@ -171,11 +185,10 @@ impl LensTable {
     }
 
     /// Si la tabla sirve para una camara a `observer`: la distancia cambio
-    /// menos de 1.5%. La sombra mide `~2.6 rs / D`: un 1.5% de error en `D`
-    /// es menos de un pixel en el borde de la sombra a estas distancias, y
-    /// asi la tabla no se rehace cada frame al volar.
+    /// menos de un cuarto por ciento (el borde del disco se mueve menos de un
+    /// pixel).
     pub fn fits(&self, observer: f32) -> bool {
-        (observer.max(3.0) / self.observer).ln().abs() < 0.015
+        (observer.max(3.0) / self.observer).ln().abs() < 0.0025
     }
 
     /// Angulo de la sombra.

@@ -557,8 +557,10 @@ impl App {
         // al agujero cambio lo suficiente.
         if state.rs > 0.5 {
             let observer = ((star_pos - camera.pos).length() / state.rs) as f32;
-            if !self.lens.as_ref().is_some_and(|table| table.fits(observer)) {
-                self.lens = Some(LensTable::build(observer));
+            match &mut self.lens {
+                Some(table) if table.fits(observer) => {}
+                Some(table) => table.rebuild(observer),
+                None => self.lens = Some(LensTable::build(observer)),
             }
         }
         let hole = match (&self.lens, state.rs > 0.5) {
