@@ -135,6 +135,8 @@ pub enum Material {
     Ship(ShipStyle),
     /// Un objeto de la superficie, con los datos de su instancia.
     Prop(PropStyle),
+    /// Una cinta de luz (la trayectoria predicha): solo emite su color.
+    Line(Vec3),
 }
 
 impl Material {
@@ -155,7 +157,16 @@ pub fn shade(material: &Material, f: &Fragment, u: &Uniforms) -> Vec3 {
         Material::Cementerio => cementerio::shade(f, u),
         Material::Ship(style) => ship::shade(f, u, style),
         Material::Prop(style) => props::shade(style, f, u),
+        Material::Line(color) => line(f, *color),
     }
+}
+
+/// Cinta de luz: brilla mas en el centro que en los bordes (uv.y va de un
+/// borde al otro) y se apaga hacia el final del camino (uv.x).
+#[inline]
+fn line(f: &Fragment, color: Vec3) -> Vec3 {
+    let core = 1.0 - (f.uv.y * 2.0 - 1.0).abs();
+    color * (core.sqrt() * (1.0 - 0.75 * f.uv.x))
 }
 
 /// Desplazamiento del vertice sobre su normal, en unidades del mundo. Solo

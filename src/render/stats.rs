@@ -38,6 +38,8 @@ pub struct Stats {
     pub vertices: u32,
     pub triangles: TriCounters,
     pub pixels_shaded: u64,
+    /// Particulas que cayeron en pantalla.
+    pub particles: u32,
     pub ms_vertex: f32,
     pub ms_triangles: f32,
     pub ms_raster: f32,
