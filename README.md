@@ -44,10 +44,10 @@ Opciones:
 
 ```sh
 cargo run --release -- --res 1920x1080        # resolución del render (por defecto 1280x720)
-cargo run --release -- --captura capturas     # las 21 vistas fijas como PNG, sin abrir ventana
+cargo run --release -- --captura capturas     # las 22 vistas fijas como PNG, sin abrir ventana
 cargo run --release -- --bench 30             # mide cada vista fija y da medianas por etapa
 cargo run --release -- --wire --lod           # empieza con wireframe y colores de LOD
-cargo test --release                          # 80 pruebas
+cargo test --release                          # 81 pruebas
 ```
 
 ## Controles
