@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use crate::config;
 use crate::math::{smoothing, DMat3, DMat4, DQuat, DVec3, Vec3};
-use crate::render::{Draw, Particle, Renderer, Stats, View};
+use crate::render::{Draw, Particle, Renderer, Ripple, Stats, View};
 use crate::scene::camera::{Camera, CameraMode};
 use crate::scene::effects::{self, EXHAUST_COUNT, SPORE_COUNT, STREAM_COUNT};
 use crate::scene::props::{self, Instance, PropKind, PropStats, PropView};
@@ -83,7 +83,7 @@ pub struct Preset {
     pub time: f64,
 }
 
-pub const PRESETS: [Preset; 20] = [
+pub const PRESETS: [Preset; 21] = [
     Preset { name: "01_sistema", shot: Shot::Overview, time: 40.0 },
     Preset { name: "02_pira", shot: Shot::Orbit { body: "Pira", distance: 3.2, azimuth: 0.5, elevation: 0.2 }, time: 40.0 },
     Preset { name: "03_pira_noche", shot: Shot::Orbit { body: "Pira", distance: 2.8, azimuth: 2.6, elevation: 0.15 }, time: 40.0 },
@@ -137,6 +137,7 @@ pub const PRESETS: [Preset; 20] = [
         time: 700.0,
     },
     Preset { name: "17_colapso", shot: Shot::Gaze { body: "Jardin" }, time: 725.2 },
+    Preset { name: "17_onda_gravitacional", shot: Shot::Gaze { body: "Jardin" }, time: 726.6 },
     Preset { name: "18_gargantua", shot: Shot::Gaze { body: "Pira" }, time: 830.0 },
     Preset { name: "19_gargantua_jardin", shot: Shot::Gaze { body: "Jardin" }, time: 830.0 },
     Preset {
@@ -553,6 +554,24 @@ impl App {
             _ => None,
         };
         self.renderer.exposure = self.exposure * state.exposure;
+        // La onda gravitacional sale del agujero justo despues del destello
+        // y cruza la pantalla en unos tres segundos.
+        let wave = state.tau - cycle::phase_start(cycle::Phase::Gargantua);
+        self.renderer.ripple = None;
+        if (0.0..3.0).contains(&wave) {
+            let clip = view.view_proj.transform_point((star_pos - camera.pos).as_vec3());
+            if clip.w > view.near {
+                let (w, h) = (self.renderer.width() as f32, self.renderer.height() as f32);
+                let fade = (1.0 - wave / 3.0) as f32;
+                self.renderer.ripple = Some(Ripple {
+                    x: (clip.x / clip.w + 1.0) * 0.5 * w,
+                    y: (1.0 - clip.y / clip.w) * 0.5 * h,
+                    radius: wave as f32 * w * 0.45,
+                    width: h * 0.06,
+                    strength: h * 0.025 * fade * fade,
+                });
+            }
+        }
         let uniforms = Uniforms {
             time: t as f32,
             beat,

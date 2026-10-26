@@ -96,6 +96,39 @@ pub struct PostParams<'a> {
     pub exposure: f32,
     pub bloom: &'a MipLevel,
     pub bloom_intensity: f32,
+    pub ripple: Option<Ripple>,
+}
+
+/// La onda gravitacional del colapso: un anillo que se expande desde el
+/// agujero en la pantalla y empuja la imagen hacia afuera y hacia adentro
+/// al pasar. Desplaza de donde se lee cada pixel: `push` sigue una onda
+/// `sin(pi u) exp(-u^2)` alrededor del radio del anillo.
+#[derive(Clone, Copy, Debug)]
+pub struct Ripple {
+    pub x: f32,
+    pub y: f32,
+    pub radius: f32,
+    pub width: f32,
+    pub strength: f32,
+}
+
+impl Ripple {
+    #[inline]
+    fn offset(&self, x: f32, y: f32) -> (f32, f32) {
+        let (dx, dy) = (x - self.x, y - self.y);
+        let r = (dx * dx + dy * dy).sqrt().max(1e-3);
+        let u = (r - self.radius) / self.width;
+        if u.abs() > 2.5 {
+            return (0.0, 0.0);
+        }
+        let push = self.strength * (u * std::f32::consts::PI).sin() * (-u * u).exp();
+        (dx / r * push, dy / r * push)
+    }
+
+    /// Si la fila `y` toca el anillo.
+    fn touches(&self, y: f32) -> bool {
+        (y - self.y).abs() <= self.radius + 2.5 * self.width
+    }
 }
 
 /// Fila `y` del bloom ampliada al ancho completo, con interpolacion bilineal:
@@ -137,6 +170,23 @@ pub fn tonemap_rows(first_row: usize, out: &mut [u8], hdr: &[Vec3], p: &PostPara
         let y = first_row + ly;
         bloom_row(p.bloom, y, p.height, &mut glow, &mut column);
         let out_row = &mut out[ly * width * 4..(ly + 1) * width * 4];
+        if let Some(ripple) = p.ripple.filter(|r| r.touches(y as f32 + 0.5)) {
+            // Camino lento solo en las filas que cruza la onda: cada pixel
+            // lee de un lugar desplazado.
+            for (x, px) in out_row.chunks_exact_mut(4).enumerate() {
+                let (ox, oy) = ripple.offset(x as f32 + 0.5, y as f32 + 0.5);
+                let sx = (x as f32 + ox).clamp(0.0, (width - 1) as f32) as usize;
+                let sy = (y as f32 + oy).clamp(0.0, (p.height - 1) as f32) as usize;
+                let index = ((sy / TILE) * p.tiles_x + sx / TILE) * TILE_PIXELS + (sy % TILE) * TILE + sx % TILE;
+                let mapped = tonemap((hdr[index] + glow[x] * p.bloom_intensity) * p.exposure);
+                let d = dither(x, y);
+                px[0] = encode(mapped.x, d, lut);
+                px[1] = encode(mapped.y, d, lut);
+                px[2] = encode(mapped.z, d, lut);
+                px[3] = 255;
+            }
+            continue;
+        }
         let tile_row = (y / TILE) * p.tiles_x;
         let in_tile = (y % TILE) * TILE;
         for tx in 0..p.tiles_x {
