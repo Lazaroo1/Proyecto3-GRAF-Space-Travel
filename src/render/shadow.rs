@@ -192,6 +192,13 @@ impl ShadowMap {
                     if x1 < 0.0 || y1 < 0.0 || x0 >= size || y0 >= size {
                         continue;
                     }
+                    // Vista desde la luz, una cara de frente es antihoraria
+                    // (como en el pipeline). Las de espaldas siempre quedan
+                    // detras de una de frente de la misma superficie: nunca
+                    // son lo mas cercano a la luz.
+                    if (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) <= 0.0 {
+                        continue;
+                    }
                     let first_band = (y0.max(0.0) as usize) / BAND_ROWS;
                     let last_band = ((y1.min(size - 1.0)) as usize) / BAND_ROWS;
                     for list in &mut lists[first_band..=last_band] {
@@ -265,15 +272,20 @@ fn raster(rows: &mut [f32], width: usize, y_first: usize, y_last: usize, a: Vec3
     let inv = 1.0 / area;
     for y in y0..=y1 {
         let py = y as f32 + 0.5;
-        let row = &mut rows[(y - y_first) * width..(y - y_first + 1) * width];
-        for (x, d) in row.iter_mut().enumerate().take(x1 + 1).skip(x0) {
-            let px = x as f32 + 0.5;
-            let wa = edge(b, c, px, py) * inv;
-            let wb = edge(c, a, px, py) * inv;
+        // Las dos aristas de `edge` con la parte que no depende de x ya
+        // calculada; las mismas operaciones, en el mismo orden.
+        let (ka, sa) = ((c.x - b.x) * (py - b.y), c.y - b.y);
+        let (kb, sb) = ((a.x - c.x) * (py - c.y), a.y - c.y);
+        let row = &mut rows[(y - y_first) * width + x0..=(y - y_first) * width + x1];
+        // Sin saltos: el compilador lo vectoriza.
+        for (i, d) in row.iter_mut().enumerate() {
+            let px = (x0 + i) as f32 + 0.5;
+            let wa = (ka - sa * (px - b.x)) * inv;
+            let wb = (kb - sb * (px - c.x)) * inv;
             let wc = 1.0 - wa - wb;
-            if wa >= 0.0 && wb >= 0.0 && wc >= 0.0 {
-                *d = d.min(a.z * wa + b.z * wb + c.z * wc);
-            }
+            let z = a.z * wa + b.z * wb + c.z * wc;
+            let inside = (wa >= 0.0) & (wb >= 0.0) & (wc >= 0.0);
+            *d = if inside { d.min(z) } else { *d };
         }
     }
 }
