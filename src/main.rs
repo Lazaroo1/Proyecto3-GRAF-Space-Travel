@@ -202,6 +202,16 @@ fn run_window(options: &Options) -> Result<(), String> {
         if rl.is_key_pressed(KeyboardKey::KEY_O) {
             app.settings.cruise = !app.settings.cruise;
         }
+        if rl.is_key_pressed(KeyboardKey::KEY_RIGHT_BRACKET) {
+            app.skip(30.0);
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_LEFT_BRACKET) {
+            app.skip(-30.0);
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_J) {
+            // Veinte segundos antes del colapso.
+            app.jump_to_cycle(scene::cycle::phase_start(scene::cycle::Phase::Collapse) - 20.0);
+        }
         if rl.is_key_pressed(KeyboardKey::KEY_M) {
             app.muted = !app.muted;
         }
@@ -279,6 +289,7 @@ fn read_input(rl: &RaylibHandle, captured: bool) -> FrameInput {
         roll: axis(KeyboardKey::KEY_Q, KeyboardKey::KEY_E),
         boost: down(KeyboardKey::KEY_LEFT_SHIFT),
         free_look: rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_RIGHT),
+        rewind: down(KeyboardKey::KEY_R),
         zoom: rl.get_mouse_wheel_move() as f64,
     }
 }

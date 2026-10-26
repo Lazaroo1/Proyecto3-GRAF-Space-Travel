@@ -67,13 +67,15 @@ impl Blackbody {
 /// materia conserva la velocidad con la que salio). Cada brasa recorre una
 /// curva de Bezier cuadratica y se calienta al acercarse: de rojo oscuro a
 /// amarillo.
-pub fn pira_stream(out: &mut [Particle], pira: &Body, star: &Body, t: f64, camera: DVec3) {
+/// `sink` es el radio donde termina: la superficie de la estrella o, despues
+/// del colapso, el borde del disco de Gargantua.
+pub fn pira_stream(out: &mut [Particle], pira: &Body, star: &Body, sink: f64, t: f64, camera: DVec3) {
     let p = pira.position(t);
     let star_pos = star.position(t);
     let to_star = (star_pos - p).normalize();
     let along_orbit = pira.velocity(t).normalize();
     let start = p + to_star * (pira.radius * 0.97);
-    let end = star_pos - to_star * (star.render_radius(t) * 0.98);
+    let end = star_pos - to_star * (sink * 0.98);
     let span = (end - start).length();
     // La curva se queda atras del planeta y un poco por fuera.
     let control = (start + end) * 0.5 - along_orbit * (span * 0.32);
@@ -214,7 +216,7 @@ mod tests {
             };
             STREAM_COUNT
         ];
-        pira_stream(&mut out, pira, star, t, DVec3::ZERO);
+        pira_stream(&mut out, pira, star, star.radius, t, DVec3::ZERO);
         let (p, s) = (pira.position(t).as_vec3(), star.position(t).as_vec3());
         let span = (p - s).length();
         let near_pira = out.iter().filter(|q| (q.pos - p).length() < pira.radius as f32 * 1.5).count();

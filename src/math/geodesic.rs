@@ -23,6 +23,12 @@
 //!
 //! Los rayos se reparten mas densos junto al borde de la sombra, donde la
 //! deflexion crece sin limite (ahi la luz da vueltas a la esfera de fotones).
+//!
+//! # El observador
+//! La camara es un observador estatico, como en el Proyecto 2: el angulo de
+//! cada pixel se mide en su marco local, y al pasarlo a coordenadas solo la
+//! componente radial se acorta por el lapso `sqrt(1 - rs/D)`. Por eso la
+//! sombra mide `sin s = b_c sqrt(1 - 1/D) / D` (Synge).
 
 use std::f32::consts::PI;
 
@@ -39,8 +45,15 @@ const PHI_MAX: f32 = 4.0 * PI;
 /// cruzan el disco antes de caer).
 const SHADOW_SHARE: f32 = 0.2;
 /// Angulo maximo de la tabla con la direccion del agujero; mas alla se usa
-/// la deflexion de campo debil.
-const TABLE_SPAN: f32 = PI * 0.5;
+/// la deflexion de campo debil. De cerca la tabla cubre todo el cielo: ahi
+/// el error de segundo orden del campo debil ya se notaria.
+fn table_span(observer: f32) -> f32 {
+    if observer < 80.0 {
+        PI
+    } else {
+        PI * 0.5
+    }
+}
 
 /// Lo que le pasa a un rayo.
 #[derive(Clone, Copy, Debug)]
@@ -52,14 +65,20 @@ pub struct Path {
     pub exit: f32,
     /// Angulo de posicion recorrido hasta caer o hasta que ya no vuelve.
     pub end: f32,
+    /// Radio mas cercano al agujero que alcanza (0 si cae).
+    pub closest: f32,
 }
 
 pub struct LensTable {
     /// Distancia de la camara al agujero, en `rs`.
     pub observer: f32,
-    /// Angulo `s` de la sombra (aproximado) y del final de la tabla.
+    /// Angulo `s` de la sombra y del final de la tabla.
     shadow: f32,
     span: f32,
+    /// Lapso del observador: `sqrt(1 - 1/D)`.
+    pub lapse: f32,
+    /// Angulo `s` de cada rayo.
+    angles: Vec<f32>,
     paths: Vec<Path>,
     /// `r(phi)` de cada rayo; `INFINITY` despues de escapar y `0` despues de
     /// caer.
@@ -79,23 +98,28 @@ impl LensTable {
     /// Integra la tabla para una camara a `observer` radios de Schwarzschild.
     pub fn build(observer: f32) -> Self {
         let observer = observer.max(3.0);
-        let shadow = (CRITICAL_IMPACT / observer).min(1.0).asin();
-        let span = TABLE_SPAN.max(shadow * 1.5);
+        let lapse = (1.0 - 1.0 / observer).sqrt();
+        let shadow = (CRITICAL_IMPACT * lapse / observer).min(1.0).asin();
+        let span = table_span(observer).max(shadow * 1.5);
         let mut table = Self {
             observer,
             shadow,
             span,
+            lapse,
+            angles: Vec::new(),
             paths: vec![
                 Path {
                     captured: false,
                     exit: 0.0,
                     end: 0.0,
+                    closest: 0.0,
                 };
                 RAYS
             ],
             radius: vec![0.0; RAYS * PHI_SAMPLES],
         };
-        let angles: Vec<f32> = (0..RAYS).map(|i| table.angle_of(i as f32 / (RAYS - 1) as f32)).collect();
+        table.angles = (0..RAYS).map(|i| table.angle_of(i as f32 / (RAYS - 1) as f32)).collect();
+        let angles = &table.angles;
         let paths = DisjointMut::new(&mut table.paths);
         let radius = DisjointMut::new(&mut table.radius);
         parallel::for_each(RAYS, |i| {
@@ -105,6 +129,31 @@ impl LensTable {
             *path = trace(observer, angles[i], row);
         });
         table
+    }
+
+    /// Si la tabla sirve para una camara a `observer`: la distancia cambio
+    /// menos de un cuarto por ciento.
+    pub fn fits(&self, observer: f32) -> bool {
+        (observer.max(3.0) / self.observer).ln().abs() < 0.0025
+    }
+
+    /// Angulo de la sombra.
+    pub fn shadow(&self) -> f32 {
+        self.shadow
+    }
+
+    /// El mayor angulo `s` cuyo rayo pasa a menos de `radius` del agujero:
+    /// mas alla ningun rayo puede tocar el disco. Si la camara esta dentro
+    /// de ese radio, todo el cielo.
+    pub fn disk_cone(&self, radius: f32) -> f32 {
+        if self.observer <= radius {
+            return PI;
+        }
+        match (0..RAYS).rev().find(|&i| self.paths[i].captured || self.paths[i].closest < radius) {
+            Some(i) if i + 1 < RAYS => self.angles[i + 1],
+            Some(_) => self.span,
+            None => 0.0,
+        }
     }
 
     /// Angulo `s` del rayo en la posicion `x` (de 0 a 1) de la tabla.
@@ -146,6 +195,7 @@ impl LensTable {
                 captured: a.captured,
                 exit: a.exit + (b.exit - a.exit) * frac,
                 end: a.end + (b.end - a.end) * frac,
+                closest: a.closest + (b.closest - a.closest) * frac,
             }
         } else if frac < 0.5 {
             a
@@ -189,10 +239,11 @@ impl LensTable {
 /// agujero desde la distancia `observer`: lo que se curva desde la camara
 /// hasta el infinito. Integrando la aceleracion `1.5 b^2 / r^4` a lo largo
 /// de la recta, desde la camara (`l = -D cos s`) hasta el infinito, da
-/// `(1 + cos s (1 + sin^2 s / 2)) / b` con `b = D sin s`; para el camino
-/// completo (`s -> 0`, `D -> infinito`) es el conocido `2 / b = 4M / b`.
+/// `(1 + cos s (1 + sin^2 s / 2)) / b` con `b = D sin s / lapso`; para el
+/// camino completo (`s -> 0`, `D -> infinito`) es el conocido `2 / b = 4M / b`.
 pub fn weak_deflection(observer: f32, s: f32) -> f32 {
-    let b = observer * s.sin();
+    let lapse = (1.0 - 1.0 / observer.max(1.0001)).sqrt();
+    let b = observer * s.sin() / lapse;
     if b <= 0.0 {
         return 0.0;
     }
@@ -204,7 +255,10 @@ pub fn weak_deflection(observer: f32, s: f32) -> f32 {
 /// `s` hacia `+y`. Llena `row` con `r(phi)` y devuelve su destino.
 fn trace(observer: f32, s: f32, row: &mut [f32]) -> Path {
     let (mut x, mut y) = (observer as f64, 0.0f64);
-    let (mut vx, mut vy) = (-(s as f64).cos(), (s as f64).sin());
+    // Observador estatico: la componente radial se acorta por el lapso.
+    let lapse = (1.0 - 1.0 / observer as f64).sqrt();
+    let (mut vx, mut vy) = (-(s as f64).cos() * lapse, (s as f64).sin());
+    let mut closest = observer as f64;
     let h2 = (x * vy - y * vx).powi(2);
     let accel = |x: f64, y: f64| {
         let r2 = (x * x + y * y).max(1e-12);
@@ -253,6 +307,7 @@ fn trace(observer: f32, s: f32, row: &mut [f32]) -> Path {
         heading += (old_vx * vy - old_vy * vx).atan2(old_vx * vx + old_vy * vy);
         // Muestras de r en los angulos de la grilla que se cruzaron.
         let r_new = (x * x + y * y).sqrt();
+        closest = closest.min(r_new);
         while next < row.len() && (next as f64) * (PHI_MAX as f64) / ((row.len() - 1) as f64) <= phi {
             row[next] = r_new as f32;
             next += 1;
@@ -271,6 +326,7 @@ fn trace(observer: f32, s: f32, row: &mut [f32]) -> Path {
         captured,
         exit: (heading + rest) as f32,
         end,
+        closest: if captured { 0.0 } else { closest as f32 },
     }
 }
 
@@ -281,7 +337,7 @@ mod tests {
     #[test]
     fn rays_inside_the_shadow_fall_and_the_rest_escape() {
         let table = LensTable::build(40.0);
-        let shadow = (CRITICAL_IMPACT / 40.0).asin();
+        let shadow = table.shadow();
         assert!(table.lookup(shadow * 0.9).path.captured);
         assert!(!table.lookup(shadow * 1.1).path.captured);
     }
@@ -292,8 +348,10 @@ mod tests {
         let table = LensTable::build(d);
         for s in [0.4f32, 0.8, 1.2] {
             let path = table.lookup(s).path;
-            // Sin curvatura saldria con angulo pi - s.
-            let bend = path.exit - (PI - s);
+            // Sin curvatura saldria con su direccion inicial en coordenadas
+            // (la del pixel con la componente radial acortada por el lapso).
+            let start = s.sin().atan2(-s.cos() * table.lapse);
+            let bend = path.exit - start;
             // El campo debil es la aproximacion de primer orden: el segundo
             // orden agrega unos puntos porcentuales.
             let expected = weak_deflection(d, s);
@@ -307,7 +365,7 @@ mod tests {
         let table = LensTable::build(d);
         let s = 0.5f32;
         let ray = table.lookup(s);
-        let b = d * s.sin();
+        let b = d * s.sin() / table.lapse;
         let closest = (0..400)
             .filter_map(|k| table.radius_at(&ray, k as f32 * 0.01))
             .fold(f32::MAX, f32::min);
@@ -316,9 +374,21 @@ mod tests {
     }
 
     #[test]
+    fn the_disk_cone_bounds_every_ray_that_reaches_the_disk() {
+        let table = LensTable::build(40.0);
+        let cone = table.disk_cone(19.0);
+        // Cerca de asin(19 / 40), un poco mas: la luz se curva hacia adentro.
+        assert!(cone > (19.0f32 / 40.0).asin() && cone < 0.7, "{cone}");
+        for k in 1..40 {
+            let s = cone + k as f32 * 0.02;
+            assert!(table.lookup(s).path.closest >= 19.0 * 0.99, "s {s}");
+        }
+    }
+
+    #[test]
     fn grazing_rays_circle_the_photon_sphere() {
         let table = LensTable::build(30.0);
-        let edge = (CRITICAL_IMPACT / 30.0).asin();
+        let edge = table.shadow();
         // Justo afuera de la sombra el rayo da mas de media vuelta.
         let ray = table.lookup(edge * 1.0005);
         assert!(!ray.path.captured);

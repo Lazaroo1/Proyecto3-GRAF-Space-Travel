@@ -31,7 +31,14 @@ pub struct SunStyle {
 
 /// Latido en `[0, 1]` aproximadamente: dos golpes por periodo (lub-dub).
 pub fn heartbeat(t: f64, period: f64) -> f64 {
-    let phase = (t / period).rem_euclid(1.0);
+    heartbeat_phase(t / period)
+}
+
+/// El mismo latido en la fase `phase`, medida en latidos. El ciclo de OCASO
+/// acelera el corazon, asi que la fase es la integral de la frecuencia y no
+/// `t / periodo`.
+pub fn heartbeat_phase(phase: f64) -> f64 {
+    let phase = phase.rem_euclid(1.0);
     let beat = |center: f64, width: f64, height: f64| {
         let x = (phase - center) / width;
         height * (-x * x).exp()

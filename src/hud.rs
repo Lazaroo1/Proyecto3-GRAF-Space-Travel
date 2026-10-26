@@ -87,7 +87,15 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
         Some(false) => "OFF",
     };
     let impact = if app.path_shown && app.path_impact { "   CHOQUE PREDICHO" } else { "" };
+    let c = &app.cycle;
+    let clock = |seconds: f64| format!("{:02}:{:02}", (seconds / 60.0) as u32, (seconds % 60.0) as u32);
     let lines = [
+        format!(
+            "ciclo {} / {}   {}",
+            clock(c.tau),
+            clock(crate::scene::cycle::CYCLE),
+            c.phase.name().to_uppercase()
+        ),
         format!("velocidad {:.1} u/s   (max {:.0})", f.speed, f.max_speed),
         format!("altitud {:.1} sobre {}", f.altitude, app.body_name(f.nearest)),
         format!("marco: {}{contact}", app.body_name(f.frame)),
@@ -117,6 +125,7 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
             "Q/E: alabeo   Shift: turbo   C: camara   P: foto   Tab: soltar el mouse".to_string(),
             "L: modo local   O: crucero (rodea el planeta)   V: trayectoria".to_string(),
             "T: ajustes en vivo   M: sonido".to_string(),
+            "R: rebobinar   [ ]: -30/+30 s   J: al colapso".to_string(),
             "F3: wireframe   F4: colores de LOD   F5: LOD on/off   F6: otra semilla".to_string(),
             "F1: ayuda   F2: estadisticas   Esc: salir".to_string(),
         ];

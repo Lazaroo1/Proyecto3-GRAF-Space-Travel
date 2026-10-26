@@ -16,8 +16,7 @@
 
 use std::f32::consts::TAU;
 
-use super::{heartbeat, limb_haze, Fragment, Uniforms};
-use crate::config::HEARTBEAT_PERIOD;
+use super::{limb_haze, Fragment, Uniforms};
 use crate::math::{smoothstep, Perlin, Vec3};
 use crate::terrain::shapes::{artery, ARTERY_FREQUENCY};
 
@@ -80,7 +79,7 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     };
 
     let delay = (u.noise.noise(dir * 1.2) * 0.5 + 0.5) * 2.5;
-    let beat = heartbeat((t - delay) as f64, HEARTBEAT_PERIOD) as f32;
+    let beat = u.beat_at(delay);
     // Cada arteria es cian o magenta: mezclarlas a medias daria lavanda
     // casi blanco.
     let vein_color = VEIN_CYAN.lerp(VEIN_MAGENTA, smoothstep(0.45, 0.55, fold));

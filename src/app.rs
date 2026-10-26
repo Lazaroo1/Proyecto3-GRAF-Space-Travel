@@ -17,8 +17,12 @@ use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
 use crate::scene::trajectory::{self, Prediction};
 use crate::scene::{nearest_surface, ribbon, Mesh, System};
 use crate::audio::AudioParams;
+use crate::math::blackbody::planckian_rgb;
+use crate::math::geodesic::LensTable;
+use crate::scene::cycle::{self, CycleState};
 use crate::shaders::{
-    self, heartbeat, AtmosphereFrame, DebugView, Gains, Material, PropStyle, RingInfo, SkyView, Uniforms,
+    self, heartbeat_phase, AtmosphereFrame, BlackHole, DebugView, Gains, Material, PlanckTable, PropStyle, RingInfo,
+    SkyView, SunStyle, Uniforms,
 };
 use crate::terrain::{LodSettings, TerrainStats, Viewer};
 
@@ -36,6 +40,8 @@ pub struct FrameInput {
     pub free_look: bool,
     /// Rueda del mouse: acerca o aleja la camara.
     pub zoom: f64,
+    /// Rebobinar el tiempo (mantener R).
+    pub rewind: bool,
 }
 
 /// Encuadre de una vista fija. Los angulos se miden alrededor del planeta:
@@ -57,6 +63,10 @@ pub enum Shot {
     Coast { body: &'static str, distance: f64, speed: f64 },
     /// El chorro de brasas que Pira pierde hacia la estrella, de lejos.
     Stream,
+    /// Detras del planeta `body`, mirando hacia la estrella (o hacia
+    /// Gargantua): el planeta de perfil adelante y el centro del sistema al
+    /// fondo.
+    Gaze { body: &'static str },
     /// Un objeto de la superficie de cerca. `distance` en unidades del mundo;
     /// `sun` es el seno de la altura del sol que se busca sobre su horizonte
     /// (bajo y de lado marca el relieve; bajo cero, de noche, se luce lo que
@@ -64,52 +74,75 @@ pub enum Shot {
     Landmark { body: &'static str, kind: PropKind, distance: f64, sun: f64 },
 }
 
-/// Una vista fija con nombre, para capturas y para el benchmark.
+/// Una vista fija con nombre, para capturas y para el benchmark, en un
+/// instante del ciclo.
 #[derive(Clone, Copy, Debug)]
 pub struct Preset {
     pub name: &'static str,
     pub shot: Shot,
+    pub time: f64,
 }
 
-pub const PRESETS: [Preset; 15] = [
-    Preset { name: "01_sistema", shot: Shot::Overview },
-    Preset { name: "02_pira", shot: Shot::Orbit { body: "Pira", distance: 3.2, azimuth: 0.5, elevation: 0.2 } },
-    Preset { name: "03_pira_noche", shot: Shot::Orbit { body: "Pira", distance: 2.8, azimuth: 2.6, elevation: 0.15 } },
-    Preset { name: "04_jardin", shot: Shot::Orbit { body: "Jardin", distance: 3.0, azimuth: 1.2, elevation: 0.25 } },
+pub const PRESETS: [Preset; 20] = [
+    Preset { name: "01_sistema", shot: Shot::Overview, time: 40.0 },
+    Preset { name: "02_pira", shot: Shot::Orbit { body: "Pira", distance: 3.2, azimuth: 0.5, elevation: 0.2 }, time: 40.0 },
+    Preset { name: "03_pira_noche", shot: Shot::Orbit { body: "Pira", distance: 2.8, azimuth: 2.6, elevation: 0.15 }, time: 40.0 },
+    Preset { name: "04_jardin", shot: Shot::Orbit { body: "Jardin", distance: 3.0, azimuth: 1.2, elevation: 0.25 }, time: 40.0 },
     Preset {
         name: "05_jardin_superficie",
         shot: Shot::Surface { body: "Jardin", azimuth: 1.75, elevation: 0.3, altitude: 6.0 },
+        time: 40.0,
     },
-    Preset { name: "06_vigia", shot: Shot::Orbit { body: "Vigia", distance: 2.6, azimuth: 0.8, elevation: 0.1 } },
+    Preset { name: "06_vigia", shot: Shot::Orbit { body: "Vigia", distance: 2.6, azimuth: 0.8, elevation: 0.1 }, time: 40.0 },
     Preset {
         name: "07_requiem",
         shot: Shot::Surface { body: "Requiem", azimuth: 1.25, elevation: 0.35, altitude: 6.0 },
+        time: 40.0,
     },
     Preset {
         name: "08_cementerio",
         shot: Shot::Orbit { body: "Cementerio", distance: 5.0, azimuth: 0.9, elevation: 0.35 },
+        time: 40.0,
     },
-    Preset { name: "09_nave", shot: Shot::Ship { body: "Requiem" } },
+    Preset { name: "09_nave", shot: Shot::Ship { body: "Requiem" }, time: 40.0 },
     Preset {
         name: "10_monolito",
         shot: Shot::Landmark { body: "Requiem", kind: PropKind::Monolith, distance: 16.0, sun: 0.42 },
+        time: 40.0,
     },
     Preset {
         name: "11_hongos",
         shot: Shot::Landmark { body: "Jardin", kind: PropKind::Mushroom, distance: 22.0, sun: -0.38 },
+        time: 40.0,
     },
     Preset {
         name: "12_espinas",
         shot: Shot::Landmark { body: "Pira", kind: PropKind::Spike, distance: 26.0, sun: 0.3 },
+        time: 40.0,
     },
     Preset {
         name: "13_naufragio",
         shot: Shot::Landmark { body: "Cementerio", kind: PropKind::Wreck, distance: 40.0, sun: 0.35 },
+        time: 40.0,
     },
-    Preset { name: "14_chorro", shot: Shot::Stream },
+    Preset { name: "14_chorro", shot: Shot::Stream, time: 40.0 },
     Preset {
         name: "15_trayectoria",
         shot: Shot::Coast { body: "Requiem", distance: 2.2, speed: 0.85 },
+        time: 40.0,
+    },
+    Preset {
+        name: "16_arritmia",
+        shot: Shot::Orbit { body: "Pira", distance: 3.4, azimuth: 0.3, elevation: 0.25 },
+        time: 700.0,
+    },
+    Preset { name: "17_colapso", shot: Shot::Gaze { body: "Jardin" }, time: 725.2 },
+    Preset { name: "18_gargantua", shot: Shot::Gaze { body: "Pira" }, time: 830.0 },
+    Preset { name: "19_gargantua_jardin", shot: Shot::Gaze { body: "Jardin" }, time: 830.0 },
+    Preset {
+        name: "20_jardin_noche_eterna",
+        shot: Shot::Landmark { body: "Jardin", kind: PropKind::Coral, distance: 24.0, sun: 0.3 },
+        time: 850.0,
     },
 ];
 
@@ -126,6 +159,13 @@ pub struct App {
     pub prop_stats: PropStats,
     /// Intensidad de cada shader (panel de ajustes).
     pub gains: Gains,
+    /// Exposicion elegida (el ciclo la baja durante los destellos).
+    pub exposure: f32,
+    /// El ciclo en el ultimo frame dibujado.
+    pub cycle: CycleState,
+    /// Tabla de geodesicas de Gargantua: se rehace al cambiar la distancia.
+    lens: Option<LensTable>,
+    planck: PlanckTable,
     /// Sonido apagado (M).
     pub muted: bool,
     /// Trayectoria predicha: siempre (`Some(true)`), nunca (`Some(false)`) o
@@ -170,6 +210,7 @@ impl App {
     pub fn new(width: usize, height: usize) -> Result<Self, String> {
         let system = System::load(&asset_dir())?;
         let t = 0.0;
+        let system_star_radius = system.bodies[0].radius;
         let planet = &system.bodies[1];
         let center = planet.position(t);
         let to_star = (system.bodies[0].position(t) - center).normalize();
@@ -195,6 +236,10 @@ impl App {
             debug: DebugView::default(),
             prop_stats: PropStats::default(),
             gains: Gains::default(),
+            exposure: config::EXPOSURE,
+            cycle: cycle::at(t, system_star_radius),
+            lens: None,
+            planck: PlanckTable::new(),
             muted: false,
             path_mode: None,
             path_shown: false,
@@ -216,6 +261,25 @@ impl App {
     /// Tiempo de simulacion.
     pub fn time(&self) -> f64 {
         self.sim_time
+    }
+
+    /// Salta `seconds` en el tiempo (negativo rebobina). Los cuerpos, el
+    /// ciclo y las particulas son funciones del tiempo; la nave conserva su
+    /// posicion y su velocidad respecto a su cuerpo, asi que viaja con el.
+    pub fn skip(&mut self, seconds: f64) {
+        let t = (self.sim_time + seconds).max(0.0);
+        let body = &self.system.bodies[self.ship.frame];
+        self.ship.world_pos = body.position(t) + self.ship.rel_pos;
+        self.ship_prev = self.ship;
+        self.sim_time = t;
+        self.accumulator = 0.0;
+        self.local_up = None;
+    }
+
+    /// Salta al instante `t` del ciclo actual.
+    pub fn jump_to_cycle(&mut self, tau: f64) {
+        let start = (self.sim_time / cycle::CYCLE).floor() * cycle::CYCLE;
+        self.skip(start + tau - self.sim_time);
     }
 
     /// Lo que el sintetizador necesita saber: el latido se oye mas cerca de
@@ -243,10 +307,12 @@ impl App {
             "Cementerio" => 61.7,
             _ => 36.7,
         };
+        let state = cycle::at(t, star.radius);
+        let heart = if state.star_radius > 0.0 { 1.0 } else { 0.0 };
         AudioParams {
-            time: t,
-            beat_period: config::HEARTBEAT_PERIOD,
-            beat: beat as f32,
+            beat_phase: state.beat_phase,
+            beat_rate: beat_rate(&state),
+            beat: (beat * heart) as f32,
             throttle: self.throttle,
             wind: wind as f32,
             drone_hz,
@@ -288,6 +354,12 @@ impl App {
             boost: input.boost,
             aim: self.aim,
         };
+        if input.rewind {
+            // Rebobinar: todo el sistema es funcion del tiempo y vuelve atras;
+            // la nave se queda quieta respecto a su cuerpo.
+            self.skip(-config::REWIND_SPEED * frame_dt);
+            return;
+        }
         // Acumulador: se dan tantos pasos fijos como quepan en el tiempo real;
         // el sobrante se usa para interpolar el dibujo.
         self.accumulator += frame_dt;
@@ -377,10 +449,27 @@ impl App {
 
         let show_ship = self.camera_mode == CameraMode::Chase;
         let pixel_angle = 2.0 * (camera.fov_y * 0.5).tan() / self.renderer.height() as f64;
+        let star = &self.system.bodies[0];
+        let state = cycle::at(t, star.radius);
+        self.cycle = state;
+        let beat = if state.star_radius > 0.0 { heartbeat_phase(state.beat_phase) as f32 } else { 0.0 };
+        let heart = if state.star_radius > 0.0 { 1.0 } else { 0.0 };
+        // La estrella del ciclo: su radio late, se hincha y colapsa.
+        let star_radius = state.star_radius * (1.0 + state.pulse * beat as f64);
+        let star_material = Material::Sun(SunStyle {
+            temperature: state.star_temperature,
+            intensity: 3.0 * state.star_intensity,
+        });
+        // De donde sale la luz: la estrella o, despues, el disco de Gargantua.
+        let disk_light = state.disk_density * (1.0 - state.star_glow);
+        let sun_light = planckian_rgb(state.star_temperature) * (1.5 * (1.0 + 0.06 * beat) * state.star_light)
+            + planckian_rgb(state.disk_peak * 1.3) * (0.35 * disk_light);
+        let light_radius = star_radius.max(state.disk_outer as f64 * state.rs * 0.5).max(1.0);
+        let sink = star_radius.max(state.disk_outer as f64 * state.rs * 0.8);
         self.build_path(t, &camera, pixel_angle);
-        self.emit_particles(t, &camera, ship_pos, ship_rot, show_ship);
-        let mut draws = build_draws(&self.system, t, &camera, ship_pos, ship_rot, show_ship);
-        self.prop_stats = prop_draws(&self.system, t, &camera, &view, pixel_angle, &mut draws);
+        self.emit_particles(t, &camera, ship_pos, ship_rot, show_ship, sink);
+        let mut draws = build_draws(&self.system, t, &camera, ship_pos, ship_rot, show_ship, star_radius, star_material);
+        self.prop_stats = prop_draws(&self.system, t, &camera, &view, pixel_angle, light_radius, &mut draws);
         if !self.path_mesh.indices.is_empty() {
             let mesh = &self.path_mesh;
             draws.push(Draw {
@@ -396,19 +485,55 @@ impl App {
             });
         }
         let atmospheres = atmosphere_frames(&self.system, t, &camera, &view);
-        let sun_light = self.system.star_light(t);
         // Si la camara esta dentro de una atmosfera, su cielo sale de una tabla.
         let sky_view = atmospheres
             .iter()
             .enumerate()
             .find(|(_, frame)| frame.center.length() < frame.model.radius + frame.model.params.thickness)
             .map(|(i, frame)| SkyView::build(i, frame, sun_light));
-        let star = &self.system.bodies[0];
+        let star_pos = self.system.bodies[0].position(t);
+        // Gargantua: la tabla de geodesicas solo se rehace si la distancia
+        // al agujero cambio lo suficiente.
+        if state.rs > 0.5 {
+            let observer = ((star_pos - camera.pos).length() / state.rs) as f32;
+            if !self.lens.as_ref().is_some_and(|table| table.fits(observer)) {
+                self.lens = Some(LensTable::build(observer));
+            }
+        }
+        let hole = match (&self.lens, state.rs > 0.5) {
+            (Some(table), true) => {
+                let normal = DQuat::from_axis_angle(DVec3::Z, self.system.bodies[0].axial_tilt).rotate(DVec3::Y);
+                let axis_a = normal.cross(DVec3::Z).normalize();
+                let axis_b = normal.cross(axis_a);
+                Some(BlackHole {
+                    center: (star_pos - camera.pos).as_vec3(),
+                    rs: state.rs as f32,
+                    normal: normal.as_vec3(),
+                    axis_a: axis_a.as_vec3(),
+                    axis_b: axis_b.as_vec3(),
+                    table,
+                    planck: &self.planck,
+                    noise: &self.system.noise,
+                    time: t as f32,
+                    density: state.disk_density,
+                    outer: state.disk_outer,
+                    peak: state.disk_peak,
+                    cone_cos: table.disk_cone(state.disk_outer.max(3.5)).max(table.shadow() * 1.2).cos(),
+                })
+            }
+            _ => None,
+        };
+        self.renderer.exposure = self.exposure * state.exposure;
         let uniforms = Uniforms {
             time: t as f32,
-            beat: heartbeat(t, config::HEARTBEAT_PERIOD) as f32,
-            sun_pos: (star.position(t) - camera.pos).as_vec3(),
-            sun_radius: star.render_radius(t) as f32,
+            beat,
+            beat_phase: state.beat_phase as f32,
+            beat_rate: beat_rate(&state) as f32,
+            heart,
+            star_glow: state.star_glow,
+            black_hole: hole.as_ref(),
+            sun_pos: (star_pos - camera.pos).as_vec3(),
+            sun_radius: light_radius as f32,
             sun_light,
             noise: &self.system.noise,
             sky: &self.system.sky,
@@ -418,7 +543,7 @@ impl App {
             ring: ring_info(&self.system, t, camera.pos),
             atmospheres: &atmospheres,
             sky_view: sky_view.as_ref(),
-            biolum: self.gains.jardin,
+            biolum: self.gains.jardin * state.biolum,
             gains: self.gains,
             debug: self.debug,
         };
@@ -469,7 +594,8 @@ impl App {
 
     /// Particulas del frame: el chorro de brasas de Pira, las esporas de
     /// Jardin si la camara esta cerca de su suelo y el fuego de los motores.
-    fn emit_particles(&mut self, t: f64, camera: &Camera, ship_pos: DVec3, ship_rot: DQuat, show_ship: bool) {
+    #[allow(clippy::too_many_arguments)]
+    fn emit_particles(&mut self, t: f64, camera: &Camera, ship_pos: DVec3, ship_rot: DQuat, show_ship: bool, sink: f64) {
         let blank = Particle {
             pos: Vec3::ZERO,
             radius: 0.0,
@@ -481,7 +607,7 @@ impl App {
         let star = &system.bodies[0];
         if let Some(i) = system.find("Pira") {
             out.resize(STREAM_COUNT, blank);
-            effects::pira_stream(&mut out, &system.bodies[i], star, t, camera.pos);
+            effects::pira_stream(&mut out, &system.bodies[i], star, sink, t, camera.pos);
         }
         if let Some(i) = system.find("Jardin") {
             let jardin = &system.bodies[i];
@@ -554,7 +680,7 @@ impl App {
 
     /// Coloca la nave y la camara en una vista fija.
     pub fn apply_preset(&mut self, preset: &Preset) {
-        let t = 40.0;
+        let t = preset.time;
         let bodies = &self.system.bodies;
         // Ejes alrededor de un planeta: hacia la estrella, de lado y arriba.
         let frame = |index: usize| {
@@ -610,6 +736,16 @@ impl App {
                 let pos = center + side * (bodies[i].radius * distance);
                 (pos, to_star, up, 3.5, (0.35, -0.45))
             }
+            Shot::Gaze { body } => {
+                let i = index(body);
+                let (center, to_star, side, up) = frame(i);
+                let r = bodies[i].radius;
+                // Atras y de lado: el planeta queda en un tercio de la imagen
+                // y el centro del sistema en el medio.
+                let pos = center - to_star * (r * 3.0) + up * (r * 0.5) + side * (r * 1.9);
+                let target = bodies[0].position(t);
+                (pos, target - pos, up, 1.0, (0.0, 0.0))
+            }
             Shot::Stream => {
                 // Por encima del plano de la orbita, viendo de Pira a la estrella.
                 let i = index("Pira");
@@ -641,7 +777,7 @@ impl App {
         // En la vista del sistema y frente a los objetos la nave estorbaria:
         // se mira desde la cabina.
         self.camera_mode = match preset.shot {
-            Shot::Overview | Shot::Landmark { .. } | Shot::Stream => CameraMode::Cockpit,
+            Shot::Overview | Shot::Landmark { .. } | Shot::Stream | Shot::Gaze { .. } => CameraMode::Cockpit,
             _ => CameraMode::Chase,
         };
         // Sin asistente y con velocidad de orbita: la gravedad manda.
@@ -743,6 +879,12 @@ impl App {
     }
 }
 
+/// Latidos por segundo en este momento del ciclo (la derivada de la fase).
+fn beat_rate(state: &CycleState) -> f64 {
+    let later = cycle::at(state.tau + 0.01, 1.0).beat_phase;
+    ((later - state.beat_phase) / 0.01).max(0.0)
+}
+
 /// Direccion de la nave vista desde el centro de Vigia, en su propio espacio:
 /// hacia ahi quiere mirar el ojo.
 fn eye_target(system: &System, ship_pos: DVec3, t: f64) -> DVec3 {
@@ -803,12 +945,13 @@ fn prop_draws<'a>(
     camera: &Camera,
     view: &View,
     pixel_angle: f64,
+    light_radius: f64,
     draws: &mut Vec<Draw<'a>>,
 ) -> PropStats {
     let mut stats = PropStats::default();
     let mut chosen = Vec::new();
     let star = &system.bodies[0];
-    let (star_pos, star_radius) = (star.position(t), star.render_radius(t));
+    let (star_pos, star_radius) = (star.position(t), light_radius);
     for (body, set) in system.bodies.iter().zip(&system.props) {
         let Some(field) = &body.surface else { continue };
         if set.instances.is_empty() {
@@ -873,9 +1016,11 @@ fn build_draws<'a>(
     ship_pos: DVec3,
     ship_rot: DQuat,
     show_ship: bool,
+    star_radius: f64,
+    star_material: Material,
 ) -> Vec<Draw<'a>> {
     let mut draws = Vec::new();
-    for (body, terrain) in system.bodies.iter().zip(&system.terrains) {
+    for (index, (body, terrain)) in system.bodies.iter().zip(&system.terrains).enumerate() {
         let rotation = body.rotation(t).to_mat3();
         let center = body.position(t) - camera.pos;
         match terrain {
@@ -898,14 +1043,23 @@ fn build_draws<'a>(
             }
             None => {
                 let mesh = &system.meshes[body.mesh];
-                let radius = body.render_radius(t);
+                // La estrella toma su radio y su material del ciclo; despues
+                // del colapso ya no hay nada que dibujar.
+                let (radius, material) = if index == 0 {
+                    (star_radius, star_material)
+                } else {
+                    (body.render_radius(t), body.material)
+                };
+                if radius < 0.5 {
+                    continue;
+                }
                 draws.push(Draw {
                     mesh,
                     indices: &mesh.indices,
                     local_offset: Vec3::ZERO,
                     model: DMat4::from_affine(&rotation.scale(radius), center).to_f32(),
                     normal: rotation.to_f32(),
-                    material: body.material,
+                    material,
                     bounds_center: center.as_vec3(),
                     bounds_radius: (radius * mesh.bounds_radius as f64) as f32,
                     tag: 0,
@@ -944,6 +1098,7 @@ mod tests {
         let preset = Preset {
             name: "prueba",
             shot: Shot::Surface { body: "Jardin", azimuth: 0.4, elevation: 0.2, altitude: 20.0 },
+            time: 40.0,
         };
         app.apply_preset(&preset);
         let jardin = app.system.find("Jardin").unwrap();

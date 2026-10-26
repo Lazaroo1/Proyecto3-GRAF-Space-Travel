@@ -22,10 +22,10 @@ pub const SAMPLE_RATE: u32 = 44_100;
 /// Lo que el juego le dice al sintetizador cada frame.
 #[derive(Clone, Copy, Debug)]
 pub struct AudioParams {
-    /// Tiempo de simulacion: el latido se sincroniza con el.
-    pub time: f64,
-    /// Periodo del latido en segundos.
-    pub beat_period: f64,
+    /// Fase del latido (en latidos) y latidos por segundo: el sonido sigue
+    /// al corazon que se ve aunque acelere.
+    pub beat_phase: f64,
+    pub beat_rate: f64,
     /// Volumen del latido, de 0 a 1.
     pub beat: f32,
     /// Empuje de los motores, de 0 a 1.
@@ -41,8 +41,8 @@ pub struct AudioParams {
 impl Default for AudioParams {
     fn default() -> Self {
         Self {
-            time: 0.0,
-            beat_period: 1.9,
+            beat_phase: 0.0,
+            beat_rate: 1.0 / 1.9,
             beat: 0.0,
             throttle: 0.0,
             wind: 0.0,
@@ -84,8 +84,8 @@ pub struct Synth {
     drone: f32,
     beat: f32,
     drone_hz: f32,
-    /// Reloj del audio en segundos de simulacion.
-    clock: f64,
+    /// Fase del latido que suena, en latidos.
+    phase: f64,
     /// Ultimo golpe disparado (indice de periodo y cual de los dos).
     last_beat: i64,
     thumps: Vec<Thump>,
@@ -116,7 +116,7 @@ impl Synth {
             drone: 0.0,
             beat: 0.0,
             drone_hz: 55.0,
-            clock: 0.0,
+            phase: 0.0,
             last_beat: i64::MIN,
             thumps: Vec::new(),
             noise: 0x1234_5678,
@@ -147,10 +147,9 @@ impl Synth {
         (x >> 8) as f32 / 8_388_608.0 - 1.0
     }
 
-    /// Indice del ultimo golpe que ya debio sonar en el instante `clock`:
-    /// dos por periodo, en las fases 0.1 (lub) y 0.3 (dub) del latido.
-    fn beat_index(clock: f64, period: f64) -> i64 {
-        let phase = clock / period;
+    /// Indice del ultimo golpe que ya debio sonar en la fase `phase`: dos
+    /// por latido, en las fases 0.1 (lub) y 0.3 (dub).
+    fn beat_index(phase: f64) -> i64 {
         let cycle = phase.floor();
         let within = phase - cycle;
         let count = if within >= 0.3 {
@@ -167,14 +166,13 @@ impl Synth {
     pub fn fill(&mut self, out: &mut [f32]) {
         let target = self.target;
         let dt = 1.0 / SAMPLE_RATE as f32;
-        let period = target.beat_period.max(0.1);
-        // El reloj sigue a la simulacion; si salto (o recien empieza), se
+        // La fase sigue a la del juego; si salto (o recien empieza), se
         // resincroniza sin disparar golpes.
-        if self.last_beat == i64::MIN || (target.time - self.clock).abs() > 0.3 {
-            self.clock = target.time;
-            self.last_beat = Self::beat_index(self.clock, period);
+        if self.last_beat == i64::MIN || (target.beat_phase - self.phase).abs() > 0.3 {
+            self.phase = target.beat_phase;
+            self.last_beat = Self::beat_index(self.phase);
         } else {
-            self.clock += (target.time - self.clock) * 0.1;
+            self.phase += (target.beat_phase - self.phase) * 0.1;
         }
         let smooth = 1.0 - (-dt / 0.05).exp();
         for sample in out.iter_mut() {
@@ -183,10 +181,10 @@ impl Synth {
             self.drone += (target.drone - self.drone) * smooth;
             self.beat += (target.beat - self.beat) * smooth;
             self.drone_hz += (target.drone_hz - self.drone_hz) * smooth * 0.05;
-            self.clock += dt as f64;
+            self.phase += target.beat_rate * dt as f64;
 
             // Latido.
-            let index = Self::beat_index(self.clock, period);
+            let index = Self::beat_index(self.phase);
             if index > self.last_beat {
                 let lub = index.rem_euclid(2) == 0;
                 self.thumps.push(Thump {
@@ -261,8 +259,8 @@ mod tests {
         let mut time = 10.0;
         for _ in 0..(2 * rate / 1024) {
             synth.set(AudioParams {
-                time,
-                beat_period: period,
+                beat_phase: time / period,
+                beat_rate: 1.0 / period,
                 beat: 1.0,
                 ..AudioParams::default()
             });
@@ -285,16 +283,16 @@ mod tests {
         let mut synth = Synth::new();
         let mut block = vec![0.0f32; 512];
         synth.set(AudioParams {
-            time: 0.05,
-            beat_period: 1.0,
+            beat_phase: 0.05,
+            beat_rate: 1.0,
             beat: 1.0,
             ..AudioParams::default()
         });
         synth.fill(&mut block);
-        // Salto de 100 s: no deben sonar cien latidos juntos.
+        // Salto de 100 latidos: no deben sonar cien golpes juntos.
         synth.set(AudioParams {
-            time: 100.05,
-            beat_period: 1.0,
+            beat_phase: 100.05,
+            beat_rate: 1.0,
             beat: 1.0,
             ..AudioParams::default()
         });

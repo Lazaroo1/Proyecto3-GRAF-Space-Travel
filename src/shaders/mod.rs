@@ -13,6 +13,7 @@
 
 pub mod atmosphere;
 mod cementerio;
+pub mod gargantua;
 mod jardin;
 mod pira;
 mod props;
@@ -27,11 +28,12 @@ mod vigia;
 use crate::math::{Perlin, Vec2, Vec3, Vec4};
 
 pub use atmosphere::{AtmosphereFrame, AtmosphereModel, AtmosphereParams, SkyView};
+pub use gargantua::{BlackHole, PlanckTable};
 pub use rings::RingInfo;
 pub use ship::ShipStyle;
 pub use sky::{shade as sky, SkyCube};
 pub use props::PropStyle;
-pub use sun::{heartbeat, SunStyle};
+pub use sun::{heartbeat, heartbeat_phase, SunStyle};
 pub use textures::Textures;
 
 /// Vistas de depuracion para demostrar el trabajo del renderer.
@@ -92,8 +94,17 @@ pub struct Uniforms<'a> {
     /// Tiempo de simulacion en segundos.
     pub time: f32,
     /// Latido de la estrella en este frame (0 a 1): igual para todos los
-    /// pixeles, se calcula una vez.
+    /// pixeles, se calcula una vez. Cero cuando la estrella ya no existe.
     pub beat: f32,
+    /// Fase del latido (en latidos), latidos por segundo y si el corazon
+    /// sigue vivo (1) o ya se apago (0), para lo que late con retraso.
+    pub beat_phase: f32,
+    pub beat_rate: f32,
+    pub heart: f32,
+    /// Brillo de la corona de la estrella en el cielo.
+    pub star_glow: f32,
+    /// Gargantua, cuando ya existe.
+    pub black_hole: Option<&'a BlackHole<'a>>,
     /// Centro de la estrella, relativo a la camara.
     pub sun_pos: Vec3,
     pub sun_radius: f32,
@@ -137,6 +148,15 @@ pub struct Fragment {
     pub color: Vec3,
     /// Tangente en el mundo (sin normalizar) y signo de la bitangente.
     pub tangent: Vec4,
+}
+
+impl Uniforms<'_> {
+    /// El latido `delay` segundos atras (las venas de Jardin y los corales
+    /// lo reciben con retraso).
+    #[inline]
+    pub fn beat_at(&self, delay: f32) -> f32 {
+        heartbeat_phase((self.beat_phase - delay * self.beat_rate) as f64) as f32 * self.heart
+    }
 }
 
 impl Fragment {

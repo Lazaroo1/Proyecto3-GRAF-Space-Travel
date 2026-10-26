@@ -9,6 +9,7 @@
 
 pub mod blackbody;
 pub mod geodesic;
+pub mod relativity;
 mod mat;
 mod noise;
 mod quat;
