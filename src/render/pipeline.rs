@@ -53,6 +53,8 @@ pub struct Varyings {
     /// Atmosfera entre la camara y el vertice: luz dispersada y transmitancia.
     pub fog_scatter: Vec3,
     pub fog_trans: Vec3,
+    /// Tangente en el mundo y signo de la bitangente (mapeo de normales).
+    pub tangent: Vec4,
 }
 
 impl Varyings {
@@ -66,6 +68,7 @@ impl Varyings {
             color: self.color.lerp(o.color, t),
             fog_scatter: self.fog_scatter.lerp(o.fog_scatter, t),
             fog_trans: self.fog_trans.lerp(o.fog_trans, t),
+            tangent: self.tangent.lerp(o.tangent, t),
         }
     }
 
@@ -80,6 +83,7 @@ impl Varyings {
             color: a.color * wa + b.color * wb + c.color * wc,
             fog_scatter: a.fog_scatter * wa + b.fog_scatter * wb + c.fog_scatter * wc,
             fog_trans: a.fog_trans * wa + b.fog_trans * wb + c.fog_trans * wc,
+            tangent: a.tangent * wa + b.tangent * wb + c.tangent * wc,
         }
     }
 }
@@ -190,7 +194,7 @@ pub fn transform_vertices(
             let mut position = mesh.positions[i];
             // Deformacion del material (vertex shader): sobre la normal.
             if deforms {
-                let lift = shaders::displace(&draw.material, position + draw.local_offset, uniforms);
+                let lift = shaders::displace(&draw.material, position + draw.local_offset, uniforms.time, uniforms.noise);
                 position += mesh.normals[i] * lift;
             }
             // Modelo: al mundo relativo a la camara. Vista y proyeccion: a clip.
@@ -212,6 +216,11 @@ pub fn transform_vertices(
                     color: mesh.colors[i],
                     fog_scatter: fog.scattered,
                     fog_trans: fog.transmittance,
+                    tangent: {
+                        let t = mesh.tangents[i];
+                        let world = draw.normal.mul_vec(t.xyz());
+                        Vec4::new(world.x, world.y, world.z, t.w)
+                    },
                 },
             };
         }

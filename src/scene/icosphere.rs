@@ -82,6 +82,7 @@ pub fn icosphere(subdivisions: u32) -> Mesh {
     let mut mesh = Mesh {
         normals: positions.clone(),
         colors: vec![Vec3::ONE; positions.len()],
+        tangents: vec![super::mesh::NO_TANGENT; positions.len()],
         uvs,
         positions,
         indices: faces,

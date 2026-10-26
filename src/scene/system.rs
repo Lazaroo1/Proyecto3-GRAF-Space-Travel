@@ -9,11 +9,14 @@ use std::f64::consts::TAU;
 use std::path::Path;
 use std::sync::Arc;
 
+use super::props::{self, PropModel, PropSet};
 use super::{icosphere, load_obj, Mesh};
 use crate::config;
 use crate::math::blackbody::planckian_rgb;
-use crate::math::{DQuat, DVec3, Perlin, Vec3};
-use crate::shaders::{heartbeat, AtmosphereModel, AtmosphereParams, Material, ShipStyle, SkyCube, SunStyle};
+use crate::math::{hash_u32, DQuat, DVec3, Perlin, Vec3};
+use crate::shaders::{
+    heartbeat, AtmosphereModel, AtmosphereParams, Material, ShipStyle, SkyCube, SunStyle, Textures,
+};
 use crate::terrain::shapes::{CementerioField, JardinField, PiraField, RequiemField};
 use crate::terrain::{HeightField, Smooth, Terrain};
 
@@ -161,6 +164,13 @@ pub struct System {
     pub ship_material: Material,
     pub noise: Perlin,
     pub sky: SkyCube,
+    pub textures: Textures,
+    /// Modelos de los objetos de la superficie, en el orden de `PropKind::ALL`.
+    pub prop_models: Vec<PropModel>,
+    /// Objetos de cada cuerpo, en el mismo orden que `bodies`.
+    pub props: Vec<PropSet>,
+    /// Semilla con la que se colocaron los objetos.
+    pub prop_seed: u32,
     /// Cuerpo con la tormenta-ojo (Vigia).
     pub eye_body: usize,
     /// Cuerpo con anillos (Cementerio).
@@ -315,7 +325,7 @@ impl System {
         .build();
         cementerio.rings = Some((1.7, 3.1));
 
-        Ok(Self {
+        let mut system = Self {
             bodies: vec![star, pira, jardin, vigia, requiem, cementerio],
             terrains: vec![
                 None,
@@ -336,9 +346,36 @@ impl System {
             }),
             noise: Perlin::new(seed),
             sky: SkyCube::bake(config::SKY_SIZE, seed),
+            textures: Textures::generate(),
+            prop_models: props::build_models(),
+            props: Vec::new(),
+            prop_seed: config::PROP_SEED,
             eye_body: 3,
             ring_body: 5,
-        })
+        };
+        system.scatter_props(config::PROP_SEED);
+        Ok(system)
+    }
+
+    /// Coloca (o vuelve a colocar) los objetos de todos los planetas con
+    /// `seed`. Cada planeta mezcla la semilla con su indice para no repetir
+    /// el mismo patron.
+    pub fn scatter_props(&mut self, seed: u32) {
+        self.prop_seed = seed;
+        self.props = self
+            .bodies
+            .iter()
+            .enumerate()
+            .map(|(index, body)| {
+                let Some(field) = &body.surface else {
+                    return PropSet::default();
+                };
+                let rules = props::rules_for(body.name);
+                let planet_seed = hash_u32(seed ^ hash_u32(index as u32 + 1));
+                let instances = props::scatter(body.radius, &**field, &rules, planet_seed);
+                PropSet::new(instances, &self.prop_models)
+            })
+            .collect();
     }
 
     /// Luz de la estrella que llega a los planetas: su color de cuerpo negro

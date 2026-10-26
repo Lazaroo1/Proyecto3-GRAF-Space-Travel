@@ -93,6 +93,7 @@ fn shade_surface(id: u32, px: f32, py: f32, ctx: &ShadeContext) -> (Vec3, f32) {
         local: var.local,
         uv: var.uv,
         color: var.color,
+        tangent: var.tangent,
     };
     let draw = &ctx.draws[tri.draw as usize];
     // Superficie vista a traves de la atmosfera calculada en los vertices.

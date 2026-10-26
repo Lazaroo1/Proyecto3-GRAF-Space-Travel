@@ -1,9 +1,12 @@
-//! Lo que existe en el mundo: mallas, cuerpos celestes, la nave y la camara.
+//! Lo que existe en el mundo: mallas, cuerpos celestes, los objetos de la
+//! superficie, la nave y la camara.
 
+mod builder;
 pub mod camera;
 mod icosphere;
 mod mesh;
 mod obj;
+pub mod props;
 pub mod ship;
 mod system;
 

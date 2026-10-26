@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use crate::math::{DVec3, Vec3};
 use crate::parallel::{self, DisjointMut};
-pub use chunk::Chunk;
+pub use chunk::{cube_to_sphere, Chunk};
 
 /// Cuadros por lado de cada chunk.
 pub const GRID: usize = 32;
