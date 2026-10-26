@@ -19,32 +19,41 @@ const LAYERS: [(f32, f32, f32); 3] = [(40.0, 0.22, 1.0), (80.0, 0.16, 0.55), (15
 const BACKGROUND: Vec3 = Vec3::new(0.0004, 0.0003, 0.0008);
 
 pub fn shade(dir: Vec3, u: &Uniforms) -> Vec3 {
+    // Cara del cubo (el eje de mayor magnitud) y coordenadas en ella, en
+    // [0, 1]. Las tres capas comparten este calculo.
+    let a = dir.abs();
+    let (face, cu, cv, major) = if a.x >= a.y && a.x >= a.z {
+        (u32::from(dir.x < 0.0), dir.y, dir.z, a.x)
+    } else if a.y >= a.z {
+        (2 + u32::from(dir.y < 0.0), dir.x, dir.z, a.y)
+    } else {
+        (4 + u32::from(dir.z < 0.0), dir.x, dir.y, a.z)
+    };
+    let half = 0.5 / major;
+    let (fu, fv) = (cu * half + 0.5, cv * half + 0.5);
     let mut color = BACKGROUND;
     for (layer, &(cells, density, brightness)) in LAYERS.iter().enumerate() {
-        color += star_layer(dir, cells, density, brightness, layer as u32, u.pixel_angle);
+        let star = StarCell { face, fu, fv, cells, density, brightness, layer: layer as u32 };
+        color += star_layer(&star, u.pixel_angle);
     }
     color + corona(dir, u)
 }
 
-fn star_layer(
-    d: Vec3,
+struct StarCell {
+    face: u32,
+    fu: f32,
+    fv: f32,
     cells: f32,
     density: f32,
     brightness: f32,
     layer: u32,
-    pixel_angle: f32,
-) -> Vec3 {
-    // Cara del cubo: el eje de mayor magnitud.
-    let a = d.abs();
-    let (face, u, v, major) = if a.x >= a.y && a.x >= a.z {
-        (u32::from(d.x < 0.0), d.y, d.z, a.x)
-    } else if a.y >= a.z {
-        (2 + u32::from(d.y < 0.0), d.x, d.z, a.y)
-    } else {
-        (4 + u32::from(d.z < 0.0), d.x, d.y, a.z)
-    };
-    let gx = (u / major * 0.5 + 0.5) * cells;
-    let gy = (v / major * 0.5 + 0.5) * cells;
+}
+
+fn star_layer(s: &StarCell, pixel_angle: f32) -> Vec3 {
+    let (cells, face, layer) = (s.cells, s.face, s.layer);
+    let (density, brightness) = (s.density, s.brightness);
+    let gx = s.fu * cells;
+    let gy = s.fv * cells;
     let (cx, cy) = (gx.floor(), gy.floor());
 
     let h = hash(face + layer * 8, cx as u32, cy as u32);
