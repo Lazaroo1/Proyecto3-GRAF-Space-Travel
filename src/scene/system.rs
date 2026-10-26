@@ -13,7 +13,7 @@ use super::{icosphere, load_obj, Mesh};
 use crate::config;
 use crate::math::blackbody::planckian_rgb;
 use crate::math::{DQuat, DVec3, Perlin, Vec3};
-use crate::shaders::{heartbeat, Material, ShipStyle, SkyCube, SunStyle};
+use crate::shaders::{heartbeat, AtmosphereModel, AtmosphereParams, Material, ShipStyle, SkyCube, SunStyle};
 use crate::terrain::shapes::{CementerioField, JardinField, PiraField, RequiemField};
 use crate::terrain::{HeightField, Smooth, Terrain};
 
@@ -119,11 +119,13 @@ struct PlanetSpec {
     gravity: f64,
     material: Material,
     surface: Arc<dyn HeightField>,
+    atmosphere: Option<AtmosphereParams>,
 }
 
 impl PlanetSpec {
-    fn build(self) -> (Body, Terrain) {
+    fn build(self) -> (Body, Terrain, Option<AtmosphereModel>) {
         let terrain = Terrain::new(self.radius, self.surface.clone(), config::TERRAIN_FINEST);
+        let atmosphere = self.atmosphere.map(|p| AtmosphereModel::new(self.radius as f32, p));
         let body = Body {
             name: self.name,
             radius: self.radius,
@@ -142,7 +144,7 @@ impl PlanetSpec {
             surface: Some(self.surface),
             rings: None,
         };
-        (body, terrain)
+        (body, terrain, atmosphere)
     }
 }
 
@@ -150,6 +152,8 @@ pub struct System {
     pub bodies: Vec<Body>,
     /// Terreno de cada cuerpo, en el mismo orden que `bodies`.
     pub terrains: Vec<Option<Terrain>>,
+    /// Atmosfera de cada cuerpo, en el mismo orden que `bodies`.
+    pub atmospheres: Vec<Option<AtmosphereModel>>,
     pub meshes: Vec<Mesh>,
     pub ship_mesh: usize,
     /// Giro que alinea el modelo de la nave con -Z (adelante) y +Y (arriba).
@@ -192,7 +196,7 @@ impl System {
             rings: None,
         };
 
-        let (mut pira, pira_terrain) = PlanetSpec {
+        let (mut pira, pira_terrain, pira_air) = PlanetSpec {
             name: "Pira",
             radius: 110.0,
             orbit: 1150.0,
@@ -204,13 +208,22 @@ impl System {
             gravity: 3.5,
             material: Material::Pira,
             surface: Arc::new(PiraField::new(seed ^ 0x9124)),
+            // Humo y vapor de roca: mucho Mie, Rayleigh que tira al rojo.
+            atmosphere: Some(AtmosphereParams {
+                thickness: 9.0,
+                scale_height: 2.8,
+                rayleigh: Vec3::new(0.010, 0.0045, 0.002),
+                mie: 0.012,
+                mie_g: 0.7,
+                intensity: 8.0,
+            }),
         }
         .build();
         // Acoplamiento de marea: gira con su orbita y le da siempre la misma
         // cara a la estrella.
         pira.spin_phase = pira.orbit_phase;
 
-        let (jardin, jardin_terrain) = PlanetSpec {
+        let (jardin, jardin_terrain, jardin_air) = PlanetSpec {
             name: "Jardin",
             radius: 170.0,
             orbit: 2300.0,
@@ -222,10 +235,20 @@ impl System {
             gravity: 4.0,
             material: Material::Jardin,
             surface: Arc::new(JardinField::new(seed ^ 0x7A3D, seed)),
+            // Densa: dispersa mucho mas el verde y el azul. Con la luz roja de la
+            // estrella el cielo de dia sale turquesa y los atardeceres rosas.
+            atmosphere: Some(AtmosphereParams {
+                thickness: 20.0,
+                scale_height: 5.0,
+                rayleigh: Vec3::new(0.002, 0.016, 0.042),
+                mie: 0.0015,
+                mie_g: 0.76,
+                intensity: 8.0,
+            }),
         }
         .build();
 
-        let (mut vigia, vigia_terrain) = PlanetSpec {
+        let (mut vigia, vigia_terrain, vigia_air) = PlanetSpec {
             name: "Vigia",
             radius: 430.0,
             orbit: 3900.0,
@@ -237,11 +260,20 @@ impl System {
             gravity: 9.0,
             material: Material::Vigia,
             surface: Arc::new(Smooth),
+            // Bruma alta magenta sobre las nubes.
+            atmosphere: Some(AtmosphereParams {
+                thickness: 40.0,
+                scale_height: 12.0,
+                rayleigh: Vec3::new(0.012, 0.004, 0.016),
+                mie: 0.002,
+                mie_g: 0.6,
+                intensity: 9.0,
+            }),
         }
         .build();
         vigia.soi = vigia.radius * 4.0;
 
-        let (requiem, requiem_terrain) = PlanetSpec {
+        let (requiem, requiem_terrain, requiem_air) = PlanetSpec {
             name: "Requiem",
             radius: 160.0,
             orbit: 5400.0,
@@ -253,10 +285,19 @@ impl System {
             gravity: 4.0,
             material: Material::Requiem,
             surface: Arc::new(RequiemField::new(seed ^ 0x0E9)),
+            // Tenue y violeta.
+            atmosphere: Some(AtmosphereParams {
+                thickness: 10.0,
+                scale_height: 3.0,
+                rayleigh: Vec3::new(0.006, 0.004, 0.012),
+                mie: 0.002,
+                mie_g: 0.7,
+                intensity: 7.0,
+            }),
         }
         .build();
 
-        let (mut cementerio, cementerio_terrain) = PlanetSpec {
+        let (mut cementerio, cementerio_terrain, _) = PlanetSpec {
             name: "Cementerio",
             radius: 140.0,
             orbit: 6800.0,
@@ -268,6 +309,8 @@ impl System {
             gravity: 3.5,
             material: Material::Cementerio,
             surface: Arc::new(CementerioField::new(seed ^ 0xCE3)),
+            // Sin aire: la roca muerta se ve con sombras duras.
+            atmosphere: None,
         }
         .build();
         cementerio.rings = Some((1.7, 3.1));
@@ -282,6 +325,7 @@ impl System {
                 Some(requiem_terrain),
                 Some(cementerio_terrain),
             ],
+            atmospheres: vec![None, pira_air, jardin_air, vigia_air, requiem_air, None],
             meshes,
             ship_mesh: 1,
             // El modelo de Blender tiene la punta hacia +Z; adelante es -Z.

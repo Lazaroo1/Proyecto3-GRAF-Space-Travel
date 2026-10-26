@@ -35,6 +35,7 @@ struct Options {
     mode: Mode,
     wireframe: bool,
     lod_colors: bool,
+    fog_only: bool,
 }
 
 const USAGE: &str = "\
@@ -43,7 +44,8 @@ uso: ocaso [opciones]
   --captura CARPETA     guarda vistas fijas como PNG sin abrir ventana
   --bench FRAMES        mide cada vista fija FRAMES veces sin abrir ventana
   --wire                empieza con el wireframe encendido (F3)
-  --lod                 empieza con los colores de LOD encendidos (F4)";
+  --lod                 empieza con los colores de LOD encendidos (F4)
+  --niebla              muestra solo la luz de la atmosfera en las superficies";
 
 fn parse_args() -> Result<Options, String> {
     let mut options = Options {
@@ -52,6 +54,7 @@ fn parse_args() -> Result<Options, String> {
         mode: Mode::Window,
         wireframe: false,
         lod_colors: false,
+        fog_only: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -76,6 +79,7 @@ fn parse_args() -> Result<Options, String> {
             }
             "--wire" => options.wireframe = true,
             "--lod" => options.lod_colors = true,
+            "--niebla" => options.fog_only = true,
             "-h" | "--help" | "--ayuda" => {
                 println!("{USAGE}");
                 std::process::exit(0);
@@ -110,6 +114,7 @@ fn new_app(options: &Options) -> Result<App, String> {
     let mut app = App::new(options.width, options.height)?;
     app.debug.wireframe = options.wireframe;
     app.debug.lod_colors = options.lod_colors;
+    app.debug.fog_only = options.fog_only;
     Ok(app)
 }
 

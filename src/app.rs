@@ -13,7 +13,7 @@ use crate::render::{Draw, Renderer, Stats, View};
 use crate::scene::camera::{Camera, CameraMode};
 use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
 use crate::scene::{nearest_surface, System};
-use crate::shaders::{DebugView, RingInfo, Uniforms};
+use crate::shaders::{AtmosphereFrame, DebugView, RingInfo, SkyView, Uniforms};
 use crate::terrain::{LodSettings, TerrainStats, Viewer};
 
 /// Entrada de un frame, ya traducida de teclas y mouse.
@@ -231,17 +231,27 @@ impl App {
 
         let show_ship = self.camera_mode == CameraMode::Chase;
         let draws = build_draws(&self.system, t, &camera, ship_pos, ship_rot, show_ship);
+        let atmospheres = atmosphere_frames(&self.system, t, &camera, &view);
+        let sun_light = self.system.star_light(t);
+        // Si la camara esta dentro de una atmosfera, su cielo sale de una tabla.
+        let sky_view = atmospheres
+            .iter()
+            .enumerate()
+            .find(|(_, frame)| frame.center.length() < frame.model.radius + frame.model.params.thickness)
+            .map(|(i, frame)| SkyView::build(i, frame, sun_light));
         let star = &self.system.bodies[0];
         let uniforms = Uniforms {
             time: t as f32,
             sun_pos: (star.position(t) - camera.pos).as_vec3(),
             sun_radius: star.render_radius(t) as f32,
-            sun_light: self.system.star_light(t),
+            sun_light,
             noise: &self.system.noise,
             sky: &self.system.sky,
             pixel_angle: (2.0 * (camera.fov_y * 0.5).tan() / self.renderer.height() as f64) as f32,
             eye_dir: self.eye.as_vec3(),
             ring: ring_info(&self.system, t, camera.pos),
+            atmospheres: &atmospheres,
+            sky_view: sky_view.as_ref(),
             biolum: 1.0,
             debug: self.debug,
         };
@@ -379,6 +389,35 @@ fn eye_target(system: &System, ship_pos: DVec3, t: f64) -> DVec3 {
     let body = &system.bodies[system.eye_body];
     let toward = (ship_pos - body.position(t)).normalize();
     body.rotation(t).conjugate().rotate(toward)
+}
+
+/// Atmosferas que pueden verse en este frame, de la mas lejana a la mas
+/// cercana: se componen de atras hacia adelante. Las que caen fuera del
+/// frustum no le cuestan nada a ningun pixel.
+fn atmosphere_frames<'a>(system: &'a System, t: f64, camera: &Camera, view: &View) -> Vec<AtmosphereFrame<'a>> {
+    let star = system.bodies[0].position(t);
+    let mut frames: Vec<(f64, AtmosphereFrame<'a>)> = system
+        .bodies
+        .iter()
+        .zip(&system.atmospheres)
+        .filter_map(|(body, model)| {
+            let model = model.as_ref()?;
+            let position = body.position(t);
+            let center = position - camera.pos;
+            let top = model.radius + model.params.thickness;
+            if !view.sphere_visible(center.as_vec3(), top) {
+                return None;
+            }
+            let frame = AtmosphereFrame {
+                model,
+                center: center.as_vec3(),
+                sun_dir: (star - position).normalize().as_vec3(),
+            };
+            Some((center.length(), frame))
+        })
+        .collect();
+    frames.sort_by(|a, b| b.0.total_cmp(&a.0));
+    frames.into_iter().map(|(_, frame)| frame).collect()
 }
 
 /// Anillos del cuerpo que los tiene, relativos a la camara.

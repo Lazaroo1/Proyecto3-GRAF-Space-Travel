@@ -265,6 +265,8 @@ mod tests {
             pixel_angle: 0.002,
             eye_dir: Vec3::Z,
             ring: None,
+            atmospheres: &[],
+            sky_view: None,
             biolum: 1.0,
             debug: Default::default(),
         };
