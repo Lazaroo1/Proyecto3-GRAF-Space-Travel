@@ -35,11 +35,11 @@ impl Perlin {
     /// derivada continua.
     #[inline]
     pub fn noise(&self, p: Vec3) -> f32 {
-        let fl = p.floor();
-        let xi = (fl.x as i32 & 255) as usize;
-        let yi = (fl.y as i32 & 255) as usize;
-        let zi = (fl.z as i32 & 255) as usize;
-        let (x, y, z) = (p.x - fl.x, p.y - fl.y, p.z - fl.z);
+        let (ix, iy, iz) = (floor_i(p.x), floor_i(p.y), floor_i(p.z));
+        let xi = (ix & 255) as usize;
+        let yi = (iy & 255) as usize;
+        let zi = (iz & 255) as usize;
+        let (x, y, z) = (p.x - ix as f32, p.y - iy as f32, p.z - iz as f32);
         let (u, v, w) = (fade(x), fade(y), fade(z));
 
         let perm = &self.perm;
@@ -129,19 +129,41 @@ fn lerp(t: f32, a: f32, b: f32) -> f32 {
     a + t * (b - a)
 }
 
-/// Producto punto con uno de los 12 gradientes de las aristas de un cubo.
+/// Los 12 gradientes de las aristas de un cubo, mas 4 repetidos para llegar a
+/// 16 (el hash se recorta con `& 15`). Es la misma tabla que codifican las
+/// ramas de la version original de Perlin, pero sin ramas: una lectura y un
+/// producto punto, que el procesador no tiene que adivinar.
+const GRADIENTS: [[f32; 3]; 16] = [
+    [1.0, 1.0, 0.0],
+    [-1.0, 1.0, 0.0],
+    [1.0, -1.0, 0.0],
+    [-1.0, -1.0, 0.0],
+    [1.0, 0.0, 1.0],
+    [-1.0, 0.0, 1.0],
+    [1.0, 0.0, -1.0],
+    [-1.0, 0.0, -1.0],
+    [0.0, 1.0, 1.0],
+    [0.0, -1.0, 1.0],
+    [0.0, 1.0, -1.0],
+    [0.0, -1.0, -1.0],
+    [1.0, 1.0, 0.0],
+    [0.0, -1.0, 1.0],
+    [-1.0, 1.0, 0.0],
+    [0.0, -1.0, -1.0],
+];
+
+/// Producto punto con el gradiente que elige el hash.
 #[inline]
 fn grad(hash: u8, x: f32, y: f32, z: f32) -> f32 {
-    let h = hash & 15;
-    let u = if h < 8 { x } else { y };
-    let v = if h < 4 {
-        y
-    } else if h == 12 || h == 14 {
-        x
-    } else {
-        z
-    };
-    (if h & 1 == 0 { u } else { -u }) + (if h & 2 == 0 { v } else { -v })
+    let g = &GRADIENTS[(hash & 15) as usize];
+    g[0] * x + g[1] * y + g[2] * z
+}
+
+/// Parte entera hacia menos infinito, sin pasar por `f32::floor`.
+#[inline(always)]
+fn floor_i(x: f32) -> i32 {
+    let i = x as i32;
+    i - i32::from(x < i as f32)
 }
 
 /// Finalizador de MurmurHash3: mezcla bien los bits de un entero.
@@ -164,6 +186,31 @@ mod tests {
         let p = Vec3::new(1.37, -4.2, 0.55);
         assert_eq!(Perlin::new(7).noise(p), Perlin::new(7).noise(p));
         assert_ne!(Perlin::new(7).noise(p), Perlin::new(8).noise(p));
+    }
+
+    /// La tabla de gradientes debe dar exactamente lo mismo que las ramas
+    /// originales de Perlin.
+    #[test]
+    fn gradient_table_matches_the_branching_original() {
+        fn original(hash: u8, x: f32, y: f32, z: f32) -> f32 {
+            let h = hash & 15;
+            let u = if h < 8 { x } else { y };
+            let v = if h < 4 {
+                y
+            } else if h == 12 || h == 14 {
+                x
+            } else {
+                z
+            };
+            (if h & 1 == 0 { u } else { -u }) + (if h & 2 == 0 { v } else { -v })
+        }
+        for hash in 0..=255u8 {
+            let (x, y, z) = (0.31, -0.77, 0.52);
+            assert_eq!(grad(hash, x, y, z), original(hash, x, y, z));
+        }
+        assert_eq!(floor_i(-0.5), -1);
+        assert_eq!(floor_i(2.0), 2);
+        assert_eq!(floor_i(-3.0), -3);
     }
 
     #[test]
