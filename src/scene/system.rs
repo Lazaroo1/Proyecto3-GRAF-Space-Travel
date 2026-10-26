@@ -170,6 +170,9 @@ pub struct System {
     pub props: Vec<PropSet>,
     /// Semilla con la que se colocaron los objetos.
     pub prop_seed: u32,
+    /// Radio de diseno de la estrella: el ciclo lo hincha y lo colapsa, y
+    /// deja en `bodies[0].radius` el radio de cada momento.
+    pub star_base: f64,
     /// Cuerpo con la tormenta-ojo (Vigia).
     pub eye_body: usize,
     /// Cuerpo con anillos (Cementerio).
@@ -349,6 +352,7 @@ impl System {
             prop_models: props::build_models(),
             props: Vec::new(),
             prop_seed: config::PROP_SEED,
+            star_base: 320.0,
             eye_body: 3,
             ring_body: 5,
         };

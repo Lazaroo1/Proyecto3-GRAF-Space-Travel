@@ -36,6 +36,8 @@ const BEAT_FAST: f64 = 0.7;
 pub const GARGANTUA_RS: f64 = 40.0;
 /// Radio exterior del disco formado, en `rs`.
 pub const DISK_OUTER: f32 = 19.0;
+/// La nave no puede acercarse al agujero a menos de tantos `rs`.
+const KEEP_OUT: f64 = 3.5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -85,8 +87,14 @@ pub struct CycleState {
     pub disk_peak: f32,
     /// Bioluminiscencia de Jardin (1 normal).
     pub biolum: f32,
-    /// Exposicion guionada: baja durante el destello.
+    /// Exposicion guionada: baja durante el destello del colapso.
     pub exposure: f32,
+    /// Fundido a blanco del renacer (0 a 1): tapa el cambio de Gargantua a
+    /// la estrella cuando el ciclo vuelve a empezar.
+    pub whiteout: f32,
+    /// Radio con el que la nave choca: la estrella o, despues del colapso,
+    /// la zona de exclusion alrededor del agujero.
+    pub collision_radius: f64,
 }
 
 /// Fase del latido: integral de la frecuencia, que sube suave (smoothstep)
@@ -132,7 +140,6 @@ pub fn at(t: f64, radius: f64) -> CycleState {
     let burst = (-((tau - collapse_end) / 1.5).powi(2)).exp();
     let fade_out = s(CYCLE - REBIRTH, CYCLE, tau);
     let fade_in = if t >= CYCLE { s(4.0, 0.0, tau) } else { 0.0 };
-    let flash = burst.max(fade_out).max(fade_in) as f32;
 
     let alive = if tau < collapse_end { 1.0 } else { 0.0 };
     let born = s(collapse_end, collapse_end + 40.0, tau) as f32;
@@ -163,7 +170,9 @@ pub fn at(t: f64, radius: f64) -> CycleState {
         disk_outer: 3.0 + (DISK_OUTER - 3.0) * grown,
         disk_peak: 6500.0 + 2500.0 * (-((tau - collapse_end).max(0.0)) / 15.0).exp() as f32,
         biolum: 1.0 + 2.0 * s(collapse_end, collapse_end + 20.0, tau) as f32,
-        exposure: 1.0 / (1.0 + 4.0 * flash),
+        exposure: 1.0 / (1.0 + 4.0 * burst as f32),
+        whiteout: fade_out.max(fade_in) as f32,
+        collision_radius: (star_radius * alive).max(KEEP_OUT * GARGANTUA_RS * s(0.6, 1.0, u)),
     }
 }
 

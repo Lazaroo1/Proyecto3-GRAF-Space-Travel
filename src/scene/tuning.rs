@@ -34,6 +34,10 @@ impl System {
     /// rehace el terreno, la atmosfera y los objetos.
     pub fn set_radius(&mut self, index: usize, radius: f64) {
         let radius = radius.max(10.0);
+        if index == 0 {
+            // La estrella: el ciclo parte de este radio.
+            self.star_base = radius;
+        }
         let body = &mut self.bodies[index];
         let gravity = body.mu / (body.radius * body.radius);
         if body.soi.is_finite() {

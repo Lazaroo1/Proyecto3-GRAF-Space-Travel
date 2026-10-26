@@ -168,7 +168,12 @@ impl Synth {
         let dt = 1.0 / SAMPLE_RATE as f32;
         // La fase sigue a la del juego; si salto (o recien empieza), se
         // resincroniza sin disparar golpes.
-        if self.last_beat == i64::MIN || (target.beat_phase - self.phase).abs() > 0.3 {
+        // Hacia atras (rebobinando) tampoco suenan golpes: el corazon no late
+        // al reves.
+        if self.last_beat == i64::MIN
+            || (target.beat_phase - self.phase).abs() > 0.3
+            || target.beat_phase < self.phase - 1e-3
+        {
             self.phase = target.beat_phase;
             self.last_beat = Self::beat_index(self.phase);
         } else {

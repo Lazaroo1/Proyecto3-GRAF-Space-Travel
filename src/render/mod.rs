@@ -168,6 +168,8 @@ pub struct Renderer {
     pub cull: Option<(View, Vec3)>,
     /// Onda gravitacional que deforma la imagen final (el colapso).
     pub ripple: Option<Ripple>,
+    /// Fundido a blanco de la imagen final (el renacer del ciclo).
+    pub whiteout: f32,
     particle_bins: ParticleBins,
     pub exposure: f32,
     pub bloom_intensity: f32,
@@ -193,6 +195,7 @@ impl Renderer {
             particles: Vec::new(),
             cull: None,
             ripple: None,
+            whiteout: 0.0,
             particle_bins: ParticleBins::new(),
             exposure: config::EXPOSURE,
             bloom_intensity: config::BLOOM_INTENSITY,
@@ -332,6 +335,7 @@ impl Renderer {
             bloom: self.bloom.result(),
             bloom_intensity: self.bloom_intensity,
             ripple: self.ripple,
+            whiteout: self.whiteout,
         };
         let hdr = &self.hdr;
         let block = width * 4 * POST_ROWS;

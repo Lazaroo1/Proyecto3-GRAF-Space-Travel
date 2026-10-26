@@ -97,6 +97,8 @@ pub struct PostParams<'a> {
     pub bloom: &'a MipLevel,
     pub bloom_intensity: f32,
     pub ripple: Option<Ripple>,
+    /// Fundido a blanco (0 a 1).
+    pub whiteout: f32,
 }
 
 /// La onda gravitacional del colapso: un anillo que se expande desde el
@@ -178,7 +180,7 @@ pub fn tonemap_rows(first_row: usize, out: &mut [u8], hdr: &[Vec3], p: &PostPara
                 let sx = (x as f32 + ox).clamp(0.0, (width - 1) as f32) as usize;
                 let sy = (y as f32 + oy).clamp(0.0, (p.height - 1) as f32) as usize;
                 let index = ((sy / TILE) * p.tiles_x + sx / TILE) * TILE_PIXELS + (sy % TILE) * TILE + sx % TILE;
-                let mapped = tonemap((hdr[index] + glow[x] * p.bloom_intensity) * p.exposure);
+                let mapped = tonemap((hdr[index] + glow[x] * p.bloom_intensity) * p.exposure).lerp(Vec3::ONE, p.whiteout);
                 let d = dither(x, y);
                 px[0] = encode(mapped.x, d, lut);
                 px[1] = encode(mapped.y, d, lut);
@@ -197,7 +199,7 @@ pub fn tonemap_rows(first_row: usize, out: &mut [u8], hdr: &[Vec3], p: &PostPara
             let halo = &glow[x0..x0 + n];
             let dst = &mut out_row[x0 * 4..(x0 + n) * 4];
             for (i, ((color, light), px)) in src.iter().zip(halo).zip(dst.chunks_exact_mut(4)).enumerate() {
-                let mapped = tonemap((*color + *light * p.bloom_intensity) * p.exposure);
+                let mapped = tonemap((*color + *light * p.bloom_intensity) * p.exposure).lerp(Vec3::ONE, p.whiteout);
                 let d = dither(x0 + i, y);
                 px[0] = encode(mapped.x, d, lut);
                 px[1] = encode(mapped.y, d, lut);
