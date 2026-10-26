@@ -32,15 +32,16 @@ pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
 /// Se calcula como `2^(x / ln 2)`: la parte entera de la potencia se arma
 /// directo en los bits del exponente de un `f32`, y `2^f` de la parte
 /// fraccionaria sale de un polinomio cubico ajustado en `[0, 1)`.
-/// `atan2` con un polinomio (error menor que 1e-5 rad): la lente de
-/// Gargantua lo pide una vez por pixel y el de la biblioteca es lento.
+/// `atan2` con un polinomio de grado 9 (Abramowitz y Stegun 4.4.49, error
+/// menor que 1.2e-5 rad): la lente de Gargantua lo pide una vez por pixel y
+/// el de la biblioteca es lento.
 #[inline]
 pub fn fast_atan2(y: f32, x: f32) -> f32 {
     use std::f32::consts::{FRAC_PI_2, PI};
     let (ax, ay) = (x.abs(), y.abs());
     let a = ax.min(ay) / ax.max(ay).max(1e-30);
     let s = a * a;
-    let mut r = ((-0.046_496_475 * s + 0.159_314_22) * s - 0.327_622_76) * s * a + a;
+    let mut r = a * (0.999_866 + s * (-0.330_299_5 + s * (0.180_141 + s * (-0.085_133 + s * 0.020_835_1))));
     if ay > ax {
         r = FRAC_PI_2 - r;
     }
