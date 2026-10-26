@@ -1,0 +1,85 @@
+//! HUD en 2D con el texto de raylib. No es parte del pipeline 3D: se dibuja
+//! encima de la imagen ya renderizada. El texto de raylib no acepta UTF-8,
+//! por eso no lleva tildes.
+
+use raylib::prelude::*;
+
+use crate::app::App;
+use crate::parallel;
+
+pub struct Hud {
+    pub help: bool,
+    pub stats: bool,
+}
+
+const FONT: i32 = 18;
+const LINE: i32 = 21;
+const TEXT: Color = Color::new(236, 226, 214, 255);
+const PANEL: Color = Color::new(0, 0, 0, 150);
+
+pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud) {
+    let width = d.get_screen_width();
+    let height = d.get_screen_height();
+
+    if hud.stats {
+        let s = &app.stats;
+        let t = &s.triangles;
+        let lines = [
+            format!("FPS {fps}   frame {:.1} ms   {} hilos", s.ms_total, parallel::workers()),
+            format!(
+                "vert {:.1}  tri {:.1}  raster {:.1}  shade {:.1}  post {:.1} ms",
+                s.ms_vertex, s.ms_triangles, s.ms_raster, s.ms_shade, s.ms_post
+            ),
+            format!("objetos {}   fuera de vista {}", s.objects, s.objects_culled),
+            format!(
+                "triangulos {}   frustum -{}   espalda -{}   sin pixel -{}",
+                t.input, t.frustum, t.backface, t.small
+            ),
+            format!(
+                "recortados {}   rasterizados {}   pixeles {}",
+                t.clipped, t.emitted, s.pixels_shaded
+            ),
+        ];
+        panel(d, 10, 10, &lines, false, width);
+    }
+
+    let f = &app.flight;
+    let contact = if f.contact { "   CONTACTO" } else { "" };
+    let lines = [
+        format!("velocidad {:.1} u/s   (max {:.0})", f.speed, f.max_speed),
+        format!("altitud {:.1} sobre {}", f.altitude, app.body_name(f.nearest)),
+        format!("marco: {}{contact}", app.body_name(f.frame)),
+        format!(
+            "asistencia [Z] {}   gravedad [G] {}",
+            on_off(app.settings.assist),
+            on_off(app.settings.gravity)
+        ),
+    ];
+    panel(d, 10, 10, &lines, true, width);
+
+    if hud.help {
+        let lines = [
+            "Mouse: apuntar   Clic derecho: mirar alrededor   Rueda: distancia".to_string(),
+            "W/S: adelante/atras   A/D: lados   Espacio/Ctrl: subir/bajar".to_string(),
+            "Q/E: alabeo   Shift: turbo   C: camara   P: foto   Tab: soltar el mouse".to_string(),
+            "F1: ayuda   F2: estadisticas   Esc: salir".to_string(),
+        ];
+        let y = height - 10 - (lines.len() as i32 * LINE + 10);
+        panel(d, 10, y, &lines, false, width);
+    }
+}
+
+fn on_off(value: bool) -> &'static str {
+    if value { "ON" } else { "OFF" }
+}
+
+fn panel(d: &mut RaylibDrawHandle, margin: i32, y: i32, lines: &[String], right: bool, screen_width: i32) {
+    let text_width = lines.iter().map(|l| d.measure_text(l, FONT)).max().unwrap_or(0);
+    let w = text_width + 16;
+    let h = lines.len() as i32 * LINE + 10;
+    let x = if right { screen_width - margin - w } else { margin };
+    d.draw_rectangle(x, y, w, h, PANEL);
+    for (i, line) in lines.iter().enumerate() {
+        d.draw_text(line, x + 8, y + 6 + i as i32 * LINE, FONT, TEXT);
+    }
+}

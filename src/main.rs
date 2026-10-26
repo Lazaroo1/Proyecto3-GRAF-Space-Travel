@@ -1,0 +1,290 @@
+//! OCASO: un sistema solar explorable con un renderer por software propio.
+//!
+//! raylib solo abre la ventana, lee el teclado y el mouse, y muestra la imagen
+//! final como una textura 2D. Todo el 3D (transformaciones, recorte, raster,
+//! profundidad y shaders) se calcula en CPU en `render` y `shaders`.
+
+mod app;
+mod config;
+mod hud;
+#[allow(dead_code)]
+mod math;
+mod parallel;
+mod render;
+mod scene;
+mod shaders;
+
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use raylib::prelude::*;
+
+use app::{App, FrameInput, Preset};
+use math::DVec3;
+
+enum Mode {
+    Window,
+    Capture(PathBuf),
+    Bench(usize),
+}
+
+struct Options {
+    width: usize,
+    height: usize,
+    mode: Mode,
+}
+
+const USAGE: &str = "\
+uso: ocaso [opciones]
+  --res ANCHOxALTO      resolucion del render (por defecto 1280x720)
+  --captura CARPETA     guarda vistas fijas como PNG sin abrir ventana
+  --bench FRAMES        mide el render en un recorrido fijo sin abrir ventana";
+
+fn parse_args() -> Result<Options, String> {
+    let mut options = Options {
+        width: config::DEFAULT_WIDTH,
+        height: config::DEFAULT_HEIGHT,
+        mode: Mode::Window,
+    };
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--res" => {
+                let value = args.next().ok_or("--res espera ANCHOxALTO")?;
+                let (w, h) = value.split_once('x').ok_or("--res espera ANCHOxALTO")?;
+                options.width = w.parse().map_err(|_| "ancho invalido")?;
+                options.height = h.parse().map_err(|_| "alto invalido")?;
+                if options.width < 64 || options.height < 64 {
+                    return Err("la resolucion minima es 64x64".into());
+                }
+            }
+            "--captura" => {
+                let dir = args.next().ok_or("--captura espera una carpeta")?;
+                options.mode = Mode::Capture(PathBuf::from(dir));
+            }
+            "--bench" => {
+                let frames = args.next().ok_or("--bench espera un numero de frames")?;
+                let frames = frames.parse().map_err(|_| "numero de frames invalido")?;
+                options.mode = Mode::Bench(frames);
+            }
+            "-h" | "--help" | "--ayuda" => {
+                println!("{USAGE}");
+                std::process::exit(0);
+            }
+            other => return Err(format!("argumento desconocido: {other}")),
+        }
+    }
+    Ok(options)
+}
+
+fn main() {
+    let options = match parse_args() {
+        Ok(options) => options,
+        Err(error) => {
+            eprintln!("{error}\n{USAGE}");
+            std::process::exit(2);
+        }
+    };
+    let result = match &options.mode {
+        Mode::Window => run_window(&options),
+        Mode::Capture(dir) => run_capture(&options, dir),
+        Mode::Bench(frames) => run_bench(&options, *frames),
+    };
+    if let Err(error) = result {
+        eprintln!("error: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn run_window(options: &Options) -> Result<(), String> {
+    let mut app = App::new(options.width, options.height)?;
+    let (mut rl, thread) = raylib::init()
+        .size(options.width as i32, options.height as i32)
+        .title("OCASO - software renderer")
+        .build();
+    rl.set_target_fps(144);
+    rl.disable_cursor();
+    let mut captured = true;
+    // Al capturar el mouse, el primer movimiento trae el salto desde donde
+    // estaba el cursor: se descarta para que la mira no pegue un brinco.
+    let mut skip_mouse = true;
+
+    // La textura solo transporta la imagen ya calculada en CPU a la pantalla.
+    let image = Image::gen_image_color(options.width as i32, options.height as i32, Color::BLACK);
+    let mut texture = rl
+        .load_texture_from_image(&thread, &image)
+        .map_err(|e| format!("no se pudo crear la textura: {e:?}"))?;
+    let mut hud = hud::Hud {
+        help: true,
+        stats: true,
+    };
+
+    while !rl.window_should_close() {
+        if rl.is_key_pressed(KeyboardKey::KEY_TAB) {
+            captured = !captured;
+            if captured {
+                rl.disable_cursor();
+                skip_mouse = true;
+            } else {
+                rl.enable_cursor();
+            }
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_F1) {
+            hud.help = !hud.help;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_F2) {
+            hud.stats = !hud.stats;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_Z) {
+            app.settings.assist = !app.settings.assist;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_G) {
+            app.settings.gravity = !app.settings.gravity;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_C) {
+            app.toggle_camera();
+        }
+        let photo = rl.is_key_pressed(KeyboardKey::KEY_P);
+
+        let input = read_input(&rl, captured && !skip_mouse);
+        skip_mouse = false;
+        app.update(rl.get_frame_time() as f64, &input);
+        app.render();
+        if photo {
+            save_photo(&app);
+        }
+        texture
+            .update_texture(app.renderer.rgba())
+            .map_err(|e| format!("no se pudo actualizar la textura: {e:?}"))?;
+
+        let fps = rl.get_fps();
+        let mut d = rl.begin_drawing(&thread);
+        d.clear_background(Color::BLACK);
+        d.draw_texture(&texture, 0, 0, Color::WHITE);
+        hud::draw(&mut d, &app, fps, &hud);
+    }
+    Ok(())
+}
+
+fn read_input(rl: &RaylibHandle, captured: bool) -> FrameInput {
+    let down = |key| rl.is_key_down(key);
+    let axis = |pos, neg| f64::from(i8::from(down(pos)) - i8::from(down(neg)));
+    let look = if captured {
+        let delta = rl.get_mouse_delta();
+        (delta.x as f64, delta.y as f64)
+    } else {
+        (0.0, 0.0)
+    };
+    FrameInput {
+        look,
+        thrust: DVec3::new(
+            axis(KeyboardKey::KEY_D, KeyboardKey::KEY_A),
+            axis(KeyboardKey::KEY_SPACE, KeyboardKey::KEY_LEFT_CONTROL),
+            axis(KeyboardKey::KEY_S, KeyboardKey::KEY_W),
+        ),
+        roll: axis(KeyboardKey::KEY_Q, KeyboardKey::KEY_E),
+        boost: down(KeyboardKey::KEY_LEFT_SHIFT),
+        free_look: rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_RIGHT),
+        zoom: rl.get_mouse_wheel_move() as f64,
+    }
+}
+
+fn save_photo(app: &App) {
+    let dir = Path::new("capturas");
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let path = dir.join(format!("foto_{stamp}.png"));
+    let result = std::fs::create_dir_all(dir).and_then(|_| {
+        render::png::write_rgba(
+            &path,
+            app.renderer.width() as u32,
+            app.renderer.height() as u32,
+            app.renderer.rgba(),
+        )
+    });
+    match result {
+        Ok(()) => println!("foto guardada en {}", path.display()),
+        Err(error) => eprintln!("no se pudo guardar la foto: {error}"),
+    }
+}
+
+fn run_capture(options: &Options, dir: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut app = App::new(options.width, options.height)?;
+    for preset in Preset::ALL {
+        app.apply_preset(preset);
+        // El primer frame calienta el pool de hilos; se mide el segundo.
+        app.render();
+        let stats = app.render();
+        let path = dir.join(format!("{}.png", preset.name()));
+        render::png::write_rgba(
+            &path,
+            options.width as u32,
+            options.height as u32,
+            app.renderer.rgba(),
+        )
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+        println!(
+            "{:<16} {:6.1} ms   {:>7} triangulos rasterizados   {:>8} pixeles   -> {}",
+            preset.name(),
+            stats.ms_total,
+            stats.triangles.emitted,
+            stats.pixels_shaded,
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn run_bench(options: &Options, frames: usize) -> Result<(), String> {
+    let mut app = App::new(options.width, options.height)?;
+    app.apply_bench_frame(0.0);
+    app.render();
+    let mut totals = Vec::with_capacity(frames);
+    let mut sum = [0f64; 5];
+    let mut emitted = 0u64;
+    for i in 0..frames {
+        app.apply_bench_frame(i as f64 / frames.saturating_sub(1).max(1) as f64);
+        let s = app.render();
+        totals.push(s.ms_total);
+        for (acc, value) in sum
+            .iter_mut()
+            .zip([s.ms_vertex, s.ms_triangles, s.ms_raster, s.ms_shade, s.ms_post])
+        {
+            *acc += value as f64;
+        }
+        emitted += s.triangles.emitted as u64;
+    }
+    if frames == 0 {
+        return Ok(());
+    }
+    totals.sort_by(f32::total_cmp);
+    let n = frames as f64;
+    let mean = totals.iter().map(|&v| v as f64).sum::<f64>() / n;
+    let p95 = totals[((frames as f64 * 0.95) as usize).min(frames - 1)];
+    println!(
+        "{}x{}  {} frames  {} hilos",
+        options.width,
+        options.height,
+        frames,
+        parallel::workers()
+    );
+    println!(
+        "frame: media {:.2} ms ({:.0} fps)   mediana {:.2} ms   p95 {:.2} ms",
+        mean,
+        1000.0 / mean,
+        totals[frames / 2],
+        p95
+    );
+    println!(
+        "etapas (media): vert {:.2}  tri {:.2}  raster {:.2}  shade {:.2}  post {:.2} ms",
+        sum[0] / n,
+        sum[1] / n,
+        sum[2] / n,
+        sum[3] / n,
+        sum[4] / n
+    );
+    println!("triangulos rasterizados por frame: {:.0}", emitted as f64 / n);
+    Ok(())
+}
