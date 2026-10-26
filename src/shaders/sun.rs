@@ -57,6 +57,6 @@ pub fn shade(f: &Fragment, u: &Uniforms, s: &SunStyle) -> Vec3 {
     let limb = 0.25 + 0.75 * mu.powf(0.6);
     let temperature =
         s.temperature * (0.82 + 0.3 * heat) * (0.88 + 0.12 * mu) * (1.0 + 0.04 * pulse);
-    let brightness = s.intensity * (0.35 + 1.1 * heat * heat) * limb * (1.0 + 0.25 * pulse);
+    let brightness = s.intensity * u.gains.sun * (0.35 + 1.1 * heat * heat) * limb * (1.0 + 0.25 * pulse);
     planckian_rgb(temperature) * brightness
 }

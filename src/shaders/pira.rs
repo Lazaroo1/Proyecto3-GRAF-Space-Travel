@@ -36,7 +36,7 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
 
     let rock_albedo = BASALT.lerp(ASH, ridge * 0.6);
     let lit = rock_albedo * u.sun_light * ndl.max(0.0) + rock_albedo * 0.015;
-    let glow = planckian_rgb(1200.0 + 700.0 * heat) * (crack * (0.12 + 2.4 * heat));
+    let glow = planckian_rgb(1200.0 + 700.0 * heat) * (crack * (0.12 + 2.4 * heat) * u.gains.pira);
     let mut color = lit + glow;
 
     if molten > 0.0 {
@@ -44,7 +44,7 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
         let swirl = u.noise.fbm(p * 0.05 + flow, 2);
         let temp = (u.noise.fbm(p * 0.09 + flow * 1.7 + Vec3::splat(swirl * 2.0), 3) * 0.5 + 0.5).clamp(0.0, 1.0);
         let plates = smoothstep(0.6, 0.7, u.noise.fbm(p * 0.045 - flow * 0.5, 2) * 0.5 + 0.5);
-        let lava = planckian_rgb(1300.0 + 1100.0 * temp) * (1.0 + 5.5 * temp * temp);
+        let lava = planckian_rgb(1300.0 + 1100.0 * temp) * ((1.0 + 5.5 * temp * temp) * u.gains.pira);
         // La costra es roca oscura con las orillas al rojo.
         let crust = lit + planckian_rgb(1250.0) * (0.25 * heat);
         color = color.lerp(lava.lerp(crust, plates), molten);

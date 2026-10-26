@@ -5,6 +5,7 @@
 //! profundidad y shaders) se calcula en CPU en `render` y `shaders`.
 
 mod app;
+mod audio;
 mod config;
 mod hud;
 #[allow(dead_code)]
@@ -14,6 +15,7 @@ mod render;
 mod scene;
 mod shaders;
 mod terrain;
+mod tweaks;
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -22,6 +24,9 @@ use raylib::prelude::*;
 
 use app::{App, FrameInput, PRESETS};
 use math::DVec3;
+
+/// Muestras por bloque de audio (unos 46 ms a 44.1 kHz).
+const AUDIO_BLOCK: usize = 2048;
 
 enum Mode {
     Window,
@@ -140,6 +145,19 @@ fn run_window(options: &Options) -> Result<(), String> {
         help: true,
         stats: true,
     };
+    let mut tweaks = tweaks::Tweaks::default();
+
+    // Sonido: raylib solo reproduce lo que el sintetizador genera. Si no hay
+    // dispositivo de audio, el juego sigue sin sonido.
+    let audio_device = RaylibAudio::init_audio_device().ok();
+    let mut stream = audio_device.as_ref().map(|device| {
+        device.set_audio_stream_buffer_size_default(AUDIO_BLOCK as i32);
+        let stream = device.new_audio_stream(audio::SAMPLE_RATE, 32, 1);
+        stream.play();
+        stream
+    });
+    let mut synth = audio::Synth::new();
+    let mut block = vec![0.0f32; AUDIO_BLOCK];
 
     while !rl.window_should_close() {
         if rl.is_key_pressed(KeyboardKey::KEY_TAB) {
@@ -184,6 +202,27 @@ fn run_window(options: &Options) -> Result<(), String> {
         if rl.is_key_pressed(KeyboardKey::KEY_O) {
             app.settings.cruise = !app.settings.cruise;
         }
+        if rl.is_key_pressed(KeyboardKey::KEY_M) {
+            app.muted = !app.muted;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_T) {
+            tweaks.open = !tweaks.open;
+        }
+        if tweaks.open {
+            let big = if rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT) { 10 } else { 1 };
+            if rl.is_key_pressed(KeyboardKey::KEY_UP) {
+                tweaks.select(-1);
+            }
+            if rl.is_key_pressed(KeyboardKey::KEY_DOWN) {
+                tweaks.select(1);
+            }
+            if rl.is_key_pressed(KeyboardKey::KEY_RIGHT) || rl.is_key_pressed_repeat(KeyboardKey::KEY_RIGHT) {
+                tweaks.adjust(&mut app, big);
+            }
+            if rl.is_key_pressed(KeyboardKey::KEY_LEFT) || rl.is_key_pressed_repeat(KeyboardKey::KEY_LEFT) {
+                tweaks.adjust(&mut app, -big);
+            }
+        }
         if rl.is_key_pressed(KeyboardKey::KEY_V) {
             // AUTO -> ON -> OFF -> AUTO
             app.path_mode = match app.path_mode {
@@ -198,6 +237,13 @@ fn run_window(options: &Options) -> Result<(), String> {
         skip_mouse = false;
         app.update(rl.get_frame_time() as f64, &input);
         app.render();
+        if let Some(stream) = stream.as_mut() {
+            synth.set(app.audio_params());
+            while stream.is_processed() {
+                synth.fill(&mut block);
+                let _ = stream.update(&block);
+            }
+        }
         if photo {
             save_photo(&app);
         }
@@ -209,7 +255,7 @@ fn run_window(options: &Options) -> Result<(), String> {
         let mut d = rl.begin_drawing(&thread);
         d.clear_background(Color::BLACK);
         d.draw_texture(&texture, 0, 0, Color::WHITE);
-        hud::draw(&mut d, &app, fps, &hud);
+        hud::draw(&mut d, &app, fps, &hud, &tweaks);
     }
     Ok(())
 }

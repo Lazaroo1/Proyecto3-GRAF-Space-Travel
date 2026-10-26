@@ -55,7 +55,7 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     let gloss = ice * 0.45 + snow_cover * 0.15;
     let specular = if ndl > 0.0 && gloss > 0.0 {
         let half = (l + v).normalize();
-        u.sun_light * (gloss * n.dot(half).max(0.0).powf(80.0))
+        u.sun_light * (gloss * u.gains.requiem * n.dot(half).max(0.0).powf(80.0))
     } else {
         Vec3::ZERO
     };

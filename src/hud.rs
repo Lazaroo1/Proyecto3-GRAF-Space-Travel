@@ -6,6 +6,7 @@ use raylib::prelude::*;
 
 use crate::app::App;
 use crate::parallel;
+use crate::tweaks::Tweaks;
 
 pub struct Hud {
     pub help: bool,
@@ -17,7 +18,7 @@ const LINE: i32 = 21;
 const TEXT: Color = Color::new(236, 226, 214, 255);
 const PANEL: Color = Color::new(0, 0, 0, 150);
 
-pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud) {
+pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &Tweaks) {
     let width = d.get_screen_width();
     let height = d.get_screen_height();
 
@@ -103,12 +104,19 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud) {
     ];
     panel(d, 10, 10, &lines, true, width);
 
+    if tweaks.open {
+        let lines = tweaks.lines(app);
+        let y = (height - (lines.len() as i32 * LINE + 10)) / 2;
+        panel(d, 10, y, &lines, true, width);
+    }
+
     if hud.help {
         let lines = [
             "Mouse: apuntar   Clic derecho: mirar alrededor   Rueda: distancia".to_string(),
             "W/S: adelante/atras   A/D: lados   Espacio/Ctrl: subir/bajar".to_string(),
             "Q/E: alabeo   Shift: turbo   C: camara   P: foto   Tab: soltar el mouse".to_string(),
             "L: modo local   O: crucero (rodea el planeta)   V: trayectoria".to_string(),
+            "T: ajustes en vivo   M: sonido".to_string(),
             "F3: wireframe   F4: colores de LOD   F5: LOD on/off   F6: otra semilla".to_string(),
             "F1: ayuda   F2: estadisticas   Esc: salir".to_string(),
         ];

@@ -16,7 +16,10 @@ use crate::scene::props::{self, Instance, PropKind, PropStats, PropView};
 use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
 use crate::scene::trajectory::{self, Prediction};
 use crate::scene::{nearest_surface, ribbon, Mesh, System};
-use crate::shaders::{self, heartbeat, AtmosphereFrame, DebugView, Material, PropStyle, RingInfo, SkyView, Uniforms};
+use crate::audio::AudioParams;
+use crate::shaders::{
+    self, heartbeat, AtmosphereFrame, DebugView, Gains, Material, PropStyle, RingInfo, SkyView, Uniforms,
+};
 use crate::terrain::{LodSettings, TerrainStats, Viewer};
 
 /// Entrada de un frame, ya traducida de teclas y mouse.
@@ -121,6 +124,10 @@ pub struct App {
     pub debug: DebugView,
     /// Objetos de la superficie del ultimo frame.
     pub prop_stats: PropStats,
+    /// Intensidad de cada shader (panel de ajustes).
+    pub gains: Gains,
+    /// Sonido apagado (M).
+    pub muted: bool,
     /// Trayectoria predicha: siempre (`Some(true)`), nunca (`Some(false)`) o
     /// solo sin asistente (`None`).
     pub path_mode: Option<bool>,
@@ -187,6 +194,8 @@ impl App {
             },
             debug: DebugView::default(),
             prop_stats: PropStats::default(),
+            gains: Gains::default(),
+            muted: false,
             path_mode: None,
             path_shown: false,
             path_impact: false,
@@ -202,6 +211,48 @@ impl App {
             sim_time: t,
             accumulator: 0.0,
         })
+    }
+
+    /// Tiempo de simulacion.
+    pub fn time(&self) -> f64 {
+        self.sim_time
+    }
+
+    /// Lo que el sintetizador necesita saber: el latido se oye mas cerca de
+    /// la estrella, el motor con el empuje, el viento dentro de una
+    /// atmosfera y el fondo cambia de tono con el planeta cercano.
+    pub fn audio_params(&self) -> AudioParams {
+        let t = self.sim_time;
+        let star = &self.system.bodies[0];
+        let distance = (self.ship.world_pos - star.position(t)).length();
+        let beat = 0.2 + 0.8 / (1.0 + (distance / 1500.0).powi(2));
+        let f = &self.flight;
+        let wind = match self.system.atmospheres.get(f.nearest).and_then(|a| a.as_ref()) {
+            Some(model) if f.altitude < model.params.thickness as f64 => {
+                let density = 1.0 - f.altitude / model.params.thickness as f64;
+                (f.speed / 40.0).min(1.0) * density
+            }
+            _ => 0.0,
+        };
+        // Un tono por planeta: notas graves de una escala menor.
+        let drone_hz = match self.body_name(f.nearest) {
+            "Pira" => 55.0,
+            "Jardin" => 73.4,
+            "Vigia" => 41.2,
+            "Requiem" => 49.0,
+            "Cementerio" => 61.7,
+            _ => 36.7,
+        };
+        AudioParams {
+            time: t,
+            beat_period: config::HEARTBEAT_PERIOD,
+            beat: beat as f32,
+            throttle: self.throttle,
+            wind: wind as f32,
+            drone_hz,
+            drone: 0.6,
+            master: if self.muted { 0.0 } else { 0.8 },
+        }
     }
 
     pub fn body_name(&self, index: usize) -> &'static str {
@@ -367,7 +418,8 @@ impl App {
             ring: ring_info(&self.system, t, camera.pos),
             atmospheres: &atmospheres,
             sky_view: sky_view.as_ref(),
-            biolum: 1.0,
+            biolum: self.gains.jardin,
+            gains: self.gains,
             debug: self.debug,
         };
         self.stats = self.renderer.render(&draws, &view, &uniforms);

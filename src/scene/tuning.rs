@@ -39,7 +39,11 @@ impl System {
         if body.soi.is_finite() {
             body.soi *= radius / body.radius;
         }
-        body.mu = gravity * radius * radius;
+        // Los planetas conservan su gravedad en la superficie; la estrella su
+        // masa (las orbitas no dependen de su tamano).
+        if body.surface.is_some() {
+            body.mu = gravity * radius * radius;
+        }
         body.radius = radius;
         if let Some(field) = &body.surface {
             self.terrains[index] = Some(Terrain::new(radius, field.clone(), config::TERRAIN_FINEST));

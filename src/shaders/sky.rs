@@ -271,6 +271,7 @@ mod tests {
             atmospheres: &[],
             sky_view: None,
             biolum: 1.0,
+            gains: Default::default(),
             debug: Default::default(),
         };
         let n = 2_000_000;

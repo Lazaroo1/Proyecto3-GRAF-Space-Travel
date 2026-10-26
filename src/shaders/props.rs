@@ -133,7 +133,7 @@ fn monolith(c: &Ctx) -> Vec3 {
     // Vetas de la piedra: un poco mas clara en bandas verticales irregulares.
     let veins = u.noise.fbm(Vec3::new(f.local.x * 2.0, f.local.y * 0.25, f.local.z * 2.0), 3) * 0.5 + 0.5;
     let albedo = Vec3::new(0.012, 0.010, 0.016) * ((0.7 + 0.8 * veins) * cavity);
-    let emission = Vec3::new(1.0, 0.07, 0.12) * (glow * (0.5 + 1.6 * u.beat));
+    let emission = Vec3::new(1.0, 0.07, 0.12) * (glow * (0.5 + 1.6 * u.beat) * u.gains.requiem);
     lit(c, albedo, n, 0.6, 120.0, 0.0) + emission
 }
 
