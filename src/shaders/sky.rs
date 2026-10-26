@@ -166,16 +166,16 @@ fn nebula(dir: Vec3, noise: &Perlin) -> Vec3 {
 fn corona(dir: Vec3, u: &Uniforms) -> Vec3 {
     let dist2 = u.sun_pos.length_squared();
     let r2 = u.sun_radius * u.sun_radius;
-    let along = dir.dot(u.sun_pos);
-    if dist2 <= r2 || along <= 0.0 {
+    if dist2 <= r2 {
         return Vec3::ZERO;
     }
-    // cos^2 del angulo sin raices: (d . s)^2 / (|d|^2 |s|^2).
-    let cos2 = along * along / (dir.length_squared() * dist2);
+    let cos = dir.dot(u.sun_pos) / (dir.length_squared() * dist2).sqrt();
     let disc2 = r2 / dist2;
-    // 1 - cos ~ (1 - cos^2) / 2 para angulos chicos. Mas alla de 40 radios
-    // del disco la corona ya no se nota: se ahorran la raiz y la exponencial.
-    let x2 = ((1.0 - cos2) / disc2).max(1.0);
+    // Cuerda al cuadrado en radios del disco. Es continua en toda la esfera:
+    // cortar la corona en el hemisferio opuesto dejaria un borde recto en el
+    // cielo, porque su cola tenue todavia llega hasta ahi. Mas alla de 40
+    // radios ya no se nota y se ahorran la raiz y la exponencial.
+    let x2 = (2.0 * (1.0 - cos) / disc2).max(1.0);
     if x2 > 1600.0 {
         return Vec3::ZERO;
     }
@@ -263,6 +263,9 @@ mod tests {
             noise: &noise,
             sky: &sky,
             pixel_angle: 0.002,
+            eye_dir: Vec3::Z,
+            ring: None,
+            biolum: 1.0,
             debug: Default::default(),
         };
         let n = 2_000_000;

@@ -35,6 +35,7 @@ pub fn shade_tile(tile: usize, vis: &[VisPixel], out: &mut [Vec3], ctx: &ShadeCo
     let rows = TILE.min(ctx.height - y0);
     let inv_width = 1.0 / ctx.width as f32;
     let inv_height = 1.0 / ctx.height as f32;
+    let volumes = shaders::has_volumes(ctx.uniforms);
     let mut shaded = 0u64;
 
     for ly in 0..rows {
@@ -43,20 +44,27 @@ pub fn shade_tile(tile: usize, vis: &[VisPixel], out: &mut [Vec3], ctx: &ShadeCo
             let i = ly * TILE + lx;
             let px = (x0 + lx) as f32 + 0.5;
             let pixel = vis[i];
-            out[i] = if pixel.id == VisPixel::EMPTY_ID {
-                let dir = ctx.view.pixel_direction(px, py, inv_width, inv_height);
-                shaders::sky(dir, ctx.uniforms)
+            let dir = ctx.view.pixel_direction(px, py, inv_width, inv_height);
+            let (color, depth) = if pixel.id == VisPixel::EMPTY_ID {
+                (shaders::sky(dir, ctx.uniforms), f32::INFINITY)
             } else {
                 shaded += 1;
                 shade_surface(pixel.id, px, py, ctx)
+            };
+            // Anillos y atmosferas, contra la distancia ya resuelta.
+            out[i] = if volumes {
+                shaders::volumes(color, dir, depth, ctx.uniforms)
+            } else {
+                color
             };
         }
     }
     ctx.shaded.fetch_add(shaded, Ordering::Relaxed);
 }
 
+/// Color del pixel y distancia de la superficie a la camara.
 #[inline]
-fn shade_surface(id: u32, px: f32, py: f32, ctx: &ShadeContext) -> Vec3 {
+fn shade_surface(id: u32, px: f32, py: f32, ctx: &ShadeContext) -> (Vec3, f32) {
     let chunk = &ctx.chunks[(id >> 16) as usize];
     let tri = &chunk.tris[(id & 0xFFFF) as usize];
 
@@ -111,7 +119,7 @@ fn shade_surface(id: u32, px: f32, py: f32, ctx: &ShadeContext) -> Vec3 {
         };
         color = color.lerp(ink * 0.5, line);
     }
-    color
+    (color, fragment.pos.length())
 }
 
 #[inline]

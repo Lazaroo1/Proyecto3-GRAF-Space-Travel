@@ -156,21 +156,196 @@ impl HeightField for RequiemField {
     }
 }
 
+/// Maximo suave: como `a.max(b)` pero sin el quiebre donde se cruzan.
+#[inline]
+fn smooth_max(a: f32, b: f32, k: f32) -> f32 {
+    let h = (0.5 + 0.5 * (a - b) / k).clamp(0.0, 1.0);
+    b + (a - b) * h + k * h * (1.0 - h)
+}
+
+/// Pira: la estrella la esta devorando. Tiene acoplamiento de marea, asi
+/// que siempre le da la misma cara (el lado -X del planeta): de ese lado la
+/// roca se derrite y los valles son mares de lava; del otro, la costra se
+/// enfria pero sigue agrietada.
+///
+/// Atributos: `x` fundido (mar de lava), `y` calor (cercania a la cara de la
+/// estrella), `z` crestas.
+pub struct PiraField {
+    noise: Perlin,
+}
+
+impl PiraField {
+    pub fn new(seed: u32) -> Self {
+        Self { noise: Perlin::new(seed) }
+    }
+}
+
+impl HeightField for PiraField {
+    fn sample(&self, dir: Vec3) -> TerrainSample {
+        let n = &self.noise;
+        let heat = smoothstep(-0.25, 0.9, -dir.x);
+        let ridges = n.ridged(dir * 2.6 + Vec3::new(2.3, -1.1, 4.7), 5);
+        let base = n.fbm(dir * 1.6 + Vec3::new(-6.1, 3.3, 0.4), 4);
+        let detail = n.fbm(dir * 14.0 + Vec3::new(0.7, 8.2, -3.9), 2);
+        let rock = base * 4.0 + ridges * ridges * 9.0 + detail * 0.8;
+        // El mar de lava sube del lado de la estrella y es plano: lo que queda
+        // por debajo de su nivel se cubre.
+        let lava_level = -1.5 + 6.0 * heat;
+        let molten = smoothstep(lava_level + 0.5, lava_level - 0.3, rock);
+        TerrainSample {
+            height: smooth_max(rock, lava_level, 0.6),
+            attrs: Vec3::new(molten, heat, ridges),
+        }
+    }
+
+    fn height_range(&self) -> (f32, f32) {
+        // La lava rellena todo lo que queda bajo su nivel minimo (-1.5); el
+        // maximo suave puede pasarse del mayor por `k / 4`.
+        (-1.6, 4.0 + 9.0 + 0.8 + 0.2)
+    }
+}
+
+/// Frecuencia de la red de arterias de Jardin, en ciclos por radio.
+pub const ARTERY_FREQUENCY: f32 = 2.6;
+const ARTERY_OFFSET: Vec3 = Vec3::new(11.3, -5.7, 2.9);
+
+/// Red de arterias de Jardin: cerca de 1 sobre las curvas donde un ruido de
+/// Perlin vale cero. En una esfera esas curvas forman una red cerrada que
+/// parece organica. El terreno la usa para levantar las arterias y el shader
+/// para hacerlas brillar: con el mismo ruido, el relieve y la luz coinciden.
+#[inline]
+pub fn artery(noise: &Perlin, dir: Vec3) -> f32 {
+    1.0 - noise.noise(dir * ARTERY_FREQUENCY + ARTERY_OFFSET).abs()
+}
+
+/// Jardin: un planeta vivo. La superficie es tejido con pliegues, recorrido
+/// por una red de arterias elevadas y salpicado de poros. Los pliegues usan
+/// domain warping (el ruido se muestrea en un punto desplazado por otro
+/// ruido), que da formas organicas en vez de colinas regulares.
+///
+/// Atributos: `x` arteria, `y` poro, `z` pliegue (0 valle, 1 cresta).
+pub struct JardinField {
+    noise: Perlin,
+    /// El ruido de las arterias usa la semilla global, la misma que reciben
+    /// los shaders.
+    arteries: Perlin,
+}
+
+impl JardinField {
+    pub fn new(seed: u32, global_seed: u32) -> Self {
+        Self {
+            noise: Perlin::new(seed),
+            arteries: Perlin::new(global_seed),
+        }
+    }
+}
+
+impl HeightField for JardinField {
+    fn sample(&self, dir: Vec3) -> TerrainSample {
+        let n = &self.noise;
+        let warp = Vec3::new(
+            n.noise(dir * 1.7 + Vec3::new(1.0, 2.0, 3.0)),
+            n.noise(dir * 1.7 + Vec3::new(-4.0, 0.5, 2.5)),
+            n.noise(dir * 1.7 + Vec3::new(3.3, -2.2, -1.1)),
+        ) * 0.35;
+        let folds = n.fbm(dir * 2.2 + warp, 5);
+        let ridge = smoothstep(0.955, 1.0, artery(&self.arteries, dir));
+        let (f1, _) = n.cells(dir * 9.0);
+        let pore = smoothstep(0.35, 0.12, f1);
+        TerrainSample {
+            height: folds * 7.0 + ridge * 1.4 - pore * 2.2,
+            attrs: Vec3::new(ridge, pore, (folds * 0.8 + 0.5).clamp(0.0, 1.0)),
+        }
+    }
+
+    fn height_range(&self) -> (f32, f32) {
+        (-1.0 * 7.0 - 2.2, 1.0 * 7.0 + 1.4)
+    }
+}
+
+/// Cementerio: roca muerta marcada por impactos. Los crateres son de los
+/// restos del exodo que cayeron, y las zanjas largas, de naves que se
+/// arrastraron al estrellarse.
+///
+/// Atributos: `x` borde de crater, `y` zanja, `z` base del terreno.
+pub struct CementerioField {
+    noise: Perlin,
+    craters: Craters,
+    small: Craters,
+}
+
+impl CementerioField {
+    pub fn new(seed: u32) -> Self {
+        Self {
+            noise: Perlin::new(seed),
+            craters: Craters {
+                frequency: 6.0,
+                chance: 0.45,
+                min_radius: 0.25,
+                max_radius: 0.6,
+                depth: 5.0,
+                seed: seed ^ 0xA11,
+            },
+            small: Craters {
+                frequency: 18.0,
+                chance: 0.4,
+                min_radius: 0.15,
+                max_radius: 0.55,
+                depth: 1.6,
+                seed: seed ^ 0xB22,
+            },
+        }
+    }
+}
+
+impl HeightField for CementerioField {
+    fn sample(&self, dir: Vec3) -> TerrainSample {
+        let n = &self.noise;
+        let base = n.fbm(dir * 1.8 + Vec3::new(5.0, -2.0, 7.5), 5);
+        let (big, big_rim) = self.craters.sample(dir);
+        let (small, small_rim) = self.small.sample(dir);
+        let gouge = smoothstep(0.93, 0.99, n.ridged(dir * 3.0 + Vec3::new(-8.0, 1.0, 2.0), 2));
+        TerrainSample {
+            height: base * 4.0 + big + small - gouge * 2.5,
+            attrs: Vec3::new(big_rim.max(small_rim), gouge, base * 0.5 + 0.5),
+        }
+    }
+
+    fn height_range(&self) -> (f32, f32) {
+        let (lo_a, hi_a) = self.craters.range();
+        let (lo_b, hi_b) = self.small.range();
+        (-4.0 + lo_a + lo_b - 2.5, 4.0 + hi_a + hi_b)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn requiem_stays_inside_its_declared_range_and_is_deterministic() {
-        let a = RequiemField::new(7);
-        let b = RequiemField::new(7);
-        let (lo, hi) = a.height_range();
-        for i in 0..4000 {
+    fn directions() -> impl Iterator<Item = Vec3> {
+        (0..4000).map(|i| {
             let t = i as f32 * 0.37;
-            let dir = Vec3::new(t.sin() * (t * 0.31).cos(), (t * 0.77).cos(), t.cos() * (t * 0.13).sin()).normalize();
-            let s = a.sample(dir);
-            assert!(s.height >= lo && s.height <= hi, "{} fuera de [{lo}, {hi}]", s.height);
-            assert_eq!(s.height, b.sample(dir).height);
+            Vec3::new(t.sin() * (t * 0.31).cos(), (t * 0.77).cos(), t.cos() * (t * 0.13).sin()).normalize()
+        })
+    }
+
+    /// Cada planeta se queda dentro del rango que declara (el culling por
+    /// horizonte depende de eso) y la misma semilla da el mismo terreno.
+    #[test]
+    fn every_planet_stays_inside_its_declared_range_and_is_deterministic() {
+        let fields: Vec<(Box<dyn HeightField>, Box<dyn HeightField>)> = vec![
+            (Box::new(RequiemField::new(7)), Box::new(RequiemField::new(7))),
+            (Box::new(PiraField::new(7)), Box::new(PiraField::new(7))),
+            (Box::new(JardinField::new(7, 1)), Box::new(JardinField::new(7, 1))),
+            (Box::new(CementerioField::new(7)), Box::new(CementerioField::new(7))),
+        ];
+        for (index, (a, b)) in fields.iter().enumerate() {
+            let (lo, hi) = a.height_range();
+            for dir in directions() {
+                let s = a.sample(dir);
+                assert!(s.height >= lo && s.height <= hi, "campo {index}: {} fuera de [{lo}, {hi}]", s.height);
+                assert_eq!(s.height, b.sample(dir).height);
+            }
         }
     }
 

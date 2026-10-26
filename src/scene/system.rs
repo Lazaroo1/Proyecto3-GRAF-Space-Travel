@@ -1,4 +1,4 @@
-//! El sistema de OCASO: la estrella moribunda y sus planetas.
+//! El sistema de OCASO: la estrella moribunda y sus cinco planetas.
 //!
 //! Todo movimiento es una funcion del tiempo de simulacion `t`: la posicion
 //! en la orbita, el giro sobre el eje y el latido de la estrella. Nada se
@@ -14,8 +14,8 @@ use crate::config;
 use crate::math::blackbody::planckian_rgb;
 use crate::math::{DQuat, DVec3, Perlin, Vec3};
 use crate::shaders::{heartbeat, Material, ShipStyle, SkyCube, SunStyle};
-use crate::terrain::shapes::RequiemField;
-use crate::terrain::{HeightField, Terrain};
+use crate::terrain::shapes::{CementerioField, JardinField, PiraField, RequiemField};
+use crate::terrain::{HeightField, Smooth, Terrain};
 
 pub struct Body {
     pub name: &'static str,
@@ -32,6 +32,8 @@ pub struct Body {
     pub orbit_inclination: f64,
     /// Segundos por vuelta sobre su propio eje.
     pub spin_period: f64,
+    /// Angulo de giro cuando `t = 0`.
+    pub spin_phase: f64,
     pub axial_tilt: f64,
     /// Parametro gravitacional `G * M`.
     pub mu: f64,
@@ -42,6 +44,8 @@ pub struct Body {
     pub material: Material,
     /// Forma del terreno; `None` es una esfera lisa del radio base.
     pub surface: Option<Arc<dyn HeightField>>,
+    /// Anillos: radios interior y exterior, en radios del planeta.
+    pub rings: Option<(f64, f64)>,
 }
 
 impl Body {
@@ -70,12 +74,14 @@ impl Body {
         DVec3::new(v.x, v.y * c - v.z * s, v.y * s + v.z * c)
     }
 
-    /// Inclinacion del eje y giro sobre el.
+    /// Inclinacion del eje y giro sobre el. La orbita avanza girando sobre
+    /// +Y, igual que el giro: con el mismo periodo y la misma fase, el
+    /// planeta le muestra siempre la misma cara (-X) a la estrella.
     pub fn rotation(&self, t: f64) -> DQuat {
         let spin = if self.spin_period == 0.0 {
             0.0
         } else {
-            TAU * t / self.spin_period
+            self.spin_phase + TAU * t / self.spin_period
         };
         DQuat::from_axis_angle(DVec3::Z, self.axial_tilt) * DQuat::from_axis_angle(DVec3::Y, spin)
     }
@@ -99,6 +105,47 @@ impl Body {
     }
 }
 
+/// Datos de un planeta para armarlo sin repetir la lista completa de campos.
+struct PlanetSpec {
+    name: &'static str,
+    radius: f64,
+    orbit: f64,
+    period: f64,
+    phase: f64,
+    inclination: f64,
+    spin: f64,
+    tilt: f64,
+    /// Gravedad en la superficie: `mu = g r^2`.
+    gravity: f64,
+    material: Material,
+    surface: Arc<dyn HeightField>,
+}
+
+impl PlanetSpec {
+    fn build(self) -> (Body, Terrain) {
+        let terrain = Terrain::new(self.radius, self.surface.clone(), config::TERRAIN_FINEST);
+        let body = Body {
+            name: self.name,
+            radius: self.radius,
+            pulse: 0.0,
+            orbit_radius: self.orbit,
+            orbit_period: self.period,
+            orbit_phase: self.phase,
+            orbit_inclination: self.inclination,
+            spin_period: self.spin,
+            spin_phase: 0.0,
+            axial_tilt: self.tilt,
+            mu: self.gravity * self.radius * self.radius,
+            soi: self.radius * 6.0,
+            mesh: 0,
+            material: self.material,
+            surface: Some(self.surface),
+            rings: None,
+        };
+        (body, terrain)
+    }
+}
+
 pub struct System {
     pub bodies: Vec<Body>,
     /// Terreno de cada cuerpo, en el mismo orden que `bodies`.
@@ -110,6 +157,10 @@ pub struct System {
     pub ship_material: Material,
     pub noise: Perlin,
     pub sky: SkyCube,
+    /// Cuerpo con la tormenta-ojo (Vigia).
+    pub eye_body: usize,
+    /// Cuerpo con anillos (Cementerio).
+    pub ring_body: usize,
 }
 
 impl System {
@@ -117,6 +168,7 @@ impl System {
         let mut ship = load_obj(&assets.join("naveGraficas.obj"))?;
         ship.normalize_size(config::SHIP_LENGTH as f32);
         let meshes = vec![icosphere(5), ship];
+        let seed = config::NOISE_SEED;
 
         let star = Body {
             name: "Ocaso",
@@ -127,6 +179,7 @@ impl System {
             orbit_phase: 0.0,
             orbit_inclination: 0.0,
             spin_period: 600.0,
+            spin_phase: 0.0,
             axial_tilt: 0.12,
             mu: 1.5e6,
             soi: f64::INFINITY,
@@ -136,34 +189,99 @@ impl System {
                 intensity: 3.0,
             }),
             surface: None,
+            rings: None,
         };
-        let requiem_radius = 160.0;
-        let requiem_field: Arc<dyn HeightField> = Arc::new(RequiemField::new(config::NOISE_SEED ^ 0x0E9));
-        let requiem = Body {
+
+        let (mut pira, pira_terrain) = PlanetSpec {
+            name: "Pira",
+            radius: 110.0,
+            orbit: 1150.0,
+            period: 260.0,
+            phase: 2.4,
+            inclination: 0.0,
+            spin: 260.0,
+            tilt: 0.0,
+            gravity: 3.5,
+            material: Material::Pira,
+            surface: Arc::new(PiraField::new(seed ^ 0x9124)),
+        }
+        .build();
+        // Acoplamiento de marea: gira con su orbita y le da siempre la misma
+        // cara a la estrella.
+        pira.spin_phase = pira.orbit_phase;
+
+        let (jardin, jardin_terrain) = PlanetSpec {
+            name: "Jardin",
+            radius: 170.0,
+            orbit: 2300.0,
+            period: 700.0,
+            phase: 0.6,
+            inclination: 0.03,
+            spin: 150.0,
+            tilt: 0.3,
+            gravity: 4.0,
+            material: Material::Jardin,
+            surface: Arc::new(JardinField::new(seed ^ 0x7A3D, seed)),
+        }
+        .build();
+
+        let (mut vigia, vigia_terrain) = PlanetSpec {
+            name: "Vigia",
+            radius: 430.0,
+            orbit: 3900.0,
+            period: 1300.0,
+            phase: 4.0,
+            inclination: -0.04,
+            spin: 90.0,
+            tilt: 0.15,
+            gravity: 9.0,
+            material: Material::Vigia,
+            surface: Arc::new(Smooth),
+        }
+        .build();
+        vigia.soi = vigia.radius * 4.0;
+
+        let (requiem, requiem_terrain) = PlanetSpec {
             name: "Requiem",
-            radius: requiem_radius,
-            pulse: 0.0,
-            orbit_radius: 3200.0,
-            orbit_period: 1500.0,
-            orbit_phase: 0.9,
-            orbit_inclination: 0.04,
-            spin_period: 240.0,
-            axial_tilt: 0.4,
-            // Gravedad de 4 u/s^2 en la superficie: g = mu / r^2.
-            mu: 4.0 * requiem_radius * requiem_radius,
-            soi: requiem_radius * 6.0,
-            mesh: 0,
+            radius: 160.0,
+            orbit: 5400.0,
+            period: 2000.0,
+            phase: 1.3,
+            inclination: 0.05,
+            spin: 240.0,
+            tilt: 0.4,
+            gravity: 4.0,
             material: Material::Requiem,
-            surface: Some(requiem_field.clone()),
-        };
-        let terrains = vec![
-            None,
-            Some(Terrain::new(requiem_radius, requiem_field, config::TERRAIN_FINEST)),
-        ];
+            surface: Arc::new(RequiemField::new(seed ^ 0x0E9)),
+        }
+        .build();
+
+        let (mut cementerio, cementerio_terrain) = PlanetSpec {
+            name: "Cementerio",
+            radius: 140.0,
+            orbit: 6800.0,
+            period: 2600.0,
+            phase: 3.1,
+            inclination: -0.06,
+            spin: 170.0,
+            tilt: 0.55,
+            gravity: 3.5,
+            material: Material::Cementerio,
+            surface: Arc::new(CementerioField::new(seed ^ 0xCE3)),
+        }
+        .build();
+        cementerio.rings = Some((1.7, 3.1));
 
         Ok(Self {
-            bodies: vec![star, requiem],
-            terrains,
+            bodies: vec![star, pira, jardin, vigia, requiem, cementerio],
+            terrains: vec![
+                None,
+                Some(pira_terrain),
+                Some(jardin_terrain),
+                Some(vigia_terrain),
+                Some(requiem_terrain),
+                Some(cementerio_terrain),
+            ],
             meshes,
             ship_mesh: 1,
             // El modelo de Blender tiene la punta hacia +Z; adelante es -Z.
@@ -172,8 +290,10 @@ impl System {
                 specular: 0.5,
                 shininess: 40.0,
             }),
-            noise: Perlin::new(config::NOISE_SEED),
-            sky: SkyCube::bake(config::SKY_SIZE, config::NOISE_SEED),
+            noise: Perlin::new(seed),
+            sky: SkyCube::bake(config::SKY_SIZE, seed),
+            eye_body: 3,
+            ring_body: 5,
         })
     }
 
@@ -185,6 +305,11 @@ impl System {
         };
         let beat = heartbeat(t, config::HEARTBEAT_PERIOD) as f32;
         planckian_rgb(style.temperature) * (1.5 * (1.0 + 0.06 * beat))
+    }
+
+    /// Indice de un cuerpo por nombre.
+    pub fn find(&self, name: &str) -> Option<usize> {
+        self.bodies.iter().position(|b| b.name == name)
     }
 }
 

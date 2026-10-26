@@ -6,15 +6,15 @@
 //! pixel cubre mas terreno que el tamano del detalle, el ruido solo
 //! parpadearia al moverse.
 
-use super::{Fragment, Uniforms};
+use super::{limb_haze, Fragment, Uniforms};
 use crate::math::{smoothstep, Vec3};
 
-const BASALT: Vec3 = Vec3::new(0.10, 0.095, 0.105);
-const REGOLITH: Vec3 = Vec3::new(0.30, 0.285, 0.29);
-const EJECTA: Vec3 = Vec3::new(0.42, 0.40, 0.40);
-const SNOW: Vec3 = Vec3::new(0.86, 0.88, 0.92);
-const ICE_DEEP: Vec3 = Vec3::new(0.36, 0.48, 0.62);
-const ICE_PALE: Vec3 = Vec3::new(0.70, 0.79, 0.88);
+const BASALT: Vec3 = Vec3::new(0.075, 0.07, 0.08);
+const REGOLITH: Vec3 = Vec3::new(0.21, 0.20, 0.21);
+const EJECTA: Vec3 = Vec3::new(0.32, 0.30, 0.30);
+const SNOW: Vec3 = Vec3::new(0.80, 0.83, 0.88);
+const ICE_DEEP: Vec3 = Vec3::new(0.24, 0.35, 0.50);
+const ICE_PALE: Vec3 = Vec3::new(0.50, 0.61, 0.74);
 const ATMOSPHERE: Vec3 = Vec3::new(0.30, 0.22, 0.48);
 
 pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
@@ -62,7 +62,5 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     // Luz de las estrellas en el lado de noche: casi nada, pero no negro puro.
     let ambient = albedo * 0.012;
     // Atmosfera tenue: brilla en el borde del lado de dia.
-    let rim_light = (1.0 - n.dot(v).max(0.0)).powi(3);
-    let day = smoothstep(-0.2, 0.35, ndl);
-    diffuse + specular + ambient + ATMOSPHERE * (rim_light * day * 0.8)
+    diffuse + specular + ambient + limb_haze(f, ATMOSPHERE, 0.8, ndl)
 }

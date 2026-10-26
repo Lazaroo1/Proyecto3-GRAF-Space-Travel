@@ -20,6 +20,7 @@
 use super::stats::TriCounters;
 use super::{Draw, View, TILE};
 use crate::math::{Vec2, Vec3, Vec4};
+use crate::shaders::{self, Uniforms};
 
 /// Bits de subpixel del punto fijo: 1/256 de pixel.
 pub const SUBPIXEL_BITS: u32 = 8;
@@ -161,6 +162,7 @@ pub fn transform_vertices(
     visible: &[VisibleDraw],
     draws: &[Draw],
     view: &View,
+    uniforms: &Uniforms,
 ) {
     let end = first + out.len();
     let mut k = visible.partition_point(|v| v.vert_offset + v.vert_count <= first);
@@ -168,11 +170,17 @@ pub fn transform_vertices(
         let v = &visible[k];
         let draw = &draws[v.draw];
         let mesh = draw.mesh;
+        let deforms = draw.material.deforms();
         let lo = first.max(v.vert_offset);
         let hi = end.min(v.vert_offset + v.vert_count);
         for global in lo..hi {
             let i = global - v.vert_offset;
-            let position = mesh.positions[i];
+            let mut position = mesh.positions[i];
+            // Deformacion del material (vertex shader): sobre la normal.
+            if deforms {
+                let lift = shaders::displace(&draw.material, position + draw.local_offset, uniforms);
+                position += mesh.normals[i] * lift;
+            }
             // Modelo: al mundo relativo a la camara. Vista y proyeccion: a clip.
             let world = draw.model.transform_affine(position);
             out[global - first] = ClipVertex {

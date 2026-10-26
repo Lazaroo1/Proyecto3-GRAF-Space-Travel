@@ -13,7 +13,7 @@ use crate::render::{Draw, Renderer, Stats, View};
 use crate::scene::camera::{Camera, CameraMode};
 use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
 use crate::scene::{nearest_surface, System};
-use crate::shaders::{DebugView, Uniforms};
+use crate::shaders::{DebugView, RingInfo, Uniforms};
 use crate::terrain::{LodSettings, TerrainStats, Viewer};
 
 /// Entrada de un frame, ya traducida de teclas y mouse.
@@ -32,27 +32,48 @@ pub struct FrameInput {
     pub zoom: f64,
 }
 
-/// Vistas fijas para capturas y pruebas.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Preset {
-    System,
-    Approach,
-    Surface,
-    Ship,
+/// Encuadre de una vista fija. Los angulos se miden alrededor del planeta:
+/// azimut 0 es la cara que mira a la estrella, y la elevacion sube desde el
+/// plano de la orbita.
+#[derive(Clone, Copy, Debug)]
+pub enum Shot {
+    /// Todo el sistema desde arriba.
+    Overview,
+    /// La nave en orbita a `distance` radios, mirando al planeta.
+    Orbit { body: &'static str, distance: f64, azimuth: f64, elevation: f64 },
+    /// La nave sobre la superficie, mirando al horizonte.
+    Surface { body: &'static str, azimuth: f64, elevation: f64, altitude: f64 },
+    /// La nave de cerca, con el planeta detras.
+    Ship { body: &'static str },
 }
 
-impl Preset {
-    pub const ALL: [Self; 4] = [Self::System, Self::Approach, Self::Surface, Self::Ship];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::System => "01_sistema",
-            Self::Approach => "02_acercamiento",
-            Self::Surface => "03_superficie",
-            Self::Ship => "04_nave",
-        }
-    }
+/// Una vista fija con nombre, para capturas y para el benchmark.
+#[derive(Clone, Copy, Debug)]
+pub struct Preset {
+    pub name: &'static str,
+    pub shot: Shot,
 }
+
+pub const PRESETS: [Preset; 9] = [
+    Preset { name: "01_sistema", shot: Shot::Overview },
+    Preset { name: "02_pira", shot: Shot::Orbit { body: "Pira", distance: 3.2, azimuth: 0.5, elevation: 0.2 } },
+    Preset { name: "03_pira_noche", shot: Shot::Orbit { body: "Pira", distance: 2.8, azimuth: 2.6, elevation: 0.15 } },
+    Preset { name: "04_jardin", shot: Shot::Orbit { body: "Jardin", distance: 3.0, azimuth: 1.2, elevation: 0.25 } },
+    Preset {
+        name: "05_jardin_superficie",
+        shot: Shot::Surface { body: "Jardin", azimuth: 1.75, elevation: 0.3, altitude: 6.0 },
+    },
+    Preset { name: "06_vigia", shot: Shot::Orbit { body: "Vigia", distance: 2.6, azimuth: 0.8, elevation: 0.1 } },
+    Preset {
+        name: "07_requiem",
+        shot: Shot::Surface { body: "Requiem", azimuth: 1.25, elevation: 0.35, altitude: 6.0 },
+    },
+    Preset {
+        name: "08_cementerio",
+        shot: Shot::Orbit { body: "Cementerio", distance: 5.0, azimuth: 0.9, elevation: 0.35 },
+    },
+    Preset { name: "09_nave", shot: Shot::Ship { body: "Requiem" } },
+];
 
 pub struct App {
     pub system: System,
@@ -73,6 +94,8 @@ pub struct App {
     zoom: f64,
     sim_time: f64,
     accumulator: f64,
+    /// Hacia donde mira el ojo de Vigia, en el espacio de Vigia.
+    eye: DVec3,
 }
 
 /// Carpeta de modelos: la del directorio actual o, si se corre desde otro
@@ -97,7 +120,9 @@ impl App {
         let start = center + (to_star * 0.8 + side * 0.6).normalize() * (planet.radius * 4.5);
         let aim = DQuat::look_rotation(center - start, DVec3::Y);
         let ship = ShipState::new(&system.bodies, start, aim, t);
+        let eye = eye_target(&system, start, t);
         Ok(Self {
+            eye,
             system,
             renderer: Renderer::new(width, height),
             settings: FlightSettings::default(),
@@ -165,6 +190,9 @@ impl App {
             self.sim_time += config::PHYSICS_DT;
             self.accumulator -= config::PHYSICS_DT;
         }
+        // El ojo de Vigia gira despacio hacia la nave.
+        let target = eye_target(&self.system, self.ship.world_pos, self.sim_time);
+        self.eye = self.eye.lerp(target, smoothing(0.35, frame_dt)).normalize();
     }
 
     /// El mouse mueve la mira al ritmo de la pantalla (sin esperar a la
@@ -212,6 +240,9 @@ impl App {
             noise: &self.system.noise,
             sky: &self.system.sky,
             pixel_angle: (2.0 * (camera.fov_y * 0.5).tan() / self.renderer.height() as f64) as f32,
+            eye_dir: self.eye.as_vec3(),
+            ring: ring_info(&self.system, t, camera.pos),
+            biolum: 1.0,
             debug: self.debug,
         };
         self.stats = self.renderer.render(&draws, &view, &uniforms);
@@ -269,43 +300,65 @@ impl App {
         }
     }
 
-    /// Coloca la nave y la camara en una vista fija. Despues de colocarla se
-    /// renderizan unos frames para que el terreno termine de cargar el detalle.
-    pub fn apply_preset(&mut self, preset: Preset) {
+    /// Coloca la nave y la camara en una vista fija.
+    pub fn apply_preset(&mut self, preset: &Preset) {
         let t = 40.0;
         let bodies = &self.system.bodies;
-        let planet = &bodies[1];
-        let center = planet.position(t);
-        let to_star = (bodies[0].position(t) - center).normalize();
-        let side = to_star.cross(DVec3::Y).normalize();
-        let up = side.cross(to_star).normalize();
-        let r = planet.radius;
-        let (pos, forward, view_up, zoom, look) = match preset {
-            Preset::System => {
-                let pos = center + (side * 0.9 + to_star * 0.15 + up * 0.25).normalize() * 2600.0;
-                let target = center + to_star * 1300.0;
-                (pos, target - pos, up, 1.0, (0.0, 0.0))
+        // Ejes alrededor de un planeta: hacia la estrella, de lado y arriba.
+        let frame = |index: usize| {
+            let center = bodies[index].position(t);
+            let to_star = (bodies[0].position(t) - center).normalize();
+            let side = to_star.cross(DVec3::Y).normalize();
+            let up = side.cross(to_star).normalize();
+            (center, to_star, side, up)
+        };
+        let around = |azimuth: f64, elevation: f64, to_star: DVec3, side: DVec3, up: DVec3| {
+            (to_star * azimuth.cos() + side * azimuth.sin()) * elevation.cos() + up * elevation.sin()
+        };
+        let index = |name: &str| self.system.find(name).unwrap_or(1);
+        let (pos, forward, view_up, zoom, look) = match preset.shot {
+            Shot::Overview => {
+                // Desde arriba y de lado, mirando un poco mas alla de la estrella.
+                let pos = DVec3::new(-2_500.0, 4_200.0, 6_800.0);
+                let target = DVec3::new(600.0, 0.0, -1_500.0);
+                (pos, target - pos, DVec3::Y, 1.0, (0.0, 0.0))
             }
-            Preset::Approach => {
-                let pos = center + (side * 0.75 + to_star * 0.45 + up * 0.2).normalize() * (r * 3.2);
+            Shot::Orbit { body, distance, azimuth, elevation } => {
+                let i = index(body);
+                let (center, to_star, side, up) = frame(i);
+                let dir = around(azimuth, elevation, to_star, side, up);
+                let pos = center + dir * (bodies[i].radius * distance);
                 (pos, center - pos, up, 1.0, (0.0, 0.0))
             }
-            Preset::Surface => {
-                // Lado de dia, cerca del terminador: la estrella baja en el horizonte.
-                let normal = (side * 0.94 + to_star * 0.34).normalize();
-                let ground = planet.surface_height(normal, t);
-                let pos = center + normal * (r + ground + 6.0);
-                let horizon = (to_star - normal * to_star.dot(normal)).normalize();
-                (pos, horizon * 0.95 - normal * 0.12, normal, 0.6, (0.0, 0.0))
+            Shot::Surface { body, azimuth, elevation, altitude } => {
+                let i = index(body);
+                let (center, to_star, side, up) = frame(i);
+                let normal = around(azimuth, elevation, to_star, side, up);
+                let ground = bodies[i].surface_height(normal, t);
+                let pos = center + normal * (bodies[i].radius + ground + altitude);
+                // Mirar al horizonte, hacia la estrella si se puede.
+                let mut horizon = to_star - normal * to_star.dot(normal);
+                if horizon.length_squared() < 1e-6 {
+                    horizon = side;
+                }
+                (pos, horizon.normalize() * 0.95 - normal * 0.12, normal, 0.6, (0.0, 0.0))
             }
-            Preset::Ship => {
-                let pos = center + (side * 0.6 + to_star * 0.7 + up * 0.25).normalize() * (r * 2.2);
+            Shot::Ship { body } => {
+                let i = index(body);
+                let (center, to_star, side, up) = frame(i);
+                let dir = (side * 0.6 + to_star * 0.7 + up * 0.25).normalize();
+                let pos = center + dir * (bodies[i].radius * 2.2);
                 (pos, center - pos, up, 0.55, (0.7, -0.2))
             }
         };
         self.place(pos, DQuat::look_rotation(forward, view_up), t);
         self.zoom = zoom;
         (self.look_yaw, self.look_pitch) = look;
+        // En la vista del sistema la nave estorbaria: se mira desde la cabina.
+        self.camera_mode = match preset.shot {
+            Shot::Overview => CameraMode::Cockpit,
+            _ => CameraMode::Chase,
+        };
     }
 
     fn place(&mut self, pos: DVec3, rot: DQuat, t: f64) {
@@ -316,7 +369,29 @@ impl App {
         self.sim_time = t + config::PHYSICS_DT;
         self.accumulator = 0.0;
         self.flight.nearest = nearest_surface(&self.system.bodies, pos, t).0;
+        self.eye = eye_target(&self.system, pos, t);
     }
+}
+
+/// Direccion de la nave vista desde el centro de Vigia, en su propio espacio:
+/// hacia ahi quiere mirar el ojo.
+fn eye_target(system: &System, ship_pos: DVec3, t: f64) -> DVec3 {
+    let body = &system.bodies[system.eye_body];
+    let toward = (ship_pos - body.position(t)).normalize();
+    body.rotation(t).conjugate().rotate(toward)
+}
+
+/// Anillos del cuerpo que los tiene, relativos a la camara.
+fn ring_info(system: &System, t: f64, camera: DVec3) -> Option<RingInfo> {
+    let body = &system.bodies[system.ring_body];
+    let (inner, outer) = body.rings?;
+    Some(RingInfo {
+        center: (body.position(t) - camera).as_vec3(),
+        normal: body.rotation(t).rotate(DVec3::Y).as_vec3(),
+        inner: (inner * body.radius) as f32,
+        outer: (outer * body.radius) as f32,
+        planet_radius: body.radius as f32,
+    })
 }
 
 /// Un dibujo por chunk de terreno visible, uno por cuerpo sin terreno y otro
