@@ -11,6 +11,7 @@ pub enum CameraMode {
     Cockpit,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct Camera {
     pub pos: DVec3,
     pub rot: DQuat,

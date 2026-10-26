@@ -165,6 +165,13 @@ pub struct App {
     pub cycle: CycleState,
     /// Tabla de geodesicas de Gargantua: se rehace al cambiar la distancia.
     lens: Option<LensTable>,
+    /// Camara congelada (F7): el culling y el LOD se calculan desde ella
+    /// mientras se vuela por fuera para ver que se descarta.
+    pub freeze: Option<Camera>,
+    /// Nombres de los cuerpos en pantalla: posicion en pixeles y distancia.
+    pub markers: Vec<Marker>,
+    /// Cinta con las aristas del frustum congelado.
+    frustum_mesh: Mesh,
     planck: PlanckTable,
     /// Sonido apagado (M).
     pub muted: bool,
@@ -239,6 +246,9 @@ impl App {
             exposure: config::EXPOSURE,
             cycle: cycle::at(t, system_star_radius),
             lens: None,
+            freeze: None,
+            markers: Vec::new(),
+            frustum_mesh: Mesh::default(),
             planck: PlanckTable::new(),
             muted: false,
             path_mode: None,
@@ -445,7 +455,15 @@ impl App {
 
         let camera = self.camera(ship_pos, ship_rot, t);
         let view = camera.view(self.renderer.width(), self.renderer.height());
-        self.update_terrain(t, &camera, &view);
+        // El culling y el LOD se deciden desde la camara congelada si la hay.
+        let cull_camera = self.freeze.unwrap_or(camera);
+        let cull_view = cull_camera.view(self.renderer.width(), self.renderer.height());
+        self.update_terrain(t, &cull_camera, &cull_view);
+        self.renderer.cull = self
+            .freeze
+            .map(|frozen| (frozen.view(self.renderer.width(), self.renderer.height()), (camera.pos - frozen.pos).as_vec3()));
+        self.build_frustum(&camera, pixel_angle_of(&camera, self.renderer.height()));
+        self.markers = markers(&self.system, t, &camera, &view, self.renderer.width(), self.renderer.height());
 
         let show_ship = self.camera_mode == CameraMode::Chase;
         let pixel_angle = 2.0 * (camera.fov_y * 0.5).tan() / self.renderer.height() as f64;
@@ -469,9 +487,20 @@ impl App {
         self.build_path(t, &camera, pixel_angle);
         self.emit_particles(t, &camera, ship_pos, ship_rot, show_ship, sink);
         let mut draws = build_draws(&self.system, t, &camera, ship_pos, ship_rot, show_ship, star_radius, star_material);
-        self.prop_stats = prop_draws(&self.system, t, &camera, &view, pixel_angle, light_radius, &mut draws);
-        if !self.path_mesh.indices.is_empty() {
-            let mesh = &self.path_mesh;
+        self.prop_stats = prop_draws(
+            &self.system,
+            t,
+            &camera,
+            &cull_camera,
+            &cull_view,
+            pixel_angle,
+            light_radius,
+            &mut draws,
+        );
+        for mesh in [&self.path_mesh, &self.frustum_mesh] {
+            if mesh.indices.is_empty() {
+                continue;
+            }
             draws.push(Draw {
                 mesh,
                 indices: &mesh.indices,
@@ -549,6 +578,63 @@ impl App {
         };
         self.stats = self.renderer.render(&draws, &view, &uniforms);
         self.stats
+    }
+
+    /// Aristas del frustum congelado: de la camara congelada hacia sus cuatro
+    /// esquinas y el rectangulo del fondo, en amarillo.
+    fn build_frustum(&mut self, camera: &Camera, pixel_angle: f64) {
+        let mesh = &mut self.frustum_mesh;
+        *mesh = Mesh::default();
+        let Some(frozen) = self.freeze else { return };
+        let aspect = self.renderer.width() as f64 / self.renderer.height() as f64;
+        let tan_y = (frozen.fov_y * 0.5).tan();
+        let tan_x = tan_y * aspect;
+        let reach = 600.0;
+        let origin = frozen.pos - camera.pos;
+        let corner = |sx: f64, sy: f64| {
+            let local = DVec3::new(sx * tan_x, sy * tan_y, -1.0) * reach;
+            origin + frozen.rot.rotate(local)
+        };
+        let corners = [corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0)];
+        let color = Vec3::new(2.0, 1.6, 0.2);
+        let pixel = pixel_angle as f32;
+        for c in corners {
+            // Varios puntos por arista: la cinta toma el ancho de cada tramo.
+            let points: Vec<Vec3> = (0..=16).map(|k| origin.lerp(c, k as f64 / 16.0).as_vec3()).collect();
+            ribbon(mesh, &points, 2.0, pixel, color);
+        }
+        let rim: Vec<Vec3> = (0..=64)
+            .map(|k| {
+                let side = k / 16;
+                let (a, b) = (corners[side % 4], corners[(side + 1) % 4]);
+                a.lerp(b, (k % 16) as f64 / 16.0).as_vec3()
+            })
+            .collect();
+        ribbon(mesh, &rim, 2.0, pixel, color);
+        mesh.update_bounds();
+    }
+
+    /// Mueve la nave (y la camara) `offset` en el mundo.
+    pub fn nudge(&mut self, offset: DVec3) {
+        self.ship.world_pos += offset;
+        self.ship.rel_pos += offset;
+        self.ship_prev = self.ship;
+    }
+
+    /// La orientacion de la mira (hacia donde mira la camara).
+    pub fn aim(&self) -> DQuat {
+        self.aim
+    }
+
+    /// Congela o suelta la camara del culling (F7).
+    pub fn toggle_freeze(&mut self) {
+        self.freeze = match self.freeze {
+            Some(_) => None,
+            None => {
+                let (ship_pos, ship_rot) = (self.ship.world_pos, self.ship.rot);
+                Some(self.camera(ship_pos, ship_rot, self.sim_time))
+            }
+        };
     }
 
     /// Cinta con la caida libre predicha de la nave: cian mientras sigue en
@@ -879,6 +965,55 @@ impl App {
     }
 }
 
+/// Un cuerpo en pantalla.
+#[derive(Clone, Debug)]
+pub struct Marker {
+    pub name: &'static str,
+    pub x: f32,
+    pub y: f32,
+    pub distance: f64,
+}
+
+/// Angulo que cubre un pixel con esta camara.
+fn pixel_angle_of(camera: &Camera, height: usize) -> f64 {
+    2.0 * (camera.fov_y * 0.5).tan() / height as f64
+}
+
+/// Nombres de los cuerpos que estan adelante y no llenan la pantalla (de
+/// cerca el nombre estorbaria). Despues del colapso la estrella se llama
+/// Gargantua.
+fn markers(system: &System, t: f64, camera: &Camera, view: &View, width: usize, height: usize) -> Vec<Marker> {
+    let pixel = pixel_angle_of(camera, height);
+    let state = cycle::at(t, system.bodies[0].radius);
+    system
+        .bodies
+        .iter()
+        .enumerate()
+        .filter_map(|(i, body)| {
+            let rel = body.position(t) - camera.pos;
+            let distance = rel.length();
+            let clip = view.view_proj.transform_point(rel.as_vec3());
+            if clip.w <= view.near {
+                return None;
+            }
+            let x = (clip.x / clip.w + 1.0) * 0.5 * width as f32;
+            let y = (1.0 - clip.y / clip.w) * 0.5 * height as f32;
+            let on_screen = x > 0.0 && y > 0.0 && x < width as f32 && y < height as f32;
+            let size = body.radius / (distance * pixel);
+            if !on_screen || size > height as f64 * 0.2 {
+                return None;
+            }
+            let name = if i == 0 && state.rs > 0.0 { "Gargantua" } else { body.name };
+            Some(Marker {
+                name,
+                x,
+                y: y - (size as f32).min(60.0),
+                distance: (distance - body.radius).max(0.0),
+            })
+        })
+        .collect()
+}
+
 /// Latidos por segundo en este momento del ciclo (la derivada de la fase).
 fn beat_rate(state: &CycleState) -> f64 {
     let later = cycle::at(state.tau + 0.01, 1.0).beat_phase;
@@ -939,11 +1074,13 @@ fn ring_info(system: &System, t: f64, camera: DVec3) -> Option<RingInfo> {
 /// espacio de su planeta: su matriz es la del planeta por la suya, y la
 /// traslacion se resta en `f64` como en todo lo demas. Si la superficie
 /// respira (Jardin), el objeto sube y baja con ella.
+#[allow(clippy::too_many_arguments)]
 fn prop_draws<'a>(
     system: &'a System,
     t: f64,
     camera: &Camera,
-    view: &View,
+    cull_camera: &Camera,
+    cull_view: &View,
     pixel_angle: f64,
     light_radius: f64,
     draws: &mut Vec<Draw<'a>>,
@@ -962,9 +1099,12 @@ fn prop_draws<'a>(
         let body_pos = body.position(t);
         let center = body_pos - camera.pos;
         let (low, high) = field.height_range();
-        let visible = |c: DVec3, r: f64| view.sphere_visible((center + rotation.mul_vec(c)).as_vec3(), r as f32);
+        // La seleccion se hace desde la camara del culling (la congelada si
+        // la hay); los dibujos, relativos a la camara de verdad.
+        let cull_center = body_pos - cull_camera.pos;
+        let visible = |c: DVec3, r: f64| cull_view.sphere_visible((cull_center + rotation.mul_vec(c)).as_vec3(), r as f32);
         let prop_view = PropView {
-            camera: quat.conjugate().rotate(-center),
+            camera: quat.conjugate().rotate(-cull_center),
             occluder: body.radius + low as f64,
             surface_top: body.radius + high as f64,
             pixel_angle,
