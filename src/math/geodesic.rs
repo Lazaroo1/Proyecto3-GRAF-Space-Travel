@@ -171,9 +171,11 @@ impl LensTable {
     }
 
     /// Si la tabla sirve para una camara a `observer`: la distancia cambio
-    /// menos de un cuarto por ciento.
+    /// menos de 1.5%. La sombra mide `~2.6 rs / D`: un 1.5% de error en `D`
+    /// es menos de un pixel en el borde de la sombra a estas distancias, y
+    /// asi la tabla no se rehace cada frame al volar.
     pub fn fits(&self, observer: f32) -> bool {
-        (observer.max(3.0) / self.observer).ln().abs() < 0.0025
+        (observer.max(3.0) / self.observer).ln().abs() < 0.015
     }
 
     /// Angulo de la sombra.

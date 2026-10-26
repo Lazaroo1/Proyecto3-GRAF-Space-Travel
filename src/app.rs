@@ -586,6 +586,17 @@ impl App {
         };
         self.renderer.exposure = self.exposure * state.exposure;
         self.renderer.whiteout = state.whiteout;
+        // Lo que esta detras del agujero y cae en su sombra no se ve: las
+        // brasas de Pira del otro lado no pueden brillar sobre ella.
+        if let Some(hole) = &hole {
+            let distance = hole.center.length();
+            let to_hole = hole.center / distance;
+            let cos_shadow = (hole.table.shadow() * 1.05).cos();
+            self.renderer.particles.retain(|p| {
+                let along = p.pos.dot(to_hole);
+                along < distance || along / p.pos.length() < cos_shadow
+            });
+        }
         // La onda gravitacional sale del agujero justo despues del destello
         // y cruza la pantalla en unos tres segundos.
         let wave = state.tau - cycle::phase_start(cycle::Phase::Gargantua);

@@ -22,6 +22,8 @@ const STREAM_LIFE: f32 = 36.0;
 pub const SPORE_COUNT: usize = 1400;
 /// Lado del cubo de esporas (se repite al moverse la camara).
 const SPORE_BOX: f32 = 90.0;
+/// Cuanto sube una espora en su vida, en unidades del mundo.
+const SPORE_RISE: f32 = 8.0;
 /// Particulas del escape de la nave.
 pub const EXHAUST_COUNT: usize = 260;
 
@@ -134,7 +136,13 @@ pub fn spores(out: &mut [Particle], jardin: &Body, t: f64, camera: DVec3, night:
             let base = Vec3::new(unit(h), unit(h1), unit(h2)) * SPORE_BOX;
             let phase = unit(h >> 4) * std::f32::consts::TAU;
             let sway = Vec3::new((time * 0.31 + phase).sin(), 0.0, (time * 0.27 + phase * 1.7).cos()) * 1.6;
-            let rise = up32 * (time * (0.35 + 0.4 * unit(h1 >> 4)));
+            // Cada espora sube unas unidades durante su vida y vuelve a
+            // nacer abajo: la subida queda acotada (si creciera con el tiempo
+            // total, al moverse la camara las esporas saltarian).
+            let speed = 0.35 + 0.4 * unit(h1 >> 4);
+            let age = (time * speed / SPORE_RISE + unit(h2 >> 6)).fract();
+            let rise = up32 * (age * SPORE_RISE);
+            let life = smoothstep(0.0, 0.15, age) * smoothstep(1.0, 0.8, age);
             // Posicion repetida en un cubo centrado en la camara.
             let p = base + sway + rise - cam;
             let wrapped = Vec3::new(
@@ -155,7 +163,7 @@ pub fn spores(out: &mut [Particle], jardin: &Body, t: f64, camera: DVec3, night:
             *particle = Particle {
                 pos: to_world(local.as_dvec3()),
                 radius: 0.05 + 0.07 * unit(h1 >> 8),
-                color: color * (brightness * fade * twinkle * 14.0),
+                color: color * (brightness * fade * life * twinkle * 14.0),
             };
         }
     });

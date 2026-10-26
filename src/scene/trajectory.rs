@@ -18,11 +18,12 @@ use crate::math::DVec3;
 /// Segundos hacia adelante que se predicen.
 pub const HORIZON: f64 = 90.0;
 /// Paso de la integracion. Mas largo que el de la fisica (1/120 s): la
-/// prediccion es para ver, y con 1/30 s el error de una orbita en 90 s es
-/// menor que el ancho de la linea.
-const DT: f64 = 1.0 / 30.0;
+/// prediccion es para ver, y con 1/15 s una orbita cerrada de dos minutos
+/// tiene unos 2000 pasos: el error queda bajo el ancho de la linea. Se
+/// recalcula cada frame, asi que conviene que sea barata.
+const DT: f64 = 1.0 / 15.0;
 /// Se guarda un punto cada tantos pasos.
-const RECORD_EVERY: usize = 4;
+const RECORD_EVERY: usize = 2;
 
 /// Un tramo del camino dentro del marco de un cuerpo.
 #[derive(Clone, Debug, Default)]
