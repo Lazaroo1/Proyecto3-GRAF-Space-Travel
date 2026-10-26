@@ -41,6 +41,11 @@ const RAYS: usize = 1024;
 /// Muestras de `r(phi)` por rayo y angulo maximo que se sigue.
 const PHI_SAMPLES: usize = 512;
 const PHI_MAX: f32 = 4.0 * PI;
+/// Entradas de la tabla uniforme del giro del cielo, que se usa lejos del
+/// anillo de fotones (ahi la deflexion cambia despacio).
+const FAR: usize = 8192;
+/// La tabla uniforme empieza a este multiplo del angulo de la sombra.
+const FAR_START: f32 = 1.3;
 /// Fraccion de los rayos dentro de la sombra (alli solo importa por donde
 /// cruzan el disco antes de caer).
 const SHADOW_SHARE: f32 = 0.2;
@@ -79,6 +84,11 @@ pub struct LensTable {
     pub lapse: f32,
     /// Angulo `s` de cada rayo.
     angles: Vec<f32>,
+    /// Giro `(cos d, sin d)` de la direccion del pixel hasta la del cielo,
+    /// uniforme en `s` desde `FAR_START * shadow` hasta `span`.
+    far: Vec<(f32, f32)>,
+    far_start: f32,
+    far_scale: f32,
     paths: Vec<Path>,
     /// `r(phi)` de cada rayo; `INFINITY` despues de escapar y `0` despues de
     /// caer.
@@ -107,6 +117,9 @@ impl LensTable {
             span,
             lapse,
             angles: Vec::new(),
+            far: Vec::new(),
+            far_start: 0.0,
+            far_scale: 0.0,
             paths: vec![
                 Path {
                     captured: false,
@@ -128,7 +141,33 @@ impl LensTable {
             let row = unsafe { radius.range(i * PHI_SAMPLES, PHI_SAMPLES) };
             *path = trace(observer, angles[i], row);
         });
+        // Tabla uniforme del giro: el pixel a un angulo `s` del agujero mira
+        // con angulo `pi - s` desde el eje; sale con `exit`. El giro es la
+        // diferencia.
+        table.far_start = (shadow * FAR_START).min(span);
+        table.far_scale = (FAR - 1) as f32 / (span - table.far_start).max(1e-6);
+        table.far = (0..FAR)
+            .map(|i| {
+                let s = table.far_start + i as f32 / table.far_scale;
+                let turn = table.lookup(s).path.exit - (PI - s);
+                (turn.cos(), turn.sin())
+            })
+            .collect();
         table
+    }
+
+    /// Giro `(cos d, sin d)` del cielo para un rayo a un angulo `s` del
+    /// agujero, si cae en la tabla uniforme (lejos del anillo de fotones).
+    #[inline]
+    pub fn far_turn(&self, s: f32) -> Option<(f32, f32)> {
+        let x = (s - self.far_start) * self.far_scale;
+        if x < 0.0 || x >= (FAR - 1) as f32 {
+            return None;
+        }
+        let i = x as usize;
+        let t = x - i as f32;
+        let (a, b) = (self.far[i], self.far[i + 1]);
+        Some((a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t))
     }
 
     /// Si la tabla sirve para una camara a `observer`: la distancia cambio
@@ -371,6 +410,20 @@ mod tests {
             .fold(f32::MAX, f32::min);
         // Lejos del agujero la periapsis casi es b (un poco menos: la luz cae).
         assert!(closest < b && closest > 0.9 * b, "{closest} vs {b}");
+    }
+
+    #[test]
+    fn the_uniform_table_agrees_with_the_full_lookup() {
+        let table = LensTable::build(29.0);
+        for k in 0..300 {
+            let s = table.shadow() * 1.35 + k as f32 * 0.01;
+            if s >= table.span() * 0.999 {
+                break;
+            }
+            let (c, sn) = table.far_turn(s).unwrap();
+            let turn = table.lookup(s).path.exit - (PI - s);
+            assert!((sn.atan2(c) - turn).abs() < 1e-4, "s {s}");
+        }
     }
 
     #[test]

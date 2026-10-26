@@ -35,7 +35,7 @@ use super::Uniforms;
 use crate::math::blackbody::planckian_rgb;
 use crate::math::geodesic::{weak_deflection, LensTable};
 use crate::math::relativity::{disk_temperature, keplerian_omega, redshift_factor, DISK_INNER};
-use crate::math::{fast_exp, smoothstep, Perlin, Vec3};
+use crate::math::{fast_atan2, fast_exp, smoothstep, Perlin, Vec3};
 
 /// El gas gira tantas veces mas rapido que en tiempo de coordenadas (como en
 /// el Proyecto 2), para que se vea fluir.
@@ -128,7 +128,7 @@ impl BlackHole<'_> {
         let to_hole = self.center / distance;
         let cos_s = dir.dot(to_hole).clamp(-1.0, 1.0);
         let sin_s = dir.cross(to_hole).length();
-        let s = sin_s.atan2(cos_s);
+        let s = fast_atan2(sin_s, cos_s);
         let e1 = -to_hole;
         let e2 = if sin_s > 1e-6 {
             (dir - to_hole * cos_s) / sin_s
@@ -144,6 +144,18 @@ impl BlackHole<'_> {
             transmittance: 1.0,
             depth: f32::INFINITY,
         };
+        // Camino rapido, el de casi todo el cielo: lejos del anillo de
+        // fotones y fuera del cono del disco, la direccion del pixel solo
+        // gira un angulo que depende de `s` (tabla uniforme), hacia el
+        // agujero dentro del plano del rayo.
+        let outside_cone = self.density <= 0.0 || cos_s < self.cone_cos;
+        if outside_cone {
+            if let Some((c, sn)) = table.far_turn(s) {
+                let toward = to_hole * sin_s - e2 * cos_s;
+                traced.sky_dir = dir * c + toward * sn;
+                return traced;
+            }
+        }
         let ray = if s > table.span() {
             // Lejos del agujero: deflexion de campo debil sobre la direccion
             // inicial en coordenadas.
@@ -156,7 +168,7 @@ impl BlackHole<'_> {
         };
         traced.captured = ray.path.captured;
         traced.sky_dir = e1 * ray.path.exit.cos() + e2 * ray.path.exit.sin();
-        if self.density <= 0.0 || cos_s < self.cone_cos {
+        if outside_cone {
             return traced;
         }
 
@@ -348,5 +360,44 @@ mod tests {
         // La misma superficie detras del agujero queda tapada por el disco.
         let (behind, _) = bh.surface(dir, planet, 200.0);
         assert!(behind != planet);
+    }
+
+    /// Costo de un pixel segun donde cae. Correr con
+    /// `cargo test --release -- --ignored --nocapture medir_gargantua`.
+    #[test]
+    #[ignore]
+    fn medir_gargantua() {
+        let (planck, noise) = (PlanckTable::new(), Perlin::new(1));
+        let center = Vec3::new(0.0, -2.0, -29.0);
+        let table = LensTable::build(center.length());
+        let bh = hole(&table, &planck, &noise, center);
+        let axis = center.normalize();
+        let (a, b) = {
+            let helper = Vec3::Y;
+            let a = helper.cross(axis).normalize();
+            (a, axis.cross(a))
+        };
+        let n = 400_000;
+        let time = |label: &str, spread: f32| {
+            let dirs: Vec<Vec3> = (0..n)
+                .map(|i| {
+                    let angle = i as f32 * 2.399;
+                    let radius = spread * ((i % 997) as f32 / 997.0 * 0.5 + 0.5);
+                    (axis + (a * angle.cos() + b * angle.sin()) * radius).normalize()
+                })
+                .collect();
+            let start = std::time::Instant::now();
+            let mut acc = Vec3::ZERO;
+            for d in &dirs {
+                let t = bh.trace(*d, f32::INFINITY);
+                acc += t.light + t.sky_dir;
+            }
+            std::hint::black_box(acc);
+            println!("{label:<22} {:6.1} ns por pixel", start.elapsed().as_secs_f64() * 1e9 / n as f64);
+        };
+        time("cerca (disco)", 0.4);
+        time("cono sin disco", 0.75);
+        time("tabla lejos", 1.6);
+        time("campo debil", 6.0);
     }
 }

@@ -32,6 +32,27 @@ pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
 /// Se calcula como `2^(x / ln 2)`: la parte entera de la potencia se arma
 /// directo en los bits del exponente de un `f32`, y `2^f` de la parte
 /// fraccionaria sale de un polinomio cubico ajustado en `[0, 1)`.
+/// `atan2` con un polinomio (error menor que 1e-5 rad): la lente de
+/// Gargantua lo pide una vez por pixel y el de la biblioteca es lento.
+#[inline]
+pub fn fast_atan2(y: f32, x: f32) -> f32 {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    let (ax, ay) = (x.abs(), y.abs());
+    let a = ax.min(ay) / ax.max(ay).max(1e-30);
+    let s = a * a;
+    let mut r = ((-0.046_496_475 * s + 0.159_314_22) * s - 0.327_622_76) * s * a + a;
+    if ay > ax {
+        r = FRAC_PI_2 - r;
+    }
+    if x < 0.0 {
+        r = PI - r;
+    }
+    if y < 0.0 {
+        r = -r;
+    }
+    r
+}
+
 #[inline]
 pub fn fast_exp(x: f32) -> f32 {
     let y = (x * std::f32::consts::LOG2_E).clamp(-126.0, 126.0);
@@ -47,4 +68,20 @@ pub fn fast_exp(x: f32) -> f32 {
 #[inline]
 pub fn smoothing(rate: f64, dt: f64) -> f64 {
     1.0 - (-rate * dt).exp()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fast_atan2_matches_the_library() {
+        for i in 0..2000 {
+            let angle = -3.14 + i as f32 * 0.00314;
+            for radius in [0.001f32, 1.0, 50.0] {
+                let (y, x) = (angle.sin() * radius, angle.cos() * radius);
+                assert!((fast_atan2(y, x) - y.atan2(x)).abs() < 2e-5, "{angle}");
+            }
+        }
+    }
 }
