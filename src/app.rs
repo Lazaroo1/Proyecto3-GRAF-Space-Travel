@@ -12,6 +12,7 @@ use crate::config;
 use crate::math::blackbody::planckian_rgb;
 use crate::math::geodesic::LensTable;
 use crate::math::{DMat3, DMat4, DQuat, DVec3, Vec3, smoothing};
+use crate::render::shadow::ShadowMap;
 use crate::render::{Draw, Particle, Renderer, Ripple, Stats, View};
 use crate::scene::camera::{Camera, CameraMode};
 use crate::scene::cycle::{self, CycleState};
@@ -341,6 +342,8 @@ pub struct App {
     frustum_mesh: Mesh,
     disk_gas: crate::gargantua_p2::disk::GasTexture,
     disk_noise: crate::gargantua_p2::math::noise::NoiseTable,
+    /// Mapa de sombras; sus buffers se reutilizan de un frame al otro.
+    shadow: ShadowMap,
     cinematic_fov: Option<f64>,
     /// Sonido apagado (M).
     pub muted: bool,
@@ -501,6 +504,7 @@ impl App {
                 crate::gargantua_p2::config::NOISE_SEED,
             ),
             cinematic_fov: None,
+            shadow: ShadowMap::new(),
             muted: false,
             path_mode: None,
             path_shown: false,
@@ -861,31 +865,30 @@ impl App {
             });
         }
         let (near, altitude) = nearest_surface(&self.system.bodies, camera.pos, t);
-        let shadow = if near != 0 && altitude < 180.0 {
+        // Sombras: junto a una superficie, el suelo hacia donde se mira; si
+        // no, solo la nave.
+        let shadow_area = if near != 0 && altitude < 180.0 {
             let body = &self.system.bodies[near];
             let up = (camera.pos - body.position(t)).normalize().as_vec3();
             let horizon = view.forward - up * view.forward.dot(up);
             let center = horizon.normalize() * 35.0 - up * (altitude as f32);
-            Some(crate::render::shadow::ShadowMap::build(
-                &draws,
-                center,
-                (self.system.bodies[0].position(t) - camera.pos).as_vec3(),
-                if altitude < 45.0 { 180.0 } else { 400.0 },
-                t as f32,
-                &self.system.noise,
-            ))
+            Some((center, if altitude < 45.0 { 180.0 } else { 400.0 }))
         } else if show_ship {
-            Some(crate::render::shadow::ShadowMap::build(
-                &draws,
-                (ship_pos - camera.pos).as_vec3(),
-                (self.system.bodies[0].position(t) - camera.pos).as_vec3(),
-                22.0,
-                t as f32,
-                &self.system.noise,
-            ))
+            Some(((ship_pos - camera.pos).as_vec3(), 22.0))
         } else {
             None
         };
+        if let Some((center, span)) = shadow_area {
+            self.shadow.update(
+                &draws,
+                center,
+                (self.system.bodies[0].position(t) - camera.pos).as_vec3(),
+                span,
+                t as f32,
+                &self.system.noise,
+            );
+        }
+        let shadow = shadow_area.map(|_| &self.shadow);
         let mut points = Vec::new();
         if let Some(i) = self.system.find("Jardin") {
             let body = &self.system.bodies[i];
@@ -1000,7 +1003,7 @@ impl App {
             }
         }
         let uniforms = Uniforms {
-            shadow: shadow.as_ref(),
+            shadow,
             points: &points,
             time: t as f32,
             beat,
