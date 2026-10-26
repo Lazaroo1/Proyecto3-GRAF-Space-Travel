@@ -144,6 +144,7 @@ fn run_window(options: &Options) -> Result<(), String> {
     let mut hud = hud::Hud {
         help: true,
         stats: true,
+        age: 0.0,
     };
     let mut tweaks = tweaks::Tweaks::default();
 
@@ -248,6 +249,7 @@ fn run_window(options: &Options) -> Result<(), String> {
 
         let input = read_input(&rl, captured && !skip_mouse);
         skip_mouse = false;
+        hud.age += rl.get_frame_time();
         app.update(rl.get_frame_time() as f64, &input);
         app.render();
         if let Some(stream) = stream.as_mut() {
