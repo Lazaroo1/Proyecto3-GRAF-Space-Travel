@@ -66,7 +66,7 @@ cargo test --release                          # 80 pruebas
 | Silenciar | M |
 | Foto en `capturas/` | P |
 | Soltar o capturar el mouse | Tab |
-| Ayuda / estadísticas | F1 / F2 |
+| Ayuda / estadísticas / ocultar todo el HUD | F1 / F2 / F9 |
 | Salir | Esc |
 
 ## Qué evaluar y dónde verlo
