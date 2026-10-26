@@ -1,0 +1,33 @@
+OCASO — procedencia de imágenes
+
+Jupiter: NASA Hubble OPAL, mapa global 2015a, 3600x1800.
+https://svs.gsfc.nasa.gov/12021/
+https://svs.gsfc.nasa.gov/vis/a010000/a012000/a012021/Hubble_Jupiter_color_global_map_2015a.tif
+Crédito: NASA Goddard / STScI; Amy Simon, Michael Wong y Glenn Orton.
+
+Moon: NASA SVS / LROC, LROC color poles 4k.
+https://svs.gsfc.nasa.gov/4720/
+https://svs.gsfc.nasa.gov/vis/a000000/a004700/a004720/lroc_color_poles_4k.tif
+Crédito: NASA Scientific Visualization Studio / Ernie Wright / LROC.
+
+Rock Face 03: Poly Haven, Dario Barresi y Rico Cilliers, CC0.
+https://polyhaven.com/a/rock_face_03
+https://polyhaven.com/license
+Mapas: diffuse, normal OpenGL, roughness y AO a 2k.
+https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rock_face_03/rock_face_03_diff_2k.jpg
+Los otros sufijos son nor_gl_2k, rough_2k y ao_2k.
+
+Las fotos se convierten a RGB8 sin compresión para el lector propio de CPU.
+Júpiter se adapta a violeta y se deforma con una tormenta procedural.
+La Luna y la roca se combinan con relieve y materiales procedurales.
+
+Nave: mapas empacados en OCASO-1-triangulada.blend aportado por el usuario.
+El Blender de origen está en assets/source/ y no se modifica al exportar.
+tools/export_ship.py y tools/export_materials.py reconstruyen los tres LOD,
+las UV, la tabla de materiales y los seis mapas empleados por el modelo.
+Los antiguos ship-06.rgb y ship-07.rgb son efectos de referencia no usados
+por el modelo opaco actual; se mantienen como recursos de origen.
+
+Gargantúa: código propio reutilizado de Proyecto2-graf (Variante).
+El núcleo se conserva en src/gargantua_p2 y no usa imágenes prerenderizadas
+ni la ventana del Proyecto 2. El espacio del Proyecto 2 no se modifica.

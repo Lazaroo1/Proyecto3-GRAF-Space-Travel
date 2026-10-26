@@ -24,13 +24,16 @@
 //! framebuffer. Los buffers se guardan por tiles (no por filas) para que cada
 //! hilo reciba un bloque contiguo de memoria con `chunks_mut`.
 
+mod antialias;
 mod bloom;
 mod particles;
 mod pipeline;
 pub mod png;
 mod post;
 mod raster;
+mod reflections;
 mod shade;
+pub mod shadow;
 mod stats;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -43,10 +46,10 @@ use crate::scene::Mesh;
 use crate::shaders::{Material, Uniforms};
 
 use bloom::Bloom;
-use particles::ParticleBins;
 pub use particles::Particle;
+use particles::ParticleBins;
+use pipeline::{ClipVertex, ScreenSetup, TRIS_PER_CHUNK, TriChunk, VisibleDraw};
 pub use post::Ripple;
-use pipeline::{ClipVertex, ScreenSetup, TriChunk, VisibleDraw, TRIS_PER_CHUNK};
 pub use stats::Stats;
 
 /// Lado de un tile en pixeles.
@@ -153,8 +156,10 @@ pub struct Renderer {
     vbuf: Vec<VisPixel>,
     /// Color HDR lineal guardado por tiles.
     hdr: Vec<Vec3>,
+    reflection_scratch: Vec<Vec3>,
     /// Imagen final por filas, RGBA8, lista para subir a la textura.
     rgba: Vec<u8>,
+    aa_scratch: Vec<u8>,
     visible: Vec<VisibleDraw>,
     verts: Vec<ClipVertex>,
     chunks: Vec<TriChunk>,
@@ -172,6 +177,7 @@ pub struct Renderer {
     pub whiteout: f32,
     particle_bins: ParticleBins,
     pub exposure: f32,
+    pub p2_curve: bool,
     pub bloom_intensity: f32,
 }
 
@@ -187,7 +193,9 @@ impl Renderer {
             tiles_y,
             vbuf: vec![VisPixel::EMPTY; tiles * TILE_PIXELS],
             hdr: vec![Vec3::ZERO; tiles * TILE_PIXELS],
+            reflection_scratch: vec![Vec3::ZERO; tiles * TILE_PIXELS],
             rgba: vec![0; width * height * 4],
+            aa_scratch: vec![0; width * height * 4],
             visible: Vec::new(),
             verts: Vec::new(),
             chunks: Vec::new(),
@@ -198,6 +206,7 @@ impl Renderer {
             whiteout: 0.0,
             particle_bins: ParticleBins::new(),
             exposure: config::EXPOSURE,
+            p2_curve: false,
             bloom_intensity: config::BLOOM_INTENSITY,
         }
     }
@@ -225,7 +234,9 @@ impl Renderer {
         for (index, draw) in draws.iter().enumerate() {
             stats.objects += 1;
             let visible = match &self.cull {
-                Some((frozen, offset)) => frozen.sphere_visible(draw.bounds_center + *offset, draw.bounds_radius),
+                Some((frozen, offset)) => {
+                    frozen.sphere_visible(draw.bounds_center + *offset, draw.bounds_radius)
+                }
                 None => view.sphere_visible(draw.bounds_center, draw.bounds_radius),
             };
             if !visible {
@@ -274,18 +285,32 @@ impl Renderer {
             stats.triangles.accumulate(&chunk.counters);
         }
         let tiles = self.tiles_x * self.tiles_y;
-        self.particle_bins.build(&self.particles, view, self.width, self.height, self.tiles_x, tiles);
+        self.particle_bins.build(
+            &self.particles,
+            view,
+            self.width,
+            self.height,
+            self.tiles_x,
+            tiles,
+        );
         stats.particles = self.particle_bins.splats.len() as u32;
         let t_triangles = Instant::now();
 
-        // 4. Por tile, en una sola pasada: raster al visibility buffer,
-        //    shading diferido y extraccion del brillo para el bloom. El tile
-        //    recien rasterizado se sombrea mientras sigue en la cache.
+        // 4. Primero toda la profundidad; después shading y reflejos. La
+        //    barrera permite que la oclusión lea vecinos de otros tiles.
         let chunks = &self.chunks[..n_chunks];
         let (tiles_x, width, height) = (self.tiles_x, self.width, self.height);
         let shaded = AtomicU64::new(0);
         let raster_ns = AtomicU64::new(0);
         let shade_ns = AtomicU64::new(0);
+        let vbuf_write = DisjointMut::new(&mut self.vbuf);
+        parallel::for_each(tiles, |tile| {
+            let t0 = Instant::now();
+            let vis = unsafe { vbuf_write.range(tile * TILE_PIXELS, TILE_PIXELS) };
+            raster::raster_tile(tile, vis, chunks, tiles_x, width as i32, height as i32);
+            raster_ns.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        });
+        drop(vbuf_write);
         let context = shade::ShadeContext {
             chunks,
             verts,
@@ -296,30 +321,60 @@ impl Renderer {
             height,
             tiles_x,
             shaded: &shaded,
+            global_vis: &self.vbuf,
         };
-        let base = self.bloom.base_mut();
-        let (base_w, base_h) = (base.width, base.height);
-        let base = DisjointMut::new(&mut base.pixels);
-        let vbuf = DisjointMut::new(&mut self.vbuf);
         let hdr = DisjointMut::new(&mut self.hdr);
         let particle_bins = &self.particle_bins;
         parallel::for_each(tiles, |tile| {
             let t0 = Instant::now();
-            // SAFETY: cada tile toca solo su propio rango de cada buffer.
-            let vis = unsafe { vbuf.range(tile * TILE_PIXELS, TILE_PIXELS) };
-            raster::raster_tile(tile, vis, chunks, tiles_x, width as i32, height as i32);
-            let t1 = Instant::now();
+            let vis = &context.global_vis[tile * TILE_PIXELS..(tile + 1) * TILE_PIXELS];
             let out = unsafe { hdr.range(tile * TILE_PIXELS, TILE_PIXELS) };
             shade::shade_tile(tile, vis, out, &context);
             particles::splat_tile(tile, vis, out, particle_bins, tiles_x, width, height);
+            shade_ns.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        });
+        if !uniforms.debug.wireframe && !uniforms.debug.lod_colors {
+            let reflection_context = reflections::Context {
+                src: &self.hdr,
+                vis: &self.vbuf,
+                chunks,
+                verts,
+                draws,
+                view,
+                width,
+                height,
+                tiles_x,
+            };
+            parallel::chunks_mut(
+                &mut self.reflection_scratch,
+                TILE_PIXELS,
+                TILE_PIXELS,
+                |tile, out| {
+                    reflections::tile(tile, out, &reflection_context);
+                },
+            );
+            std::mem::swap(&mut self.hdr, &mut self.reflection_scratch);
+        }
+        // Los reflejos también participan en el bloom, usando la imagen
+        // terminada, sin leer resultados que otro hilo todavía escribe.
+        let base = self.bloom.base_mut();
+        let (base_w, base_h) = (base.width, base.height);
+        let base = DisjointMut::new(&mut base.pixels);
+        parallel::for_each(tiles, |tile| {
             let visible = (
                 TILE.min(width - (tile % tiles_x) * TILE),
                 TILE.min(height - (tile / tiles_x) * TILE),
             );
-            bloom::extract_tile(tile, out, &base, base_w, base_h, tiles_x, visible, config::BLOOM_THRESHOLD);
-            let t2 = Instant::now();
-            raster_ns.fetch_add((t1 - t0).as_nanos() as u64, Ordering::Relaxed);
-            shade_ns.fetch_add((t2 - t1).as_nanos() as u64, Ordering::Relaxed);
+            bloom::extract_tile(
+                tile,
+                &self.hdr[tile * TILE_PIXELS..(tile + 1) * TILE_PIXELS],
+                &base,
+                base_w,
+                base_h,
+                tiles_x,
+                visible,
+                config::BLOOM_THRESHOLD,
+            );
         });
         stats.pixels_shaded = shaded.into_inner();
         let t_tiles = Instant::now();
@@ -332,6 +387,7 @@ impl Renderer {
             height,
             tiles_x,
             exposure: self.exposure,
+            p2_curve: self.p2_curve,
             bloom: self.bloom.result(),
             bloom_intensity: self.bloom_intensity,
             ripple: self.ripple,
@@ -342,6 +398,13 @@ impl Renderer {
         parallel::chunks_mut(&mut self.rgba, block, block, |index, out| {
             post::tonemap_rows(index * POST_ROWS, out, hdr, &params);
         });
+        if !uniforms.debug.wireframe && !uniforms.debug.lod_colors {
+            let src = &self.rgba;
+            parallel::chunks_mut(&mut self.aa_scratch, block, block, |index, out| {
+                antialias::rows(index * POST_ROWS, out, src, width, height);
+            });
+            std::mem::swap(&mut self.rgba, &mut self.aa_scratch);
+        }
         let t_post = Instant::now();
 
         let ms = |a: Instant, b: Instant| (b - a).as_secs_f32() * 1000.0;

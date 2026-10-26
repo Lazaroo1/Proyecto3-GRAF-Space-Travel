@@ -159,7 +159,11 @@ pub fn at(t: f64, radius: f64) -> CycleState {
         tau,
         phase,
         beat_phase: beat_phase(tau),
-        pulse: if tau < COLLAPSE { 0.012 + 0.038 * arrhythmia } else { 0.0 },
+        pulse: if tau < COLLAPSE {
+            0.012 + 0.038 * arrhythmia
+        } else {
+            0.0
+        },
         star_radius: star_radius * alive,
         star_temperature,
         star_intensity: (1.0 - 0.3 * arrhythmia as f32) * (1.0 + 6.0 * (u * u) as f32),
@@ -168,7 +172,7 @@ pub fn at(t: f64, radius: f64) -> CycleState {
         rs: GARGANTUA_RS * s(0.6, 1.0, u),
         disk_density: born,
         disk_outer: 3.0 + (DISK_OUTER - 3.0) * grown,
-        disk_peak: 6500.0 + 2500.0 * (-((tau - collapse_end).max(0.0)) / 15.0).exp() as f32,
+        disk_peak: 6500.0 + 1500.0 * (-((tau - collapse_end).max(0.0)) / 15.0).exp() as f32,
         biolum: 1.0 + 2.0 * s(collapse_end, collapse_end + 20.0, tau) as f32,
         exposure: 1.0 / (1.0 + 4.0 * burst as f32),
         whiteout: fade_out.max(fade_in) as f32,
@@ -221,7 +225,10 @@ mod tests {
         let during = at(COLLAPSE + 3.0, 320.0);
         let after = at(COLLAPSE + 100.0, 320.0);
         assert!(before.star_radius > 320.0 && before.rs == 0.0);
-        assert!(during.star_radius < before.star_radius && during.star_temperature > before.star_temperature);
+        assert!(
+            during.star_radius < before.star_radius
+                && during.star_temperature > before.star_temperature
+        );
         assert_eq!(after.star_radius, 0.0);
         assert_eq!(after.rs, GARGANTUA_RS);
         assert!(after.disk_density > 0.99 && after.biolum > 2.9);

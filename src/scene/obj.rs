@@ -69,7 +69,9 @@ pub fn parse_obj(text: &str, materials: &HashMap<String, Vec3>) -> Result<Mesh, 
         let error = |msg: &str| format!("linea {}: {msg}: {line}", n + 1);
         let mut parts = line.split_whitespace();
         match parts.next() {
-            Some("v") => positions.push(parse_vec3(parts).ok_or_else(|| error("vertice invalido"))?),
+            Some("v") => {
+                positions.push(parse_vec3(parts).ok_or_else(|| error("vertice invalido"))?)
+            }
             Some("vn") => normals.push(parse_vec3(parts).ok_or_else(|| error("normal invalida"))?),
             Some("vt") => {
                 let u: Vec<f32> = parts.take(2).filter_map(|p| p.parse().ok()).collect();
@@ -139,20 +141,68 @@ pub fn parse_obj(text: &str, materials: &HashMap<String, Vec3>) -> Result<Mesh, 
     for n in &mut mesh.normals {
         *n = n.normalize();
     }
+    if !uvs.is_empty() {
+        let mut tangents = vec![Vec3::ZERO; mesh.positions.len()];
+        let mut bitangents = tangents.clone();
+        for &[ia, ib, ic] in &mesh.indices {
+            let (a, b, c) = (ia as usize, ib as usize, ic as usize);
+            let e1 = mesh.positions[b] - mesh.positions[a];
+            let e2 = mesh.positions[c] - mesh.positions[a];
+            let d1 = mesh.uvs[b] - mesh.uvs[a];
+            let d2 = mesh.uvs[c] - mesh.uvs[a];
+            let det = d1.x * d2.y - d1.y * d2.x;
+            if det.abs() < 1e-9 {
+                continue;
+            }
+            let t = (e1 * d2.y - e2 * d1.y) / det;
+            let bt = (e2 * d1.x - e1 * d2.x) / det;
+            for i in [a, b, c] {
+                tangents[i] += t;
+                bitangents[i] += bt;
+            }
+        }
+        mesh.tangents = mesh
+            .normals
+            .iter()
+            .enumerate()
+            .map(|(i, &n)| {
+                let mut t = (tangents[i] - n * tangents[i].dot(n)).normalize();
+                if t.length_squared() < 0.1 {
+                    let h = if n.y.abs() < 0.9 { Vec3::Y } else { Vec3::X };
+                    t = h.cross(n).normalize();
+                }
+                let sign = if n.cross(t).dot(bitangents[i]) < 0.0 {
+                    -1.0
+                } else {
+                    1.0
+                };
+                crate::math::Vec4::new(t.x, t.y, t.z, sign)
+            })
+            .collect();
+    }
     mesh.update_bounds();
     Ok(mesh)
 }
 
 fn parse_vec3<'a>(parts: impl Iterator<Item = &'a str>) -> Option<Vec3> {
-    let v: Vec<f32> = parts.take(3).map(|p| p.parse().ok()).collect::<Option<_>>()?;
+    let v: Vec<f32> = parts
+        .take(3)
+        .map(|p| p.parse().ok())
+        .collect::<Option<_>>()?;
     (v.len() == 3).then(|| Vec3::new(v[0], v[1], v[2]))
 }
 
 /// Indice del `.obj` (base 1, o negativo desde el final) a base 0.
 fn resolve(token: Option<&str>, len: usize) -> Option<usize> {
     let index: i64 = token?.parse().ok()?;
-    let resolved = if index > 0 { index - 1 } else { len as i64 + index };
-    (0..len as i64).contains(&resolved).then_some(resolved as usize)
+    let resolved = if index > 0 {
+        index - 1
+    } else {
+        len as i64 + index
+    };
+    (0..len as i64)
+        .contains(&resolved)
+        .then_some(resolved as usize)
 }
 
 /// Campo opcional de una esquina: vacio o ausente es `None`; invalido es error.
@@ -188,6 +238,17 @@ mod tests {
     }
 
     #[test]
+    fn mirrored_uvs_preserve_tangent_handedness() {
+        let mesh =
+            parse("v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt -1 0\nvt 0 1\nf 1/1 2/2 3/3\n").unwrap();
+        assert_eq!(mesh.uvs[1], Vec2::new(-1.0, 0.0));
+        for t in &mesh.tangents {
+            assert!((t.x + 1.0).abs() < 1e-6 && t.y.abs() < 1e-6 && t.z.abs() < 1e-6);
+            assert_eq!(t.w, -1.0);
+        }
+    }
+
+    #[test]
     fn rejects_out_of_range_indices() {
         assert!(parse("v 0 0 0\nf 1 2 3\n").is_err());
         assert!(parse("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1//4 2//1 3//1\n").is_err());
@@ -197,8 +258,11 @@ mod tests {
     fn materials_become_vertex_colors() {
         let mut materials = HashMap::new();
         materials.insert("Rojo".to_string(), Vec3::new(1.0, 0.0, 0.0));
-        let mesh =
-            parse_obj("v 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl Rojo\nf 1 2 3\n", &materials).unwrap();
+        let mesh = parse_obj(
+            "v 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl Rojo\nf 1 2 3\n",
+            &materials,
+        )
+        .unwrap();
         assert_eq!(mesh.colors[0], Vec3::new(1.0, 0.0, 0.0));
     }
 }

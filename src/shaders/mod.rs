@@ -13,8 +13,11 @@
 
 pub mod atmosphere;
 mod cementerio;
+mod detail;
 pub mod gargantua;
+mod images;
 mod jardin;
+mod pbr;
 mod pira;
 mod props;
 mod requiem;
@@ -28,12 +31,13 @@ mod vigia;
 use crate::math::{Perlin, Vec2, Vec3, Vec4};
 
 pub use atmosphere::{AtmosphereFrame, AtmosphereModel, AtmosphereParams, SkyView};
-pub use gargantua::{BlackHole, PlanckTable};
+pub use gargantua::BlackHole;
+pub use pbr::PointLight;
+pub use props::PropStyle;
 pub use rings::RingInfo;
 pub use ship::ShipStyle;
-pub use sky::{shade as sky, SkyCube};
-pub use props::PropStyle;
-pub use sun::{heartbeat, heartbeat_phase, SunStyle};
+pub use sky::{SkyCube, shade as sky};
+pub use sun::{SunStyle, heartbeat, heartbeat_phase};
 pub use textures::Textures;
 
 /// Vistas de depuracion para demostrar el trabajo del renderer.
@@ -91,6 +95,8 @@ impl Gains {
 
 /// Valores comunes a todos los pixeles del frame.
 pub struct Uniforms<'a> {
+    pub shadow: Option<&'a crate::render::shadow::ShadowMap>,
+    pub points: &'a [PointLight],
     /// Tiempo de simulacion en segundos.
     pub time: f32,
     /// Latido de la estrella en este frame (0 a 1): igual para todos los
@@ -136,6 +142,8 @@ pub struct Uniforms<'a> {
 
 /// Atributos interpolados del pixel visible.
 pub struct Fragment {
+    pub ao: f32,
+    pub object_to_world: crate::math::Mat3,
     /// Posicion en el mundo relativa a la camara: la camara es el origen.
     pub pos: Vec3,
     /// Normal en el mundo, unitaria.

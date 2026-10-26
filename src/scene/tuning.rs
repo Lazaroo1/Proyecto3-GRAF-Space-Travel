@@ -9,8 +9,8 @@
 
 use std::f64::consts::TAU;
 
-use super::props::{self, PropSet};
 use super::System;
+use super::props::{self, PropSet};
 use crate::config;
 use crate::math::hash_u32;
 use crate::shaders::AtmosphereModel;
@@ -26,7 +26,17 @@ impl System {
         };
         let rules = props::rules_for(body.name);
         let planet_seed = hash_u32(seed ^ hash_u32(index as u32 + 1));
-        PropSet::new(props::scatter(body.radius, &**field, &rules, planet_seed), &self.prop_models)
+        let mut instances = props::scatter(body.radius, &**field, &rules, planet_seed);
+        if body.name == "Jardin" {
+            props::garden_grove(
+                &mut instances,
+                body.radius,
+                &**field,
+                planet_seed,
+                self.garden_grove_frame(),
+            );
+        }
+        PropSet::new(instances, &self.prop_models)
     }
 
     /// Cambia el radio del cuerpo `index`. Conserva la gravedad en su
@@ -50,7 +60,8 @@ impl System {
         }
         body.radius = radius;
         if let Some(field) = &body.surface {
-            self.terrains[index] = Some(Terrain::new(radius, field.clone(), config::TERRAIN_FINEST));
+            self.terrains[index] =
+                Some(Terrain::new(radius, field.clone(), config::TERRAIN_FINEST));
         }
         if let Some(model) = &self.atmospheres[index] {
             self.atmospheres[index] = Some(AtmosphereModel::new(radius as f32, model.params));
@@ -141,7 +152,11 @@ mod tests {
         let body = &sys.bodies[i];
         assert!((body.mu / (240.0 * 240.0) - g).abs() < 1e-9);
         assert_eq!(sys.terrains[i].as_ref().map(|t| t.radius), Some(240.0));
-        let r = sys.props[i].instances.first().map(|p| p.position.length()).unwrap_or(0.0);
+        let r = sys.props[i]
+            .instances
+            .first()
+            .map(|p| p.position.length())
+            .unwrap_or(0.0);
         assert!(r > 230.0, "los objetos se paran sobre el nuevo radio: {r}");
     }
 }

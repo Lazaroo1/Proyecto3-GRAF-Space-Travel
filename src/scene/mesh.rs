@@ -25,6 +25,20 @@ pub struct Mesh {
 }
 
 impl Mesh {
+    /// Deformacion continua. La cofactor del Jacobiano transporta las normales
+    /// sin abrir costuras entre vertices duplicados por UV o materiales.
+    pub fn deform(&mut self, field: impl Fn(Vec3) -> Vec3) {
+        let eps = 0.006;
+        for (p, n) in self.positions.iter_mut().zip(&mut self.normals) {
+            let old = *p;
+            let dx = (field(old + Vec3::X * eps) - field(old - Vec3::X * eps)) / (2.0 * eps);
+            let dy = (field(old + Vec3::Y * eps) - field(old - Vec3::Y * eps)) / (2.0 * eps);
+            let dz = (field(old + Vec3::Z * eps) - field(old - Vec3::Z * eps)) / (2.0 * eps);
+            *p = field(old);
+            *n = (dy.cross(dz) * n.x + dz.cross(dx) * n.y + dx.cross(dy) * n.z).normalize();
+        }
+        self.update_bounds();
+    }
     /// Recalcula la esfera envolvente: centro de la caja y el vertice mas lejano.
     pub fn update_bounds(&mut self) {
         let Some(&first) = self.positions.first() else {

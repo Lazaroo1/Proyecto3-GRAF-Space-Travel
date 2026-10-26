@@ -42,7 +42,13 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
         let title = "OCASO";
         let size = height / 6;
         let w = d.measure_text(title, size);
-        d.draw_text(title, (width - w) / 2, height / 3 - size / 2, size, Color::new(255, 190, 140, alpha(1.0)));
+        d.draw_text(
+            title,
+            (width - w) / 2,
+            height / 3 - size / 2,
+            size,
+            Color::new(255, 190, 140, alpha(1.0)),
+        );
         let lines = [
             "Una estrella moribunda late como un corazon.",
             "En quince minutos colapsa y nace Gargantua.",
@@ -51,7 +57,13 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
         for (i, line) in lines.iter().enumerate() {
             let w = d.measure_text(line, 22);
             let y = height / 3 + size / 2 + 20 + i as i32 * 30;
-            d.draw_text(line, (width - w) / 2, y, 22, Color::new(236, 226, 214, alpha(0.85)));
+            d.draw_text(
+                line,
+                (width - w) / 2,
+                y,
+                22,
+                Color::new(236, 226, 214, alpha(0.85)),
+            );
         }
     }
 
@@ -68,7 +80,11 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
                 ts.cached,
                 ts.culled_horizon,
                 ts.culled_frustum,
-                if app.lod.enabled { "" } else { "  [LOD APAGADO]" }
+                if app.lod.enabled {
+                    ""
+                } else {
+                    "  [LOD APAGADO]"
+                }
             ),
             None => "terreno: -".to_string(),
         };
@@ -85,12 +101,19 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
             app.system.prop_seed
         );
         let lines = [
-            format!("FPS {fps}   frame {:.1} ms   {} hilos", s.ms_total, parallel::workers()),
+            format!(
+                "FPS {fps}   frame {:.1} ms   {} hilos",
+                s.ms_total,
+                parallel::workers()
+            ),
             format!(
                 "vert {:.1}  tri {:.1}  raster {:.1}  shade {:.1}  post {:.1} ms",
                 s.ms_vertex, s.ms_triangles, s.ms_raster, s.ms_shade, s.ms_post
             ),
-            format!("objetos {}   fuera de vista {}", s.objects, s.objects_culled),
+            format!(
+                "objetos {}   fuera de vista {}",
+                s.objects, s.objects_culled
+            ),
             format!(
                 "triangulos {}   frustum -{}   espalda -{}   sin pixel -{}",
                 t.input, t.frustum, t.backface, t.small
@@ -109,7 +132,9 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
     let contact = if f.contact { "   CONTACTO" } else { "" };
     let local = match (app.settings.local, f.local, f.hold) {
         (false, _, _) => "OFF".to_string(),
-        (true, true, Some(h)) => format!("ACTIVO sobre {}, sostiene {:.0}", app.body_name(f.frame), h),
+        (true, true, Some(h)) => {
+            format!("ACTIVO sobre {}, sostiene {:.0}", app.body_name(f.frame), h)
+        }
         (true, true, None) => format!("ACTIVO sobre {}", app.body_name(f.frame)),
         (true, false, _) if !app.settings.assist => "ON (necesita asistencia)".to_string(),
         (true, false, _) => "ON (lejos de un planeta)".to_string(),
@@ -119,9 +144,19 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
         Some(true) => "ON",
         Some(false) => "OFF",
     };
-    let impact = if app.path_shown && app.path_impact { "   CHOQUE PREDICHO" } else { "" };
+    let impact = if app.path_shown && app.path_impact {
+        "   CHOQUE PREDICHO"
+    } else {
+        ""
+    };
     let c = &app.cycle;
-    let clock = |seconds: f64| format!("{:02}:{:02}", (seconds / 60.0) as u32, (seconds % 60.0) as u32);
+    let clock = |seconds: f64| {
+        format!(
+            "{:02}:{:02}",
+            (seconds / 60.0) as u32,
+            (seconds % 60.0) as u32
+        )
+    };
     let lines = [
         format!(
             "ciclo {} / {}   {}",
@@ -130,7 +165,18 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
             c.phase.name().to_uppercase()
         ),
         format!("velocidad {:.1} u/s   (max {:.0})", f.speed, f.max_speed),
-        format!("altitud {:.1} sobre {}", f.altitude, app.body_name(f.nearest)),
+        if f.braking {
+            "FRENO ACTIVO [X]".to_string()
+        } else if f.boundary {
+            "LIMITE DEL SISTEMA: gira para regresar".to_string()
+        } else {
+            "X: frenar   Inicio: recuperar posicion".to_string()
+        },
+        format!(
+            "altitud {:.1} sobre {}",
+            f.altitude,
+            app.body_name(f.nearest)
+        ),
         format!("marco: {}{contact}", app.body_name(f.frame)),
         format!(
             "asistencia [Z] {}   gravedad [G] {}",
@@ -170,7 +216,8 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
         }
     }
     if app.freeze.is_some() {
-        let text = "FRUSTUM CONGELADO (F7): el culling y el LOD se calculan desde la camara amarilla";
+        let text =
+            "FRUSTUM CONGELADO (F7): el culling y el LOD se calculan desde la camara amarilla";
         let w = d.measure_text(text, FONT);
         d.draw_text(text, (width - w) / 2, height - 40, FONT, MARKER);
     }
@@ -186,6 +233,7 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
             "Mouse: apuntar   Clic derecho: mirar alrededor   Rueda: distancia".to_string(),
             "W/S: adelante/atras   A/D: lados   Espacio/Ctrl: subir/bajar".to_string(),
             "Q/E: alabeo   Shift: turbo   C: camara   P: foto   Tab: soltar el mouse".to_string(),
+            "X: freno de emergencia   Inicio: volver a Pira sin reiniciar el ciclo".to_string(),
             "L: modo local   O: crucero (rodea el planeta)   V: trayectoria".to_string(),
             "T: ajustes en vivo   M: sonido".to_string(),
             "R: rebobinar   [ ]: -30/+30 s   J: al colapso   RePag/AvPag: vistas fijas".to_string(),
@@ -201,11 +249,26 @@ fn on_off(value: bool) -> &'static str {
     if value { "ON" } else { "OFF" }
 }
 
-fn panel(d: &mut RaylibDrawHandle, margin: i32, y: i32, lines: &[String], right: bool, screen_width: i32) {
-    let text_width = lines.iter().map(|l| d.measure_text(l, FONT)).max().unwrap_or(0);
+fn panel(
+    d: &mut RaylibDrawHandle,
+    margin: i32,
+    y: i32,
+    lines: &[String],
+    right: bool,
+    screen_width: i32,
+) {
+    let text_width = lines
+        .iter()
+        .map(|l| d.measure_text(l, FONT))
+        .max()
+        .unwrap_or(0);
     let w = text_width + 16;
     let h = lines.len() as i32 * LINE + 10;
-    let x = if right { screen_width - margin - w } else { margin };
+    let x = if right {
+        screen_width - margin - w
+    } else {
+        margin
+    };
     d.draw_rectangle(x, y, w, h, PANEL);
     for (i, line) in lines.iter().enumerate() {
         d.draw_text(line, x + 8, y + 6 + i as i32 * LINE, FONT, TEXT);

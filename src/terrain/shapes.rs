@@ -5,7 +5,7 @@
 //! deterministas: la misma semilla da exactamente el mismo planeta.
 
 use super::{HeightField, TerrainSample};
-use crate::math::{hash_u32, smoothstep, Perlin, Vec3};
+use crate::math::{Perlin, Vec3, hash_u32, smoothstep};
 
 /// Campo de crateres: el espacio se divide en celdas cubicas y cada celda
 /// tiene, con cierta probabilidad, un crater con centro y tamano al azar.
@@ -145,7 +145,11 @@ impl HeightField for RequiemField {
         let height = relief + craters + (1.0 - land) * 0.15 * detail;
         TerrainSample {
             height,
-            attrs: Vec3::new(1.0 - land, smoothstep(6.0, 10.0, relief), big_rim.max(small_rim)),
+            attrs: Vec3::new(
+                1.0 - land,
+                smoothstep(6.0, 10.0, relief),
+                big_rim.max(small_rim),
+            ),
         }
     }
 
@@ -176,7 +180,9 @@ pub struct PiraField {
 
 impl PiraField {
     pub fn new(seed: u32) -> Self {
-        Self { noise: Perlin::new(seed) }
+        Self {
+            noise: Perlin::new(seed),
+        }
     }
 }
 
@@ -253,13 +259,13 @@ impl HeightField for JardinField {
         let (f1, _) = n.cells(dir * 9.0);
         let pore = smoothstep(0.35, 0.12, f1);
         TerrainSample {
-            height: folds * 7.0 + ridge * 1.4 - pore * 2.2,
+            height: folds * 18.0 + ridge * 2.3 - pore * 4.5,
             attrs: Vec3::new(ridge, pore, (folds * 0.8 + 0.5).clamp(0.0, 1.0)),
         }
     }
 
     fn height_range(&self) -> (f32, f32) {
-        (-1.0 * 7.0 - 2.2, 1.0 * 7.0 + 1.4)
+        (-18.0 - 4.5, 18.0 + 2.3)
     }
 }
 
@@ -304,7 +310,11 @@ impl HeightField for CementerioField {
         let base = n.fbm(dir * 1.8 + Vec3::new(5.0, -2.0, 7.5), 5);
         let (big, big_rim) = self.craters.sample(dir);
         let (small, small_rim) = self.small.sample(dir);
-        let gouge = smoothstep(0.93, 0.99, n.ridged(dir * 3.0 + Vec3::new(-8.0, 1.0, 2.0), 2));
+        let gouge = smoothstep(
+            0.93,
+            0.99,
+            n.ridged(dir * 3.0 + Vec3::new(-8.0, 1.0, 2.0), 2),
+        );
         TerrainSample {
             height: base * 4.0 + big + small - gouge * 2.5,
             attrs: Vec3::new(big_rim.max(small_rim), gouge, base * 0.5 + 0.5),
@@ -325,7 +335,12 @@ mod tests {
     fn directions() -> impl Iterator<Item = Vec3> {
         (0..4000).map(|i| {
             let t = i as f32 * 0.37;
-            Vec3::new(t.sin() * (t * 0.31).cos(), (t * 0.77).cos(), t.cos() * (t * 0.13).sin()).normalize()
+            Vec3::new(
+                t.sin() * (t * 0.31).cos(),
+                (t * 0.77).cos(),
+                t.cos() * (t * 0.13).sin(),
+            )
+            .normalize()
         })
     }
 
@@ -334,16 +349,29 @@ mod tests {
     #[test]
     fn every_planet_stays_inside_its_declared_range_and_is_deterministic() {
         let fields: Vec<(Box<dyn HeightField>, Box<dyn HeightField>)> = vec![
-            (Box::new(RequiemField::new(7)), Box::new(RequiemField::new(7))),
+            (
+                Box::new(RequiemField::new(7)),
+                Box::new(RequiemField::new(7)),
+            ),
             (Box::new(PiraField::new(7)), Box::new(PiraField::new(7))),
-            (Box::new(JardinField::new(7, 1)), Box::new(JardinField::new(7, 1))),
-            (Box::new(CementerioField::new(7)), Box::new(CementerioField::new(7))),
+            (
+                Box::new(JardinField::new(7, 1)),
+                Box::new(JardinField::new(7, 1)),
+            ),
+            (
+                Box::new(CementerioField::new(7)),
+                Box::new(CementerioField::new(7)),
+            ),
         ];
         for (index, (a, b)) in fields.iter().enumerate() {
             let (lo, hi) = a.height_range();
             for dir in directions() {
                 let s = a.sample(dir);
-                assert!(s.height >= lo && s.height <= hi, "campo {index}: {} fuera de [{lo}, {hi}]", s.height);
+                assert!(
+                    s.height >= lo && s.height <= hi,
+                    "campo {index}: {} fuera de [{lo}, {hi}]",
+                    s.height
+                );
                 assert_eq!(s.height, b.sample(dir).height);
             }
         }
@@ -351,11 +379,23 @@ mod tests {
 
     #[test]
     fn craters_are_continuous() {
-        let craters = Craters { frequency: 7.0, chance: 0.5, min_radius: 0.2, max_radius: 0.6, depth: 4.0, seed: 3 };
+        let craters = Craters {
+            frequency: 7.0,
+            chance: 0.5,
+            min_radius: 0.2,
+            max_radius: 0.6,
+            depth: 4.0,
+            seed: 3,
+        };
         for i in 0..20_000 {
             let t = i as f32 * 0.0013;
             let dir = Vec3::new(t.cos(), (t * 3.1).sin() * 0.4, t.sin()).normalize();
-            let next = Vec3::new((t + 1e-4).cos(), ((t + 1e-4) * 3.1).sin() * 0.4, (t + 1e-4).sin()).normalize();
+            let next = Vec3::new(
+                (t + 1e-4).cos(),
+                ((t + 1e-4) * 3.1).sin() * 0.4,
+                (t + 1e-4).sin(),
+            )
+            .normalize();
             let (a, _) = craters.sample(dir);
             let (b, _) = craters.sample(next);
             assert!((a - b).abs() < 0.05, "salto de {a} a {b}");

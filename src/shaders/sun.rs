@@ -18,8 +18,8 @@
 //! misma curva de doble golpe, como un corazon.
 
 use super::{Fragment, Uniforms};
-use crate::math::blackbody::planckian_rgb;
 use crate::math::Vec3;
+use crate::math::blackbody::planckian_rgb;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SunStyle {
@@ -47,23 +47,23 @@ pub fn heartbeat_phase(phase: f64) -> f64 {
 }
 
 pub fn shade(f: &Fragment, u: &Uniforms, s: &SunStyle) -> Vec3 {
-    let mu = f.normal.dot(f.view_dir()).max(0.0);
     let p = f.local.normalize();
     let t = u.time;
-
     let warp = Vec3::new(
-        u.noise.noise(p * 1.7 + Vec3::new(0.0, t * 0.035, 0.0)),
-        u.noise.noise(p * 1.7 + Vec3::new(5.2, -t * 0.03, 1.3)),
-        u.noise.noise(p * 1.7 + Vec3::new(-3.1, 2.4, t * 0.025)),
+        u.noise.noise(p * 4.0 + Vec3::new(0.0, t * 0.03, 0.0)),
+        u.noise.noise(p * 4.0 + Vec3::new(17.0, 2.0, t * 0.02)),
+        u.noise.noise(p * 4.0 + Vec3::new(t * 0.02, 31.0, 8.0)),
     );
-    let cells = u.noise.fbm(p * 3.2 + warp * 0.9, 4);
-    let granules = u.noise.fbm(p * 14.0 + warp * 0.4 + Vec3::splat(t * 0.02), 3);
-    let heat = (0.5 + 0.5 * (cells * 0.85 + granules * 0.25)).clamp(0.0, 1.0);
-
-    let pulse = u.beat;
-    let limb = 0.25 + 0.75 * mu.powf(0.6);
-    let temperature =
-        s.temperature * (0.82 + 0.3 * heat) * (0.88 + 0.12 * mu) * (1.0 + 0.04 * pulse);
-    let brightness = s.intensity * u.gains.sun * (0.35 + 1.1 * heat * heat) * limb * (1.0 + 0.25 * pulse);
-    planckian_rgb(temperature) * brightness
+    let convection = u.noise.fbm(p * 9.0 + warp * 2.2, 5);
+    let fine = u
+        .noise
+        .fbm(p * 90.0 + warp * 3.0 + Vec3::splat(t * 0.01), 4);
+    let granules = 1.0 - u.noise.noise(p * 155.0 + warp * 1.5).abs();
+    let spots = crate::math::smoothstep(0.16, 0.42, u.noise.noise(p * 7.0 + warp)) * 0.85;
+    let heat = ((0.53 + convection * 0.95 + fine * 0.5) * (1.0 - spots)).clamp(0.0, 1.0);
+    let mu = f.normal.dot(f.view_dir()).max(0.0);
+    let limb = 0.18 + 0.82 * mu.powf(0.45);
+    let temperature = (s.temperature * (0.28 + heat * 0.65)).clamp(1200.0, 7000.0);
+    let energy = (0.025 + heat.powi(4) * 2.0) * (0.45 + granules * 0.85);
+    planckian_rgb(temperature) * (energy * s.intensity * u.gains.sun * limb * (1.0 + 0.16 * u.beat))
 }

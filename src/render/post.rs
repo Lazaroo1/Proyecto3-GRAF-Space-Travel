@@ -66,9 +66,19 @@ fn tonemap(color: Vec3) -> Vec3 {
         return hue;
     }
     let t = (mapped_peak - 0.75) * 4.0;
-    let white = t * t * (3.0 - 2.0 * t) * 0.6;
+    let white = t * t * (3.0 - 2.0 * t) * 0.58;
     let channels = Vec3::new(aces(color.x), aces(color.y), aces(color.z));
     hue.lerp(channels, white)
+}
+
+#[inline]
+fn display_curve(color: Vec3, p2: bool) -> Vec3 {
+    if p2 {
+        let c = color.max(Vec3::ZERO);
+        c / (1.0 + c.max_element())
+    } else {
+        tonemap(color)
+    }
 }
 
 /// Tramado fijo en `[0, 1)`: redondeo estocastico sin parpadeo entre frames.
@@ -94,6 +104,7 @@ pub struct PostParams<'a> {
     pub height: usize,
     pub tiles_x: usize,
     pub exposure: f32,
+    pub p2_curve: bool,
     pub bloom: &'a MipLevel,
     pub bloom_intensity: f32,
     pub ripple: Option<Ripple>,
@@ -179,8 +190,14 @@ pub fn tonemap_rows(first_row: usize, out: &mut [u8], hdr: &[Vec3], p: &PostPara
                 let (ox, oy) = ripple.offset(x as f32 + 0.5, y as f32 + 0.5);
                 let sx = (x as f32 + ox).clamp(0.0, (width - 1) as f32) as usize;
                 let sy = (y as f32 + oy).clamp(0.0, (p.height - 1) as f32) as usize;
-                let index = ((sy / TILE) * p.tiles_x + sx / TILE) * TILE_PIXELS + (sy % TILE) * TILE + sx % TILE;
-                let mapped = tonemap((hdr[index] + glow[x] * p.bloom_intensity) * p.exposure).lerp(Vec3::ONE, p.whiteout);
+                let index = ((sy / TILE) * p.tiles_x + sx / TILE) * TILE_PIXELS
+                    + (sy % TILE) * TILE
+                    + sx % TILE;
+                let mapped = display_curve(
+                    (hdr[index] + glow[x] * p.bloom_intensity) * p.exposure,
+                    p.p2_curve,
+                )
+                .lerp(Vec3::ONE, p.whiteout);
                 let d = dither(x, y);
                 px[0] = encode(mapped.x, d, lut);
                 px[1] = encode(mapped.y, d, lut);
@@ -198,8 +215,17 @@ pub fn tonemap_rows(first_row: usize, out: &mut [u8], hdr: &[Vec3], p: &PostPara
             let src = &hdr[start..start + n];
             let halo = &glow[x0..x0 + n];
             let dst = &mut out_row[x0 * 4..(x0 + n) * 4];
-            for (i, ((color, light), px)) in src.iter().zip(halo).zip(dst.chunks_exact_mut(4)).enumerate() {
-                let mapped = tonemap((*color + *light * p.bloom_intensity) * p.exposure).lerp(Vec3::ONE, p.whiteout);
+            for (i, ((color, light), px)) in src
+                .iter()
+                .zip(halo)
+                .zip(dst.chunks_exact_mut(4))
+                .enumerate()
+            {
+                let mapped = display_curve(
+                    (*color + *light * p.bloom_intensity) * p.exposure,
+                    p.p2_curve,
+                )
+                .lerp(Vec3::ONE, p.whiteout);
                 let d = dither(x0 + i, y);
                 px[0] = encode(mapped.x, d, lut);
                 px[1] = encode(mapped.y, d, lut);

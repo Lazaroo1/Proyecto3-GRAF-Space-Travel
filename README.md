@@ -9,18 +9,20 @@ después su latido se acelera, colapsa en una supernova fallida y en su lugar
 queda **Gargantúa**, un agujero negro con su disco de acreción, que curva la
 luz de todo el cielo. Luego el ciclo vuelve a empezar.
 
-![Gargantúa visto desde detrás de Pira](media/18_gargantua.jpg)
+![Gargantua en la revision visual](media/24_el_ojo.png)
 
 | | |
 | --- | --- |
-| ![El sistema](media/01_sistema.jpg) | ![El chorro de brasas de Pira](media/14_chorro.jpg) |
-| ![Monolitos de Réquiem](media/10_monolito.jpg) | ![Bosque de hongos de Jardín de noche](media/11_hongos.jpg) |
-| ![Gargantúa desde Jardín](media/19_gargantua_jardin.jpg) | ![Trayectoria predicha alrededor de Réquiem](media/15_trayectoria.jpg) |
+| ![El sistema](media/22_agonia.png) | ![El chorro de brasas de Pira](media/14_chorro.png) |
+| ![Monolitos de Réquiem](media/10_monolito.png) | ![Bosque de hongos de Jardín de noche](media/11_hongos.png) |
+| ![Superficie de Jardín](media/23_jardin_biopunk.png) | ![Jardín durante Gargantúa](media/20_jardin_noche_eterna.png) |
 
 ## Video
 
-Recorrido completo (vuelo, acercamiento, vuelta a un planeta, alejamiento y
-el colapso): *pendiente de grabar*.
+El repositorio incluye [el recorrido continuo](media/recorrido-continuo.mp4): vuelo, acercamiento, una vuelta
+completa a Jardin y alejamiento, sin cambiar de escena. El piloto usa la misma
+fisica del vuelo manual. Se exporta a 24 fps con la simulacion acelerada x3;
+no es una medicion de FPS en tiempo real. El colapso se puede mostrar con J.
 
 Recorrido sugerido para grabarlo (F9 oculta el HUD):
 
@@ -44,10 +46,10 @@ Opciones:
 
 ```sh
 cargo run --release -- --res 1920x1080        # resolución del render (por defecto 1280x720)
-cargo run --release -- --captura capturas     # las 22 vistas fijas como PNG, sin abrir ventana
+cargo run --release -- --captura capturas     # las 25 vistas fijas como PNG, sin abrir ventana
 cargo run --release -- --bench 30             # mide cada vista fija y da medianas por etapa
 cargo run --release -- --wire --lod           # empieza con wireframe y colores de LOD
-cargo test --release                          # 81 pruebas
+cargo test --release                          # pruebas de vuelo, raster, sombras y gas volumétrico
 ```
 
 ## Controles
@@ -60,6 +62,8 @@ cargo test --release                          # 81 pruebas
 | Subir / bajar | Espacio / Ctrl |
 | Alabeo | Q / E |
 | Turbo | Shift |
+| **Freno de emergencia** (prioridad sobre turbo y crucero) | **X sostenida** |
+| **Recuperar posicion** junto a Pira, conservando el ciclo | **Inicio / Home** |
 | Acercar / alejar la cámara | Rueda |
 | Cámara de persecución / cabina | C |
 | Asistente de vuelo / gravedad | Z / G |
@@ -79,6 +83,43 @@ cargo test --release                          # 81 pruebas
 | Soltar o capturar el mouse | Tab |
 | Ayuda / estadísticas / ocultar todo el HUD | F1 / F2 / F9 |
 | Salir | Esc |
+
+
+## Revision visual y vuelo
+
+En Windows se puede abrir `Jugar_OCASO.cmd`; en el paquete lleva el ejecutable,
+y en el repositorio compila con Cargo si no lo encuentra. Los controles completos
+se muestran con F1; F2 abre contadores y F9 oculta el HUD.
+
+- OCASO-1: 78.057, 24.977 y 6.243 triangulos segun distancia.
+- Jardin: hongos con nervaduras y torres abiertas con nucleos luminosos;
+  suelo con normales triplanares, cavidades y arterias animadas. El bioma
+  de llegada tiene colonias a ambos lados de un claro, colocadas sobre el
+  terreno; giran con el planeta y se pueden visitar en vuelo libre.
+- Cielo con estrellas mas finas y nebulosa; estrella roja con conveccion;
+  Gargantua con la Variante dorada y las nubes grises del Proyecto 2.
+- Orbitas mas cercanas para reducir los viajes y hacer visibles los vecinos.
+- Velocidad normal limitada a 420 u/s, turbo a 1.092 u/s; el frenado conserva
+  autoridad al bajar la velocidad de aproximacion. Con asistencia, soltar las
+  teclas detiene la nave; X tambien funciona sin asistencia.
+- La franja exterior impide escapar indefinidamente. Inicio/Home recupera una
+  posicion segura: es una ayuda del piloto, no parte del recorrido evaluado.
+
+Vistas nuevas, accesibles tambien con AvPag/RePag:
+
+```sh
+cargo run --release -- --vista 22_agonia
+cargo run --release -- --vista 23_jardin_biopunk
+cargo run --release -- --vista 24_el_ojo
+cargo run --release -- --captura capturas --vista 23_jardin_biopunk --res 1600x900
+cargo run --release -- --recorrido recorrido-continuo.mp4 --res 960x540
+```
+
+La grabacion necesita `ffmpeg` en PATH o la variable `OCASO_FFMPEG` apuntando
+a su ejecutable. El juego manual y las capturas PNG no lo necesitan.
+Para regenerar la nave: `blender --background --python tools/export_ship.py`.
+Se exportan geometría, UV, normales y los parámetros de los materiales;
+la iluminación se calcula con los shaders propios de Rust.
 
 ## Qué evaluar y dónde verlo
 
@@ -128,12 +169,12 @@ dibujos (malla + matriz + material)
  -> vértices: deformación, objeto -> mundo relativo a la cámara -> clip,
     atmósfera por vértice                                           (paralelo)
  -> triángulos: descarte, recorte, setup y reparto en tiles        (paralelo)
- -> por tile de 64x64, en una sola pasada:                          (paralelo)
-      raster en punto fijo al visibility buffer (profundidad + id)
-      shading diferido: un fragment shader por pixel visible
-      Gargantúa, anillos y atmósferas contra la profundidad resuelta
-      partículas sumadas delante de la superficie
-      brillo para el bloom
+ -> mapa de sombras ortográfico 1024x1024                         (CPU)
+ -> raster por tiles de 64x64 al visibility buffer                (paralelo)
+ -> barrera: se completa toda la profundidad antes de leer vecinos
+ -> shading diferido: PBR, PCF, oclusión ambiental de pantalla      (paralelo)
+ -> Gargantúa volumétrico, anillos, atmósferas y partículas         (paralelo)
+ -> reflejos de pantalla en superficies mojadas cercanas           (paralelo)
  -> bloom y tonemap HDR -> RGBA8 -> textura de raylib               (paralelo)
 ```
 
@@ -141,8 +182,11 @@ dibujos (malla + matriz + material)
   mundo se guarda en `f64` y se dibuja relativo a la cámara.
 - Un pool de hilos propio con reparto dinámico (el i5-12500H tiene núcleos
   de dos tamaños).
-- En 1280x720 la mayoría de las vistas tardan entre 13 y 25 ms por frame y
-  las de Gargantúa unos 28 ms (`--bench`).
+- Esta revision prioriza detalle visual. El costo depende mucho de la vista:
+  medir con `--bench 10`. El paquete incluye `rendimiento.txt` con mediciones
+  del i5-12500H a 1280x720. Los primeros frames de carga no se miden.
+- FXAA en CPU suaviza las diagonales despues del tonemap; F3/F4 lo omiten
+  para mantener legibles las aristas y los colores de depuracion.
 
 | Carpeta | Contenido |
 | --- | --- |
@@ -155,9 +199,48 @@ dibujos (malla + matriz + material)
 | [src/tweaks.rs](src/tweaks.rs) | Panel de ajustes en vivo |
 | [src/parallel.rs](src/parallel.rs) | Pool de hilos persistentes |
 
+
+### Materiales y luz de esta revisión
+
+La nave usa los colores, texturas empacadas, rugosidad y metalicidad del
+Blender original. La BRDF Cook–Torrance combina GGX, Smith y Fresnel de
+Schlick. Se añaden sombras PCF y oclusión ambiental, fotografías de roca con
+normales triplanares, luces locales bajo los hongos y reflejos de pantalla
+en el suelo húmedo. Las luces locales y los reflejos son aproximaciones;
+los reflejos solo pueden recuperar lo que está visible en el framebuffer.
+
+Gargantúa conserva el medio **Variante** del Proyecto 2: pico de 6500 K,
+disco caliente de 3 a 13 rs y envoltura gris hasta 19 rs. Los rayos que
+atraviesan gas integran su espesor, absorción y emisión con el RK4 original;
+el campo cilíndrico tiene 384×192×9 muestras, dos capas de flujo y rotación
+kepleriana. Se conserva el Doppler y la curva de exposición del Proyecto 2.
+La tabla de geodésicas acelera el cielo lejano. La vista `24_el_ojo` usa
+la elevación de 2°, distancia de 21.5 rs y FOV de 34° de la vista original.
+El cielo y los planetas pertenecen al sistema del Proyecto 3.
+
+El perfil predeterminado prioriza detalle visual, también por debajo de
+30 FPS. `ms_total` mide el frame completo de la app, incluyendo terreno,
+sombras, actualización del gas y dibujo. El coste de carga inicial se
+separa con calentamiento. Gargantúa volumétrico es la vista más costosa;
+la resolución se puede bajar con `--res 960x540`.
+
+Para reexportar la nave con Blender 5.2:
+
+```powershell
+& 'C:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python tools/export_ship.py
+```
+
+El exportador también escribe `ship-materials.txt` y sus seis mapas RGB8.
+Las imágenes se leen, filtran y muestrean en Rust; no se usan texturas 3D
+ni shaders de GPU. El archivo `.rgb` contiene ancho y alto `u32` LE,
+seguidos por tres bytes RGB por pixel. Solo los mapas de color se decodifican
+desde sRGB; normal, rugosidad y AO permanecen lineales.
+
 ## Integrantes y contribuciones
 
-Trabajo individual: Lázaro Díaz (24713) hizo todo el proyecto.
+Trabajo individual: Lázaro Díaz (24713). Se utilizo asistencia de IA para
+modelado, implementacion, mejoras visuales y depuracion. El estudiante debe
+revisar y poder explicar el codigo y las decisiones de la entrega.
 
 ## Dependencias, recursos y asistencia
 
@@ -168,6 +251,14 @@ Trabajo individual: Lázaro Díaz (24713) hizo todo el proyecto.
 - Reutilizo código propio: el pool de hilos, el color de cuerpo negro, la
   curva de tonemap, el bloom y la relatividad de Gargantúa vienen de mi
   Proyecto 2; el lector OBJ parte del lab 4.
-- El modelo de la nave es mío (Blender). Todo lo demás (terrenos, objetos,
-  texturas, cielo, sonido) se genera con código al arrancar.
+- La nave OCASO-1 se creo para este proyecto en Blender con asistencia de IA
+  a partir de las referencias aportadas. Su fuente esta en `assets/source/`.
+  El exportador conserva UV, normales, materiales PBR y tres niveles de detalle.
+  Dos láminas de efectos transparentes (campo anular y HUD holográfico) se
+  excluyen del modelo opaco: evitamos que tapen el reactor como discos sólidos.
+  El Blender fuente se conserva. El render, el terreno, los objetos, la
+  animación del gas, el cielo y el sonido se calculan en CPU.
+- Las fotografías de Júpiter y la Luna provienen de NASA; el basalto usa
+  Rock Face 03 de Poly Haven (CC0). Créditos y enlaces en
+  [assets/textures/FUENTES.txt](assets/textures/FUENTES.txt).
 - Se usó asistencia de IA durante el desarrollo.

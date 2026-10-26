@@ -1,55 +1,30 @@
-//! Pira: roca volcanica y mares de lava. Shader animado.
-//!
-//! - La **lava** es un campo de temperatura que fluye: ruido fractal con
-//!   domain warping que se desplaza con el tiempo. Su color no es un tinte a
-//!   mano: es el de un cuerpo negro a esa temperatura (1300 a 2400 K), asi
-//!   que lo mas caliente sale amarillo y lo mas frio rojo oscuro.
-//! - Sobre el mar flotan **placas de costra** enfriada que se mueven mas
-//!   lento que la lava.
-//! - En la roca, las **grietas** son las lineas donde un ruido cruza por
-//!   cero (`1 - |ruido|` cerca de 1): dibujan una red como de placas rotas.
-//!   Brillan con su propia luz, mas del lado que mira a la estrella, y de
-//!   noche son lo unico que se ve.
-
-use super::{limb_haze, Fragment, Uniforms};
+//! Placas de basalto rugoso, grietas fracturadas y lava bajo la costra.
+use super::{Fragment, Uniforms, detail, pbr};
 use crate::math::blackbody::planckian_rgb;
-use crate::math::{smoothstep, Vec3};
-
-const BASALT: Vec3 = Vec3::new(0.07, 0.06, 0.06);
-const ASH: Vec3 = Vec3::new(0.17, 0.13, 0.11);
-const SMOKE: Vec3 = Vec3::new(0.45, 0.16, 0.06);
-
+use crate::math::{Vec3, smoothstep};
 pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
-    let (molten, heat, ridge) = (f.color.x, f.color.y, f.color.z);
-    let t = u.time;
-    let n = f.normal;
-    let l = f.light_dir(u);
-    let ndl = n.dot(l);
-    let p = f.local;
-
-    // Grietas con desvanecimiento: si un pixel cubre mas que su ancho, se
-    // reemplazan por su brillo promedio en vez de parpadear.
     let footprint = f.pos.length() * u.pixel_angle;
-    let sharp = smoothstep(4.0, 0.8, footprint);
-    let crack_noise = 1.0 - u.noise.noise(p * 0.11).abs();
-    let crack = smoothstep(0.93, 0.995, crack_noise) * sharp + 0.06 * (1.0 - sharp);
-
-    let rock_albedo = BASALT.lerp(ASH, ridge * 0.6);
-    let lit = rock_albedo * u.sun_light * ndl.max(0.0) + rock_albedo * 0.015;
-    let glow = planckian_rgb(1200.0 + 700.0 * heat) * (crack * (0.12 + 2.4 * heat) * u.gains.pira);
-    let mut color = lit + glow;
-
-    if molten > 0.0 {
-        let flow = Vec3::new(t * 0.06, t * 0.015, -t * 0.04);
-        let swirl = u.noise.fbm(p * 0.05 + flow, 2);
-        let temp = (u.noise.fbm(p * 0.09 + flow * 1.7 + Vec3::splat(swirl * 2.0), 3) * 0.5 + 0.5).clamp(0.0, 1.0);
-        let plates = smoothstep(0.6, 0.7, u.noise.fbm(p * 0.045 - flow * 0.5, 2) * 0.5 + 0.5);
-        let lava = planckian_rgb(1300.0 + 1100.0 * temp) * ((1.0 + 5.5 * temp * temp) * u.gains.pira);
-        // La costra es roca oscura con las orillas al rojo.
-        let crust = lit + planckian_rgb(1250.0) * (0.25 * heat);
-        color = color.lerp(lava.lerp(crust, plates), molten);
-    }
-
-    // Humo y vapor de roca en el borde del lado iluminado.
-    color + limb_haze(f, SMOKE * (0.4 + 0.6 * heat), 1.0, ndl)
+    let rock = detail::rock(f, u, 0.13, footprint, 0.9);
+    let warp = u.noise.fbm(f.local * 0.035, 3);
+    let shear = Vec3::new(
+        warp,
+        u.noise.fbm(f.local * 0.08 + Vec3::splat(17.0), 3),
+        u.noise.noise(f.local * 0.13),
+    );
+    let cells = u.noise.cells(f.local * 0.043 + shear * 0.7);
+    let edge = cells.1 - cells.0;
+    let aa = (footprint * 0.043).max(0.001);
+    let width = 0.012 + 0.022 * (u.noise.fbm(f.local * 0.23, 3) * 0.5 + 0.5);
+    let crack = smoothstep(width + aa, 0.004 - aa, edge);
+    let heat = f.color.y;
+    let fire = u.noise.fbm(
+        f.local * 0.17 + Vec3::new(u.time * 0.03, 0.0, u.time * 0.015),
+        3,
+    ) * 0.5
+        + 0.5;
+    let rock_color = rock.color * Vec3::new(0.11, 0.10, 0.095) * (0.5 + 0.5 * cells.0.min(1.0));
+    let lit = pbr::shade(f, u, rock_color, 0.72, 0.05, rock.normal, rock.ao);
+    let molten = f.color.x * smoothstep(0.38, 0.58, fire) * 0.28;
+    let glow = (crack.powi(2) * (0.3 + 1.0 * heat) + molten) * (0.2 + 0.8 * fire) * u.gains.pira;
+    lit + planckian_rgb(1200.0 + 850.0 * fire) * glow * 3.5
 }

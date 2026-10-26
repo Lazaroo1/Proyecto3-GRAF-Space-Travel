@@ -28,7 +28,7 @@
 
 use std::f64::consts::TAU;
 
-use super::{nearest_surface, Body};
+use super::{Body, nearest_surface};
 use crate::config::*;
 use crate::math::{DQuat, DVec3};
 
@@ -53,6 +53,8 @@ pub struct Controls {
     /// Empuje en ejes de la nave: x derecha, y arriba, z atras.
     pub thrust: DVec3,
     pub boost: bool,
+    /// Freno de emergencia: prioridad sobre empuje, turbo y crucero.
+    pub brake: bool,
     /// Orientacion a la que debe girar la nave.
     pub aim: DQuat,
 }
@@ -91,6 +93,8 @@ pub struct FlightInfo {
     pub local: bool,
     /// Altura sobre el terreno que sostiene el modo local.
     pub hold: Option<f64>,
+    pub braking: bool,
+    pub boundary: bool,
 }
 
 impl ShipState {
@@ -151,6 +155,20 @@ pub fn heading(aim: DQuat, up: DVec3) -> (DVec3, DVec3) {
 /// El cuerpo de region mas pequena que contiene a `p`. La estrella tiene
 /// region infinita: es el marco cuando no hay otro.
 pub fn dominant_body(bodies: &[Body], p: DVec3, t: f64) -> usize {
+    // Se solapan las SOI en este sistema compacto: la capa de vuelo junto
+    // a una superficie pertenece a ese planeta, aunque otra SOI sea menor.
+    let surface = bodies
+        .iter()
+        .enumerate()
+        .skip(1)
+        .filter_map(|(i, body)| {
+            let normalized = (p - body.position(t)).length() / body.radius;
+            (normalized < 1.0 + LOCAL_RANGE * 1.15).then_some((i, normalized))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1));
+    if let Some((i, _)) = surface {
+        return i;
+    }
     let mut best = 0;
     let mut best_soi = f64::INFINITY;
     for (i, body) in bodies.iter().enumerate() {
@@ -177,7 +195,13 @@ pub fn step(
     let (nearest, altitude) = nearest_surface(bodies, s.world_pos, t);
     let boost = if controls.boost { BOOST } else { 1.0 };
     let max_speed = (altitude * SPEED_PER_ALTITUDE).clamp(MIN_SPEED, MAX_SPEED) * boost;
-    let max_accel = max_speed * ACCEL_PER_SPEED;
+    // Antes el freno se debilitaba al acercarse al destino: velocidad de
+    // crucero, pero aceleracion de vuelo rasante para detenerse.
+    let overspeed = (s.rel_vel.length() - max_speed).max(0.0);
+    let mut max_accel = (max_speed * ACCEL_PER_SPEED).max(overspeed * BRAKE_GAIN);
+    if settings.assist && controls.thrust.length_squared() < 0.001 {
+        max_accel = max_accel.max((s.rel_vel.length() * BRAKE_GAIN).max(BRAKE_MIN_ACCEL));
+    }
 
     // Giro: el error entre la orientacion actual y la mira, como eje por
     // angulo en ejes de la nave, pide una velocidad angular; la aceleracion
@@ -197,20 +221,45 @@ pub fn step(
 
     // Altura sobre el terreno del cuerpo de referencia.
     let frame_altitude = s.rel_pos.length() - body.radius - body.surface_height(s.rel_pos, t);
-    let local = settings.assist && settings.local && s.frame != 0 && frame_altitude < LOCAL_RANGE * body.radius;
+    let local = settings.assist
+        && settings.local
+        && s.frame != 0
+        && frame_altitude < LOCAL_RANGE * body.radius;
     if !local {
         s.hold = None;
     }
 
     let mut thrust = controls.thrust.clamp_length(1.0);
-    let engine = if local {
+    let engine = if controls.brake {
+        let target = if local {
+            angular_velocity(body).cross(s.rel_pos)
+        } else {
+            DVec3::ZERO
+        };
+        ((target - s.rel_vel) * BRAKE_GAIN - gravity)
+            .clamp_length((s.rel_vel.length() * BRAKE_GAIN).max(BRAKE_MIN_ACCEL))
+    } else if local {
         if settings.cruise && thrust.z == 0.0 {
             thrust.z = -CRUISE_THRUST;
         }
-        local_engine(s, body, controls.aim, thrust, max_speed, max_accel, gravity, t)
+        local_engine(
+            s,
+            body,
+            controls.aim,
+            thrust,
+            max_speed,
+            max_accel,
+            gravity,
+            t,
+        )
     } else if settings.assist {
         let local_vel = s.rot.conjugate().rotate(s.rel_vel);
-        let correction = s.rot.rotate((thrust * max_speed - local_vel) * ASSIST_GAIN);
+        let gain = if thrust.length_squared() < 0.001 || overspeed > 1.0 {
+            BRAKE_GAIN
+        } else {
+            ASSIST_GAIN
+        };
+        let correction = s.rot.rotate((thrust * max_speed - local_vel) * gain);
         (correction - gravity).clamp_length(max_accel)
     } else {
         s.rot.rotate(thrust * max_accel)
@@ -237,6 +286,29 @@ pub fn step(
     }
 
     s.world_pos = body.position(t + dt) + s.rel_pos;
+    // La franja exterior limita solo el movimiento hacia afuera. El piloto
+    // puede girar y volver, sin perderse a distancias ilimitadas.
+    let star = bodies[0].position(t + dt);
+    let offset = s.world_pos - star;
+    let distance = offset.length();
+    let limit = bodies
+        .iter()
+        .map(|b| b.orbit_radius + b.radius)
+        .fold(0.0, f64::max)
+        + SYSTEM_MARGIN;
+    let boundary = distance > limit - 1200.0;
+    if boundary && distance > 0.0 {
+        let radial = offset / distance;
+        let outward = s.world_velocity(bodies, t + dt).dot(radial);
+        let allowed = ((limit - distance).max(0.0) * 0.45).min(max_speed);
+        if outward > allowed {
+            s.rel_vel -= radial * (outward - allowed);
+        }
+        if distance > limit {
+            s.world_pos = star + radial * limit;
+            s.rel_pos = s.world_pos - body.position(t + dt);
+        }
+    }
     FlightInfo {
         speed: s.rel_vel.length(),
         max_speed,
@@ -246,6 +318,8 @@ pub fn step(
         contact,
         local,
         hold: s.hold,
+        braking: controls.brake,
+        boundary,
     }
 }
 
@@ -297,6 +371,119 @@ mod tests {
 
     fn system() -> System {
         System::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("assets")).unwrap()
+    }
+
+    #[test]
+    fn emergency_brake_overrides_thrust_boost_and_unassisted_flight() {
+        let sys = system();
+        let pos = DVec3::new(0.0, 6000.0, 0.0);
+        let mut ship = ShipState::new(&sys.bodies, pos, DQuat::IDENTITY, 0.0);
+        ship.rel_vel = DVec3::X * 1000.0;
+        let settings = FlightSettings {
+            assist: false,
+            gravity: false,
+            cruise: true,
+            ..FlightSettings::default()
+        };
+        let controls = Controls {
+            thrust: DVec3::X,
+            boost: true,
+            brake: true,
+            ..Controls::default()
+        };
+        for k in 0..120 {
+            step(
+                &mut ship,
+                &controls,
+                &settings,
+                &sys.bodies,
+                k as f64 * PHYSICS_DT,
+                PHYSICS_DT,
+            );
+        }
+        assert!(
+            ship.rel_vel.length() < 0.5,
+            "velocidad residual {}",
+            ship.rel_vel.length()
+        );
+        assert!(
+            (ship.world_pos - pos).length() < 130.0,
+            "distancia de frenado excesiva"
+        );
+    }
+
+    #[test]
+    fn approaching_a_planet_keeps_braking_authority_when_speed_limit_drops() {
+        let sys = system();
+        let body = &sys.bodies[1];
+        let pos = body.position(0.0) + DVec3::Y * (body.radius + 220.0);
+        let mut ship = ShipState::new(&sys.bodies, pos, DQuat::IDENTITY, 0.0);
+        ship.rel_vel = -DVec3::Y * 1000.0;
+        let settings = FlightSettings {
+            local: false,
+            ..FlightSettings::default()
+        };
+        for k in 0..120 {
+            let info = step(
+                &mut ship,
+                &Controls::default(),
+                &settings,
+                &sys.bodies,
+                k as f64 * PHYSICS_DT,
+                PHYSICS_DT,
+            );
+            assert!(!info.contact, "no deberia estrellarse mientras frena");
+        }
+        assert!(
+            ship.rel_vel.length() < 8.0,
+            "debe frenar antes de rebasar el planeta"
+        );
+        assert!(ship.rel_pos.length() > body.radius + 60.0);
+    }
+
+    #[test]
+    fn navigation_boundary_prevents_endless_escape_and_allows_return() {
+        let sys = system();
+        let limit = sys
+            .bodies
+            .iter()
+            .map(|b| b.orbit_radius + b.radius)
+            .fold(0.0, f64::max)
+            + SYSTEM_MARGIN;
+        let mut ship = ShipState::new(&sys.bodies, DVec3::Y * (limit - 50.0), DQuat::IDENTITY, 0.0);
+        ship.rel_vel = DVec3::Y * 900.0;
+        let settings = FlightSettings {
+            assist: false,
+            gravity: false,
+            ..FlightSettings::default()
+        };
+        for k in 0..240 {
+            step(
+                &mut ship,
+                &Controls::default(),
+                &settings,
+                &sys.bodies,
+                k as f64 * PHYSICS_DT,
+                PHYSICS_DT,
+            );
+        }
+        assert!(ship.world_pos.length() <= limit + 0.01);
+        ship.rel_vel = -DVec3::Y * 100.0;
+        let start = ship.world_pos.length();
+        for k in 240..360 {
+            step(
+                &mut ship,
+                &Controls::default(),
+                &settings,
+                &sys.bodies,
+                k as f64 * PHYSICS_DT,
+                PHYSICS_DT,
+            );
+        }
+        assert!(
+            ship.world_pos.length() < start - 90.0,
+            "el borde debe dejar regresar"
+        );
     }
 
     #[test]
@@ -363,12 +550,17 @@ mod tests {
         let planet = &sys.bodies[2];
         let t0 = 30.0;
         let dir = DVec3::new(0.9, 0.1, 0.2).normalize();
-        let pos = planet.position(t0) + dir * (planet.radius + planet.surface_height(dir, t0) + 15.0);
+        let pos =
+            planet.position(t0) + dir * (planet.radius + planet.surface_height(dir, t0) + 15.0);
         let aim = DQuat::look_rotation(dir.cross(DVec3::Y), dir);
         let mut ship = ShipState::new(&sys.bodies, pos, aim, t0);
         // El punto del suelo bajo la nave, en el espacio del planeta.
         let below = |s: &ShipState, t: f64| {
-            planet.rotation(t).conjugate().rotate(s.world_pos - planet.position(t)).normalize()
+            planet
+                .rotation(t)
+                .conjugate()
+                .rotate(s.world_pos - planet.position(t))
+                .normalize()
         };
         let controls = Controls {
             aim,
@@ -377,7 +569,14 @@ mod tests {
         let mut t = t0;
         let mut run = |ship: &mut ShipState, seconds: f64| {
             for _ in 0..(seconds * PHYSICS_HZ) as usize {
-                step(ship, &controls, &FlightSettings::default(), &sys.bodies, t, PHYSICS_DT);
+                step(
+                    ship,
+                    &controls,
+                    &FlightSettings::default(),
+                    &sys.bodies,
+                    t,
+                    PHYSICS_DT,
+                );
                 t += PHYSICS_DT;
             }
             t
@@ -396,10 +595,11 @@ mod tests {
         let sys = system();
         let planet = &sys.bodies[1];
         let t = 5.0;
-        // Justo fuera de la region del planeta, en el marco de la estrella.
+        // Justo fuera de la region del planeta, en otro marco. Las regiones
+        // de influencia pueden solaparse en un sistema compacto.
         let pos = planet.position(t) + DVec3::X * (planet.soi + 1.0);
         let mut ship = ShipState::new(&sys.bodies, pos, DQuat::IDENTITY, t);
-        assert_eq!(ship.frame, 0);
+        assert_ne!(ship.frame, 1);
         ship.rel_vel = DVec3::new(-30.0, 2.0, 1.0);
         let before = ship.world_velocity(&sys.bodies, t);
         ship.rel_pos = ship.rel_pos - DVec3::X * 2.0;
