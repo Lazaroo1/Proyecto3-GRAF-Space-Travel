@@ -91,5 +91,5 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     let ndv = n.dot(v).max(0.0);
     let limb = 0.6 + 0.4 * ndv;
     let lit = albedo * u.sun_light * (wrap * limb) + albedo * 0.01;
-    lit + glow + limb_haze(f, HAZE, 0.8, ndl)
+    lit + glow * u.gains.vigia + limb_haze(f, HAZE, 0.8, ndl)
 }

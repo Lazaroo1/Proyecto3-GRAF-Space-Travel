@@ -50,7 +50,7 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
         );
         let facet = (n + jitter * 1.2).normalize();
         let half = (l + v).normalize();
-        glint = u.sun_light * (facet.dot(half).max(0.0).powi(64) * gouge * shadow * 3.0);
+        glint = u.sun_light * (facet.dot(half).max(0.0).powi(64) * gouge * shadow * 3.0 * u.gains.cementerio);
     }
     lit + glint
 }

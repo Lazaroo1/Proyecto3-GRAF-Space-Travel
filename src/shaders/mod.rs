@@ -45,6 +45,48 @@ pub struct DebugView {
     pub fog_only: bool,
 }
 
+/// Intensidad del efecto propio de cada shader, ajustable en vivo (1 es la
+/// de diseno): la lava de Pira, la bioluminiscencia de Jardin, el ojo de
+/// Vigia, el hielo y los glifos de Requiem, la chatarra de Cementerio y el
+/// brillo de la estrella.
+#[derive(Clone, Copy, Debug)]
+pub struct Gains {
+    pub sun: f32,
+    pub pira: f32,
+    pub jardin: f32,
+    pub vigia: f32,
+    pub requiem: f32,
+    pub cementerio: f32,
+}
+
+impl Default for Gains {
+    fn default() -> Self {
+        Self {
+            sun: 1.0,
+            pira: 1.0,
+            jardin: 1.0,
+            vigia: 1.0,
+            requiem: 1.0,
+            cementerio: 1.0,
+        }
+    }
+}
+
+impl Gains {
+    /// La intensidad del shader de un material de cuerpo, si tiene.
+    pub fn for_material(&mut self, material: &Material) -> Option<&mut f32> {
+        match material {
+            Material::Sun(_) => Some(&mut self.sun),
+            Material::Pira => Some(&mut self.pira),
+            Material::Jardin => Some(&mut self.jardin),
+            Material::Vigia => Some(&mut self.vigia),
+            Material::Requiem => Some(&mut self.requiem),
+            Material::Cementerio => Some(&mut self.cementerio),
+            _ => None,
+        }
+    }
+}
+
 /// Valores comunes a todos los pixeles del frame.
 pub struct Uniforms<'a> {
     /// Tiempo de simulacion en segundos.
@@ -76,6 +118,8 @@ pub struct Uniforms<'a> {
     /// Intensidad de la bioluminiscencia de Jardin (1 normal; sube cuando la
     /// estrella se apaga).
     pub biolum: f32,
+    /// Intensidad del efecto de cada shader.
+    pub gains: Gains,
     pub debug: DebugView,
 }
 
