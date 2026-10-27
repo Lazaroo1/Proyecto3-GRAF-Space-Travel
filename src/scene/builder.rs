@@ -57,14 +57,6 @@ impl MeshBuilder {
         self
     }
 
-    /// Cambia el color de los vertices `range` (los indices que devuelven
-    /// las primitivas).
-    pub fn paint(&mut self, range: std::ops::Range<u32>, color: Vec3) {
-        for c in &mut self.mesh.colors[range.start as usize..range.end as usize] {
-            *c = color;
-        }
-    }
-
     /// Uv de un punto de una cara plana que empieza en `origin`, con
     /// `tangent` (unitaria) como eje u y `bitangent` como eje v.
     fn planar_uv(&self, p: Vec3, origin: Vec3, tangent: Vec3, bitangent: Vec3, fallback: Vec2) -> Vec2 {

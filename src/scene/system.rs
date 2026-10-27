@@ -306,10 +306,12 @@ impl System {
             atmosphere: Some(AtmosphereParams {
                 thickness: 10.0,
                 scale_height: 3.0,
-                rayleigh: Vec3::new(0.006, 0.004, 0.012),
-                mie: 0.002,
+                // Aire helado: dispersa sobre todo el azul, asi que la luz
+                // roja de la estrella apenas lo tine y el horizonte queda frio.
+                rayleigh: Vec3::new(0.0015, 0.005, 0.03),
+                mie: 0.001,
                 mie_g: 0.7,
-                intensity: 7.0,
+                intensity: 5.0,
             }),
         }
         .build();

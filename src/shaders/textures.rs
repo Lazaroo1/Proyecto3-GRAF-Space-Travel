@@ -186,40 +186,6 @@ fn groove(distance: f32, width: f32) -> f32 {
     smoothstep(width, 0.0, distance.abs())
 }
 
-/// El glifo de los monolitos de Requiem: un ojo tallado en la piedra. Una
-/// almendra de dos arcos, el iris, la pupila hundida, una lagrima que baja y
-/// un marco alrededor. Brilla el ojo; el marco solo esta tallado.
-/// Coordenadas: u de 0 a 1, v de 0 (abajo) a 1 (arriba).
-pub fn eye_glyph(size: usize) -> NormalMap {
-    let noise = Perlin::new(0x0E7E);
-    NormalMap::generate(size, 0.05, |u, v| {
-        let p = Vec2::new(u - 0.5, v - 0.55);
-        // Almendra: interseccion de dos discos desplazados en vertical. La
-        // distancia con signo de una interseccion es el maximo de las dos.
-        let r = 0.42;
-        let offset = 0.26;
-        let below = (p.x * p.x + (p.y + offset) * (p.y + offset)).sqrt() - r;
-        let above = (p.x * p.x + (p.y - offset) * (p.y - offset)).sqrt() - r;
-        let outline = groove(below.max(above), 0.018);
-        let center = (p.x * p.x + p.y * p.y).sqrt();
-        let iris = groove(center - 0.11, 0.014);
-        let pupil = smoothstep(0.06, 0.035, center);
-        // Lagrima: linea que baja desde el ojo.
-        let tear = if p.y < -0.15 && p.y > -0.42 {
-            groove(p.x, 0.012)
-        } else {
-            0.0
-        };
-        // Marco a 0.06 del borde.
-        let frame = groove(u.min(1.0 - u).min(v.min(1.0 - v)) - 0.06, 0.012);
-        let carved = 0.5 * outline + 0.45 * iris + 0.9 * pupil + 0.35 * tear + 0.3 * frame;
-        // Piedra gastada.
-        let h = 1.0 - carved + 0.02 * noise.fbm(Vec3::new(u * 18.0, v * 18.0, 0.5), 3);
-        let glow = (outline * 0.8 + iris * 0.9 + pupil + tear * 0.6).min(1.0);
-        (h, glow)
-    })
-}
-
 /// Placas del casco de las naves naufragas: una grilla de paneles de tamano
 /// variable con ranuras entre ellos, remaches en las esquinas y abolladuras.
 pub fn hull_panels(size: usize) -> NormalMap {
@@ -246,7 +212,6 @@ pub fn hull_panels(size: usize) -> NormalMap {
 /// Texturas compartidas por los shaders.
 pub struct Textures {
     pub images: std::sync::Arc<super::images::Resources>,
-    pub eye_glyph: NormalMap,
     pub hull: NormalMap,
     pub organic: NormalMap,
 }
@@ -265,7 +230,6 @@ impl Textures {
         });
         Self {
             images: super::images::Resources::shared(),
-            eye_glyph: eye_glyph(256),
             hull: hull_panels(256),
             organic,
         }
@@ -288,7 +252,12 @@ mod tests {
 
     #[test]
     fn far_away_the_relief_averages_out_and_the_glow_is_kept() {
-        let glyph = eye_glyph(128);
+        // Un hoyo que brilla en medio de una placa.
+        let glyph = NormalMap::generate(128, 0.05, |u, v| {
+            let d = (u - 0.5).hypot(v - 0.55);
+            let hole = smoothstep(0.12, 0.04, d);
+            (1.0 - hole, hole)
+        });
         // Un pixel que cubre toda la textura lee el ultimo nivel: casi plano,
         // con la altura y el brillo promedio.
         let far = glyph.sample(Vec2::new(0.5, 0.55), 1.0);
@@ -315,17 +284,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_eye_glyph_is_carved_and_glows_in_the_middle_but_not_on_the_frame() {
-        let glyph = eye_glyph(128);
-        let center = glyph.sample(Vec2::new(0.5, 0.55), 0.0);
-        let plain = glyph.sample(Vec2::new(0.2, 0.9), 0.0);
-        let frame = glyph.sample(Vec2::new(0.5, 0.06), 0.0);
-        assert!(
-            center.height < plain.height - 0.5,
-            "la pupila debe estar hundida"
-        );
-        assert!(center.glow > 0.9 && plain.glow == 0.0);
-        assert!(frame.height < plain.height - 0.1 && frame.glow == 0.0);
-    }
 }
