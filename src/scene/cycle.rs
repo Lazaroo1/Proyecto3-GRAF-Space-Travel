@@ -1,32 +1,40 @@
-//! El ciclo de OCASO: quince minutos desde la agonia de la estrella hasta
-//! Gargantua, y vuelta a empezar.
+//! El ciclo de OCASO, a pedido del piloto: la estrella agoniza (late) todo
+//! el tiempo que se quiera; con J empieza el final y en medio minuto nace
+//! Gargantua. Otra J hace renacer a la estrella.
 //!
-//! | Minuto | Fase | Que pasa |
+//! | Desde J | Fase | Que pasa |
 //! | --- | --- | --- |
-//! | 0 - 10 | Agonia | La supergigante roja late cada 1.9 s; Pira se le deshace encima. |
-//! | 10 - 12 | Arritmia | El latido se acelera hasta 0.7 s, la estrella se hincha, se enfria y late mas fuerte. |
-//! | 12:00 - 12:06 | Colapso | La supernova fallida: la estrella cae sobre si misma y se calienta. |
-//! | 12:06 | Destello | Un estallido de luz; nace el agujero. |
-//! | 12:06 - 13:06 | Ignicion | El disco de acrecion se forma de adentro hacia afuera. |
-//! | 13 - 15 | Gargantua | El disco ilumina el sistema con luz fria; Jardin brilla en la oscuridad. |
-//! | 14:48 - 15:00 | Renacer | Todo se funde en blanco y el ciclo empieza otra vez. |
+//! | antes | Agonia | La supergigante roja late cada 1.9 s; Pira se le deshace encima. |
+//! | 0 - 20 s | Estertor | El latido se acelera hasta 0.7 s; la estrella se hincha, suelta una capa de gas y lanza llamaradas. |
+//! | 20 - 26 s | Silencio | Cae sobre si misma y su luz se drena. |
+//! | 26 - 30 s | Silencio | Oscuridad: solo queda la bioluminiscencia de Jardin. |
+//! | 30 s | El ojo se abre | Una onda gravitacional barre el sistema y nace Gargantua; su disco se enciende en 25 s. |
+//! | 55 s - | Despues | El disco ilumina el sistema con luz blanca azulada. |
+//! | J otra vez | Renacer | Fundido a blanco de 3 s y vuelve la agonia. |
 //!
-//! Todo es una **funcion pura del tiempo**: no hay nada que se acumule
-//! frame a frame. Por eso saltar en el ciclo, o rebobinarlo, es solo
-//! evaluarlo con otro `t`. El latido acelera, asi que su fase no puede ser
-//! `t / periodo` (saltaria al cambiar el periodo): es la integral cerrada de
-//! la frecuencia.
+//! Todo es una **funcion pura** del tiempo y de los instantes en que se
+//! presiono J ([`Timeline`]): no hay nada que se acumule frame a frame. Por
+//! eso rebobinar es solo evaluarlo con otro `t`. El latido acelera, asi que
+//! su fase no puede ser `t / periodo` (saltaria al cambiar el periodo): es
+//! la integral cerrada de la frecuencia.
 
 use crate::math::smoothstep;
 
-/// Duracion del ciclo en segundos.
-pub const CYCLE: f64 = 900.0;
-const ARRHYTHMIA: f64 = 600.0;
-const COLLAPSE: f64 = 720.0;
+/// Estertor: del primer latido acelerado al inicio del colapso.
+const ESTERTOR: f64 = 20.0;
 const COLLAPSE_LENGTH: f64 = 6.0;
-const IGNITION_LENGTH: f64 = 60.0;
-const REBIRTH: f64 = 12.0;
-/// Periodo del latido al principio y al final de la arritmia.
+/// Oscuridad entre el colapso y la apertura del ojo.
+const SILENCE: f64 = 4.0;
+/// Segundos desde J hasta que se abre el ojo.
+const EYE: f64 = ESTERTOR + COLLAPSE_LENGTH + SILENCE;
+/// Lo que tarda el disco en formarse.
+const IGNITION_LENGTH: f64 = 25.0;
+/// Fundido a blanco del renacer y de vuelta.
+pub const REBIRTH: f64 = 3.0;
+const DAWN: f64 = 2.5;
+/// La estrella suelta su capa de gas a esta altura del estertor.
+const SHELL_RELEASE: f64 = 8.0;
+/// Periodo del latido en la agonia y al final del estertor.
 const BEAT_SLOW: f64 = 1.9;
 const BEAT_FAST: f64 = 0.7;
 /// Radio de Schwarzschild de Gargantua en unidades del mundo: la sombra mide
@@ -42,9 +50,10 @@ const KEEP_OUT: f64 = 3.5;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
     Agony,
-    Arrhythmia,
-    Collapse,
-    Gargantua,
+    Estertor,
+    Silence,
+    EyeOpens,
+    After,
     Rebirth,
 }
 
@@ -52,22 +61,82 @@ impl Phase {
     pub fn name(self) -> &'static str {
         match self {
             Phase::Agony => "agonia",
-            Phase::Arrhythmia => "arritmia",
-            Phase::Collapse => "colapso",
-            Phase::Gargantua => "Gargantua",
+            Phase::Estertor => "estertor",
+            Phase::Silence => "silencio",
+            Phase::EyeOpens => "el ojo se abre",
+            Phase::After => "despues",
             Phase::Rebirth => "renacer",
         }
+    }
+}
+
+/// Instantes (en tiempo de simulacion) en que el piloto desato el final y
+/// el renacer. Con el tiempo, definen todo el ciclo.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Timeline {
+    /// Cuando se presiono J para empezar el final.
+    pub ending: Option<f64>,
+    /// Cuando se presiono J otra vez para que la estrella renazca.
+    pub rebirth: Option<f64>,
+    /// Cuando volvio la estrella: desde ahi se desvanece el blanco.
+    pub dawn: Option<f64>,
+}
+
+impl Timeline {
+    /// La agonia, o el final empezado hace `seconds` en el instante `t`.
+    pub fn at(t: f64, seconds: Option<f64>) -> Self {
+        Self {
+            ending: seconds.map(|s| t - s),
+            ..Self::default()
+        }
+    }
+
+    /// J: empieza el final; si ya empezo, el renacer.
+    pub fn press(&mut self, t: f64) {
+        match self.since(t) {
+            Some(_) => {
+                self.rebirth.get_or_insert(t);
+            }
+            None => {
+                *self = Self {
+                    ending: Some(t),
+                    ..Self::default()
+                };
+            }
+        }
+    }
+
+    /// Termina el renacer cuando el fundido llega a blanco. Rebobinar antes
+    /// de la J del renacer lo deshace.
+    pub fn advance(&mut self, t: f64) {
+        match self.rebirth {
+            Some(r) if t < r => self.rebirth = None,
+            Some(r) if t >= r + REBIRTH => {
+                *self = Self {
+                    dawn: Some(t),
+                    ..Self::default()
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Segundos desde la J del final, si ya empezo.
+    pub fn since(&self, t: f64) -> Option<f64> {
+        self.ending.filter(|&start| t >= start).map(|start| t - start)
     }
 }
 
 /// Todo lo que el ciclo decide en un instante.
 #[derive(Clone, Copy, Debug)]
 pub struct CycleState {
-    /// Segundos desde el inicio del ciclo.
+    /// Segundos desde la J del final (0 en la agonia).
     pub tau: f64,
     pub phase: Phase,
     /// Fase del latido (ciclos completos, continua).
     pub beat_phase: f64,
+    /// Latidos por segundo.
+    pub beat_rate: f64,
     /// Amplitud del latido en el radio (fraccion).
     pub pulse: f64,
     /// Radio de la estrella sin el latido; 0 cuando ya no existe.
@@ -79,18 +148,23 @@ pub struct CycleState {
     pub star_light: f32,
     /// Corona alrededor de la estrella en el cielo.
     pub star_glow: f32,
+    /// Llamaradas: 0 en la agonia, 1 al final del estertor.
+    pub flares: f32,
+    /// Segundos desde que la estrella solto su capa de gas (negativo antes).
+    pub shell_age: f32,
     /// Radio de Schwarzschild en unidades del mundo (0 antes del colapso).
     pub rs: f64,
+    /// Segundos desde que se abrio el ojo (negativo antes).
+    pub since_eye: f64,
     /// Disco: densidad (0 a 1), radio exterior en `rs` y temperatura maxima.
     pub disk_density: f32,
     pub disk_outer: f32,
     pub disk_peak: f32,
     /// Bioluminiscencia de Jardin (1 normal).
     pub biolum: f32,
-    /// Exposicion guionada: baja durante el destello del colapso.
+    /// Exposicion guionada: baja durante el destello del ojo.
     pub exposure: f32,
-    /// Fundido a blanco del renacer (0 a 1): tapa el cambio de Gargantua a
-    /// la estrella cuando el ciclo vuelve a empezar.
+    /// Fundido a blanco del renacer (0 a 1).
     pub whiteout: f32,
     /// Radio con el que la nave choca: la estrella o, despues del colapso,
     /// la zona de exclusion alrededor del agujero.
@@ -98,96 +172,105 @@ pub struct CycleState {
 }
 
 /// Fase del latido: integral de la frecuencia, que sube suave (smoothstep)
-/// de `1/BEAT_SLOW` a `1/BEAT_FAST` durante la arritmia. La integral del
-/// smoothstep `3u^2 - 2u^3` es `u^3 - u^4/2`.
-fn beat_phase(tau: f64) -> f64 {
+/// de `1/BEAT_SLOW` a `1/BEAT_FAST` durante el estertor. La integral del
+/// smoothstep `3u^2 - 2u^3` es `u^3 - u^4/2`. Devuelve la fase y su derivada.
+fn beat(t: f64, since: Option<f64>) -> (f64, f64) {
     let (f0, f1) = (1.0 / BEAT_SLOW, 1.0 / BEAT_FAST);
-    let span = COLLAPSE - ARRHYTHMIA;
-    if tau <= ARRHYTHMIA {
-        f0 * tau
-    } else if tau <= COLLAPSE {
-        let u = (tau - ARRHYTHMIA) / span;
-        f0 * tau + (f1 - f0) * span * (u * u * u - 0.5 * u * u * u * u)
+    let Some(s) = since else {
+        return (f0 * t, f0);
+    };
+    let before = f0 * (t - s);
+    if s <= ESTERTOR {
+        let u = s / ESTERTOR;
+        let phase = before + f0 * s + (f1 - f0) * ESTERTOR * (u * u * u - 0.5 * u * u * u * u);
+        (phase, f0 + (f1 - f0) * u * u * (3.0 - 2.0 * u))
     } else {
-        f0 * COLLAPSE + (f1 - f0) * span * 0.5 + f1 * (tau - COLLAPSE)
+        let phase = before + f0 * ESTERTOR + (f1 - f0) * ESTERTOR * 0.5 + f1 * (s - ESTERTOR);
+        (phase, f1)
     }
 }
 
 /// El estado del ciclo en el instante `t` para una estrella de radio `radius`.
-pub fn at(t: f64, radius: f64) -> CycleState {
-    let tau = t.rem_euclid(CYCLE);
+pub fn at(t: f64, timeline: &Timeline, radius: f64) -> CycleState {
+    let since = timeline.since(t);
+    // En la agonia, un tiempo "antes de J" que deja todo en cero.
+    let s_ = since.unwrap_or(-1.0);
     let s = |a: f64, b: f64, x: f64| smoothstep(a as f32, b as f32, x as f32) as f64;
-    let arrhythmia = s(ARRHYTHMIA, COLLAPSE, tau);
-    let collapse_end = COLLAPSE + COLLAPSE_LENGTH;
-    let u = ((tau - COLLAPSE) / COLLAPSE_LENGTH).clamp(0.0, 1.0);
+    let estertor = s(0.0, ESTERTOR, s_);
+    let collapse_end = ESTERTOR + COLLAPSE_LENGTH;
+    let u = ((s_ - ESTERTOR) / COLLAPSE_LENGTH).clamp(0.0, 1.0);
 
-    // La estrella se hincha y se enfria en la arritmia; en el colapso cae
+    // La estrella se hincha y se enfria en el estertor; en el colapso cae
     // como en caida libre, R ~ (1 - u^2)^(2/3), y se calienta.
-    let swollen = radius * (1.0 + 0.08 * arrhythmia);
-    let star_radius = if tau < COLLAPSE {
+    let swollen = radius * (1.0 + 0.08 * estertor);
+    let star_radius = if s_ < ESTERTOR {
         swollen
     } else {
         swollen * (1.0 - u * u).max(0.0).powf(2.0 / 3.0)
     };
-    let cool = 3400.0 - 400.0 * arrhythmia as f32;
-    let star_temperature = if tau < COLLAPSE {
+    let cool = 3400.0 - 400.0 * estertor as f32;
+    let star_temperature = if s_ < ESTERTOR {
         cool
     } else {
         (cool * (swollen / star_radius.max(1.0)).sqrt() as f32).min(25_000.0)
     };
 
-    // Destellos: el del colapso al final de la caida y el del renacer.
-    let burst = (-((tau - collapse_end) / 1.5).powi(2)).exp();
-    let fade_out = s(CYCLE - REBIRTH, CYCLE, tau);
-    let fade_in = if t >= CYCLE { s(4.0, 0.0, tau) } else { 0.0 };
+    let alive = if s_ < collapse_end { 1.0 } else { 0.0 };
+    // La luz se drena mientras cae; despues, oscuridad hasta el ojo.
+    let drain = 1.0 - s(ESTERTOR, collapse_end, s_);
+    // Destello cuando el ojo se abre.
+    let since_eye = if since.is_some() { s_ - EYE } else { f64::NEG_INFINITY };
+    // Sube de golpe y se apaga en un par de segundos.
+    let width = if since_eye < 0.0 { 0.25 } else { 1.2 };
+    let burst = (-(since_eye / width).powi(2)).exp();
+    let open = s(-0.3, 1.2, since_eye);
+    let born = s(0.0, 15.0, since_eye) as f32;
+    let grown = s(0.0, IGNITION_LENGTH, since_eye) as f32;
 
-    let alive = if tau < collapse_end { 1.0 } else { 0.0 };
-    let born = s(collapse_end, collapse_end + 40.0, tau) as f32;
-    let grown = s(collapse_end, collapse_end + IGNITION_LENGTH, tau) as f32;
-    let phase = if tau >= CYCLE - REBIRTH {
+    let rebirth = timeline.rebirth.filter(|&r| t >= r);
+    let fade_out = rebirth.map_or(0.0, |r| s(r, r + REBIRTH, t));
+    let fade_in = timeline.dawn.map_or(0.0, |d| s(d + DAWN, d, t));
+    let phase = if rebirth.is_some() {
         Phase::Rebirth
-    } else if tau >= collapse_end {
-        Phase::Gargantua
-    } else if tau >= COLLAPSE {
-        Phase::Collapse
-    } else if tau >= ARRHYTHMIA {
-        Phase::Arrhythmia
-    } else {
+    } else if since.is_none() {
         Phase::Agony
+    } else if s_ < ESTERTOR {
+        Phase::Estertor
+    } else if since_eye < 0.0 {
+        Phase::Silence
+    } else if since_eye < IGNITION_LENGTH {
+        Phase::EyeOpens
+    } else {
+        Phase::After
     };
+    let (beat_phase, beat_rate) = beat(t, since);
+    let rs = GARGANTUA_RS * open;
     CycleState {
-        tau,
+        tau: since.unwrap_or(0.0),
         phase,
-        beat_phase: beat_phase(tau),
-        pulse: if tau < COLLAPSE {
-            0.012 + 0.038 * arrhythmia
+        beat_phase,
+        beat_rate,
+        pulse: if s_ < ESTERTOR {
+            0.012 + 0.038 * estertor
         } else {
             0.0
         },
         star_radius: star_radius * alive,
         star_temperature,
-        star_intensity: (1.0 - 0.3 * arrhythmia as f32) * (1.0 + 6.0 * (u * u) as f32),
-        star_light: alive as f32 * (1.0 - 0.25 * arrhythmia as f32) + 25.0 * burst as f32,
+        star_intensity: (1.0 - 0.3 * estertor as f32) * (1.0 + 6.0 * (u * u) as f32),
+        star_light: (alive * (1.0 - 0.25 * estertor) * drain + 6.0 * burst) as f32,
         star_glow: alive as f32 * (1.0 - u as f32),
-        rs: GARGANTUA_RS * s(0.6, 1.0, u),
+        flares: (estertor * alive * (1.0 - u)) as f32,
+        shell_age: (s_ - SHELL_RELEASE) as f32,
+        rs,
+        since_eye,
         disk_density: born,
         disk_outer: 3.0 + (DISK_OUTER - 3.0) * grown,
-        disk_peak: 6500.0 + 1500.0 * (-((tau - collapse_end).max(0.0)) / 15.0).exp() as f32,
-        biolum: 1.0 + 2.0 * s(collapse_end, collapse_end + 20.0, tau) as f32,
-        exposure: 1.0 / (1.0 + 4.0 * burst as f32),
+        disk_peak: 6500.0 + 1500.0 * (-(since_eye.max(0.0)) / 15.0).exp() as f32,
+        biolum: 1.0 + 2.0 * s(ESTERTOR, collapse_end + 2.0, s_) as f32,
+        exposure: 1.0 / (1.0 + 2.0 * burst as f32),
         whiteout: fade_out.max(fade_in) as f32,
-        collision_radius: (star_radius * alive).max(KEEP_OUT * GARGANTUA_RS * s(0.6, 1.0, u)),
-    }
-}
-
-/// Instante (dentro del primer ciclo) en que empieza cada fase, para saltar.
-pub fn phase_start(phase: Phase) -> f64 {
-    match phase {
-        Phase::Agony => 0.0,
-        Phase::Arrhythmia => ARRHYTHMIA,
-        Phase::Collapse => COLLAPSE,
-        Phase::Gargantua => COLLAPSE + COLLAPSE_LENGTH,
-        Phase::Rebirth => CYCLE - REBIRTH,
+        collision_radius: (star_radius * alive).max(KEEP_OUT * rs),
     }
 }
 
@@ -197,8 +280,9 @@ mod tests {
 
     #[test]
     fn the_cycle_is_a_pure_function_of_time() {
-        for t in [0.0, 123.4, 650.0, 723.0, 800.0, 1234.5] {
-            let (a, b) = (at(t, 320.0), at(t, 320.0));
+        let line = Timeline::at(100.0, Some(12.0));
+        for t in [0.0, 50.0, 88.0, 95.0, 110.0, 200.0, 1234.5] {
+            let (a, b) = (at(t, &line, 320.0), at(t, &line, 320.0));
             assert_eq!(a.beat_phase, b.beat_phase);
             assert_eq!(a.star_radius, b.star_radius);
             assert_eq!(a.rs, b.rs);
@@ -206,46 +290,78 @@ mod tests {
     }
 
     #[test]
-    fn the_beat_phase_is_continuous_and_only_moves_forward() {
-        let mut last = beat_phase(0.0);
-        let mut t = 0.0;
-        while t < CYCLE {
-            t += 0.05;
-            let now = beat_phase(t);
-            assert!(now > last, "t {t}");
-            // Nunca avanza mas rapido que el latido rapido.
-            assert!(now - last <= 0.05 / BEAT_FAST + 1e-9, "t {t}");
-            last = now;
+    fn the_star_agonizes_until_j_is_pressed() {
+        let line = Timeline::default();
+        for t in [0.0, 600.0, 900.0, 5000.0] {
+            let state = at(t, &line, 320.0);
+            assert_eq!(state.phase, Phase::Agony);
+            assert_eq!(state.star_radius, 320.0);
+            assert_eq!(state.rs, 0.0);
         }
     }
 
     #[test]
-    fn the_star_shrinks_into_a_black_hole_and_comes_back_next_cycle() {
-        let before = at(COLLAPSE - 1.0, 320.0);
-        let during = at(COLLAPSE + 3.0, 320.0);
-        let after = at(COLLAPSE + 100.0, 320.0);
+    fn the_beat_phase_is_continuous_and_only_moves_forward() {
+        let line = Timeline::at(50.0, Some(0.0));
+        let mut last = at(0.0, &line, 1.0).beat_phase;
+        let mut t = 0.0;
+        while t < 150.0 {
+            t += 0.05;
+            let state = at(t, &line, 1.0);
+            assert!(state.beat_phase > last, "t {t}");
+            // Nunca avanza mas rapido que el latido rapido.
+            assert!(state.beat_phase - last <= 0.05 / BEAT_FAST + 1e-9, "t {t}");
+            // La derivada que se reporta es la de la fase.
+            let later = at(t + 1e-4, &line, 1.0).beat_phase;
+            assert!(((later - state.beat_phase) / 1e-4 - state.beat_rate).abs() < 1e-3);
+            last = state.beat_phase;
+        }
+    }
+
+    #[test]
+    fn j_turns_the_star_into_a_black_hole_and_j_again_brings_it_back() {
+        let mut line = Timeline::default();
+        line.press(100.0);
+        let before = at(100.0 + ESTERTOR - 1.0, &line, 320.0);
+        let during = at(100.0 + ESTERTOR + 3.0, &line, 320.0);
+        let silence = at(100.0 + EYE - 1.0, &line, 320.0);
+        let after = at(100.0 + EYE + 60.0, &line, 320.0);
         assert!(before.star_radius > 320.0 && before.rs == 0.0);
         assert!(
             during.star_radius < before.star_radius
                 && during.star_temperature > before.star_temperature
         );
+        assert_eq!(silence.phase, Phase::Silence);
+        assert!(silence.star_light < 0.01 && silence.biolum > 2.9);
+        assert_eq!(after.phase, Phase::After);
         assert_eq!(after.star_radius, 0.0);
         assert_eq!(after.rs, GARGANTUA_RS);
-        assert!(after.disk_density > 0.99 && after.biolum > 2.9);
-        let reborn = at(CYCLE + 30.0, 320.0);
+        assert!(after.disk_density > 0.99);
+        // Despues se queda asi todo el tiempo que se quiera.
+        assert_eq!(at(100.0 + 5000.0, &line, 320.0).phase, Phase::After);
+        // Rebobinar antes de J vuelve a la agonia.
+        assert_eq!(at(99.0, &line, 320.0).phase, Phase::Agony);
+
+        line.press(200.0);
+        assert_eq!(at(201.0, &line, 320.0).phase, Phase::Rebirth);
+        line.advance(200.0 + REBIRTH + 0.1);
+        let reborn = at(200.0 + REBIRTH + 0.1, &line, 320.0);
         assert_eq!(reborn.phase, Phase::Agony);
         assert_eq!(reborn.rs, 0.0);
+        assert!(reborn.whiteout > 0.9);
+        assert_eq!(at(210.0, &line, 320.0).whiteout, 0.0);
     }
 
     #[test]
     fn the_radius_is_continuous_until_the_collapse_ends() {
         // La caida libre termina con derivada infinita: se revisa hasta el
         // 98% del colapso.
-        let mut last = at(0.0, 320.0).star_radius;
+        let line = Timeline::at(10.0, Some(0.0));
+        let mut last = at(0.0, &line, 320.0).star_radius;
         let mut t = 0.0;
-        while t < COLLAPSE + COLLAPSE_LENGTH * 0.98 {
+        while t < 10.0 + ESTERTOR + COLLAPSE_LENGTH * 0.98 {
             t += 0.01;
-            let now = at(t, 320.0).star_radius;
+            let now = at(t, &line, 320.0).star_radius;
             assert!((now - last).abs() < 5.0, "t {t}: {last} -> {now}");
             last = now;
         }

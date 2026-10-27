@@ -270,8 +270,7 @@ fn run_window(options: &Options) -> Result<(), String> {
             app.skip(-30.0);
         }
         if rl.is_key_pressed(KeyboardKey::KEY_J) {
-            // Veinte segundos antes del colapso.
-            app.jump_to_cycle(scene::cycle::phase_start(scene::cycle::Phase::Collapse) - 20.0);
+            app.press_ending();
         }
         if rl.is_key_pressed(KeyboardKey::KEY_M) {
             app.muted = !app.muted;
