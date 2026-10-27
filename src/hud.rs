@@ -172,7 +172,7 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
         } else if f.boundary {
             "LIMITE DEL SISTEMA: gira para regresar".to_string()
         } else {
-            "X: frenar   Inicio: recuperar posicion".to_string()
+            "X: frenar   N: viajar al siguiente lugar   Inicio: recuperar posicion".to_string()
         },
         format!(
             "altitud {:.1} sobre {}",

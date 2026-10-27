@@ -287,6 +287,8 @@ mod tests {
             textures: &textures,
             pixel_angle: 0.002,
             eye_dir: Vec3::Z,
+            eye_near: 0.0,
+            ship: Vec3::ZERO,
             ring: None,
             atmospheres: &[],
             sky_view: None,

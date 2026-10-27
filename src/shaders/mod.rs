@@ -37,7 +37,7 @@ pub use gargantua::BlackHole;
 pub use nebula::Nebula;
 pub use tail::Tail;
 pub use pbr::PointLight;
-pub use props::{BEACON_PERIOD, PropStyle};
+pub use props::{BEACON_PERIOD, PropStyle, beacon_flash, vent_activity};
 pub use rings::RingInfo;
 pub use ship::ShipStyle;
 pub use sky::{SkyCube, shade as sky};
@@ -135,6 +135,12 @@ pub struct Uniforms<'a> {
     pub pixel_angle: f32,
     /// Hacia donde mira el ojo de Vigia, en el espacio de Vigia.
     pub eye_dir: Vec3,
+    /// Que tan cerca esta la nave de Vigia (0 lejos, 1 rozando sus nubes):
+    /// el ojo reacciona.
+    pub eye_near: f32,
+    /// Posicion de la nave, relativa a la camara: lo que hay en los lugares
+    /// de cada planeta despierta cuando se acerca.
+    pub ship: Vec3,
     /// Anillos de Cementerio, si existen.
     pub ring: Option<RingInfo>,
     /// Atmosferas visibles, de la mas lejana a la mas cercana.

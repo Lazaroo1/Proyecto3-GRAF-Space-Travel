@@ -96,6 +96,146 @@ pub fn prominences(
     }
 }
 
+/// Lo que flota alrededor de la camara cerca del suelo de cada planeta.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Motes {
+    /// Brasas que suben del suelo de Pira.
+    Embers,
+    /// Nieve que cae sobre Requiem, con el viento.
+    Snow,
+    /// Polvo y ceniza de metal en Cementerio.
+    Dust,
+    /// Jirones de nube que pasan rozando a Vigia.
+    Mist,
+}
+
+pub const MOTE_COUNT: usize = 520;
+
+/// Particulas en un cubo que acompana a la camara, guardadas en el espacio
+/// del planeta (como las esporas de Jardin). `strength` las apaga lejos del
+/// suelo.
+pub fn motes(out: &mut [Particle], body: &Body, t: f64, camera: DVec3, kind: Motes, strength: f32) {
+    let center = body.position(t);
+    let rotation = body.rotation(t);
+    let cam_local = rotation.conjugate().rotate(camera - center);
+    let up = cam_local.normalize().as_vec3();
+    let (east, north) = basis(up);
+    let to_world = |local: DVec3| (center + rotation.rotate(local) - camera).as_vec3();
+    // Lado del cubo, recorrido vertical por vida (negativo: cae), viento
+    // lateral (unidades por segundo) y tamano.
+    let (size, travel, wind, radius) = match kind {
+        Motes::Embers => (80.0f32, 26.0f32, 1.5f32, 0.035f32),
+        Motes::Snow => (70.0, -14.0, 6.0, 0.06),
+        Motes::Dust => (90.0, 2.0, 2.5, 0.12),
+        Motes::Mist => (240.0, 0.0, 45.0, 9.0),
+    };
+    let half = size * 0.5;
+    let time = t as f32;
+    let cam = cam_local.as_vec3();
+    parallel::chunks_mut(out, 256, 256, |job, chunk| {
+        for (k, particle) in chunk.iter_mut().enumerate() {
+            let i = (job * 256 + k) as u32;
+            let h = hash_u32(i ^ 0x3077_E500);
+            let (h1, h2) = (hash_u32(h), hash_u32(h ^ 0x9E37));
+            let base = Vec3::new(unit(h), unit(h1), unit(h2)) * size;
+            let phase = unit(h >> 4) * std::f32::consts::TAU;
+            let speed = 0.6 + 0.8 * unit(h1 >> 4);
+            let age = (time * speed * 0.2 + unit(h2 >> 6)).fract();
+            // Recorrido acotado por la edad, para que no salten al moverse.
+            let rise = up * (age * travel);
+            let sway = (east * (time * 0.6 + phase).sin() + north * (time * 0.45 + phase * 1.3).cos()) * 1.4;
+            let drift = east * ((time * wind) % size);
+            let p = base + rise + sway + drift - cam;
+            let wrapped = Vec3::new(
+                p.x.rem_euclid(size) - half,
+                p.y.rem_euclid(size) - half,
+                p.z.rem_euclid(size) - half,
+            );
+            let fade = smoothstep(half, half * 0.6, wrapped.length())
+                * smoothstep(0.0, 0.12, age)
+                * smoothstep(1.0, 0.85, age);
+            let flicker = 0.55 + 0.45 * (time * (3.0 + 4.0 * unit(h2 >> 3)) + phase).sin();
+            let color = match kind {
+                // Solo una de cada tres brasas esta encendida a la vez.
+                Motes::Embers if h % 3 == 0 => planckian_rgb(1300.0 + 900.0 * unit(h >> 9)) * (7.0 * flicker),
+                Motes::Embers => Vec3::ZERO,
+                Motes::Snow => Vec3::new(0.75, 0.86, 1.0) * (1.2 + 1.2 * flicker),
+                Motes::Dust => Vec3::new(0.55, 0.42, 0.32) * 0.35,
+                Motes::Mist => Vec3::new(0.40, 0.28, 0.70) * 0.012,
+            };
+            *particle = Particle {
+                pos: to_world((cam + wrapped).as_dvec3()),
+                radius: radius * (0.6 + 0.8 * unit(h1 >> 8)),
+                color: color * (fade * strength),
+            };
+        }
+    });
+}
+
+pub const FOUNTAIN_COUNT: usize = 110;
+
+/// Una fuente de lava: gotas que salen de la boca de un geiser, suben y
+/// caen con la gravedad, enfriandose. `activity` (0 a 1) decide cuantas.
+pub fn fountain(out: &mut [Particle], mouth: Vec3, up: Vec3, t: f64, activity: f32, seed: u32) {
+    const LIFE: f32 = 2.6;
+    const GRAVITY: f32 = 16.0;
+    let (a, b) = basis(up);
+    let time = t as f32;
+    let colors = Blackbody::new();
+    for (i, p) in out.iter_mut().enumerate() {
+        let h = hash_u32(i as u32 ^ seed);
+        // Con poca actividad solo salen unas pocas.
+        let alive = unit(h >> 3) < activity;
+        let age = (time / LIFE + unit(h)).fract() * LIFE;
+        let speed = 12.0 + 14.0 * unit(hash_u32(h));
+        let angle = unit(hash_u32(h ^ 1)) * std::f32::consts::TAU;
+        let spread = 0.15 + 0.25 * unit(hash_u32(h ^ 2));
+        let velocity = (up + (a * angle.cos() + b * angle.sin()) * spread) * speed;
+        let pos = mouth + velocity * age - up * (0.5 * GRAVITY * age * age);
+        let cooled = age / LIFE;
+        *p = Particle {
+            pos,
+            radius: 0.1 + 0.18 * unit(h >> 5),
+            color: if alive {
+                colors.get(2300.0 - 1000.0 * cooled) * (4.0 * (1.0 - cooled).powi(2))
+            } else {
+                Vec3::ZERO
+            },
+        };
+    }
+}
+
+pub const SPARK_COUNT: usize = 60;
+
+/// Chispas de un naufragio que se despierta: rafagas cortas de chispas que
+/// saltan y caen.
+pub fn sparks(out: &mut [Particle], at: Vec3, up: Vec3, t: f64, strength: f32, seed: u32) {
+    const LIFE: f32 = 0.7;
+    let time = t as f32;
+    // Una rafaga cada tanto, no siempre.
+    let slot = (time / 1.9 + unit(seed)).floor();
+    let burst = unit(hash_u32(seed ^ slot as u32)) < 0.55;
+    let start = (time / 1.9 + unit(seed)).fract() * 1.9;
+    let (a, b) = basis(up);
+    for (i, p) in out.iter_mut().enumerate() {
+        let h = hash_u32(i as u32 ^ seed ^ slot as u32);
+        let age = start - unit(h) * 0.2;
+        let alive = burst && (0.0..LIFE).contains(&age);
+        let angle = unit(hash_u32(h)) * std::f32::consts::TAU;
+        let velocity = (up * (0.6 + unit(h >> 4)) + (a * angle.cos() + b * angle.sin()) * 1.2) * 9.0;
+        let pos = at + velocity * age - up * (6.0 * age * age);
+        *p = Particle {
+            pos,
+            radius: 0.06,
+            color: if alive {
+                Vec3::new(1.0, 0.75, 0.45) * (20.0 * strength * (1.0 - age / LIFE))
+            } else {
+                Vec3::ZERO
+            },
+        };
+    }
+}
+
 /// Ondas que la baliza de Cementerio emite con cada destello.
 const BEACON_WAVES: usize = 3;
 const BEACON_WAVE_POINTS: usize = 260;
@@ -104,7 +244,7 @@ pub const BEACON_COUNT: usize = BEACON_WAVES * BEACON_WAVE_POINTS;
 /// La transmision de la baliza: con cada destello sale un anillo de luz roja
 /// que se abre sobre el horizonte y sube, y se apaga. `top` es la lampara y
 /// `up` la vertical del planeta ahi, ambos relativos a la camara.
-pub fn beacon_waves(out: &mut [Particle], top: Vec3, up: Vec3, t: f64, period: f32) {
+pub fn beacon_waves(out: &mut [Particle], top: Vec3, up: Vec3, t: f64, period: f32, near: f32) {
     let (a, b) = basis(up);
     let life = period * BEACON_WAVES as f32;
     let time = t as f32;
@@ -120,7 +260,7 @@ pub fn beacon_waves(out: &mut [Particle], top: Vec3, up: Vec3, t: f64, period: f
         *p = Particle {
             pos: top + ring * radius + up * (age * 6.0),
             radius: 0.8 + age * 0.35,
-            color: Vec3::new(1.0, 0.1, 0.05) * (0.55 * fade),
+            color: Vec3::new(1.0, 0.1, 0.05) * ((0.55 + 1.2 * near) * fade),
         };
     }
 }

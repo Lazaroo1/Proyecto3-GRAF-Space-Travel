@@ -87,22 +87,27 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
         albedo = albedo.lerp(iris * (0.45 + 0.55 * lum), inside * 0.8) * (1.0 - 0.8 * limbal);
         // La pupila se dilata con el latido.
         let turbulence = u.noise.noise(p * 40.0 + Vec3::splat(t * 0.1)) * 0.05;
-        let pupil_radius = 0.3 + 0.07 * u.beat_at(0.0);
+        // Con la nave cerca la pupila se cierra y el iris se enciende.
+        let pupil_radius = (0.3 + 0.07 * u.beat_at(0.0)) * (1.0 - 0.55 * u.eye_near);
         let pupil = smoothstep(pupil_radius + 0.05, pupil_radius - 0.02, r + turbulence);
         albedo = albedo * (1.0 - 0.96 * pupil);
         let edge = smoothstep(pupil_radius + 0.14, pupil_radius + 0.03, r) * (1.0 - pupil);
-        glow = iris * (inside * (1.0 - pupil) * 0.08 * streaks)
-            + Vec3::new(0.75, 0.3, 1.0) * (edge * 0.7);
+        glow = iris * (inside * (1.0 - pupil) * (0.08 + 0.35 * u.eye_near) * streaks)
+            + Vec3::new(0.75, 0.3, 1.0) * (edge * (0.7 + 1.5 * u.eye_near));
     }
 
     // Relampagos en la tormenta, cada uno dura una fraccion de segundo.
-    let storm = smoothstep(2.6, 1.0, r);
+    // Con la nave cerca la tormenta se agita: mas relampagos, y mas
+    // seguidos, debajo de ella.
+    let storm = smoothstep(2.6 + 2.0 * u.eye_near, 1.0, r);
     if storm > 0.0 {
-        let slot = (t * 2.7).floor();
+        let slot = (t * (2.7 + 5.0 * u.eye_near)).floor();
         let spot = u.noise.noise(p * 7.0 + Vec3::splat(slot * 13.7));
         let gate = u.noise.noise(Vec3::new(slot * 0.71, 3.3, 1.1));
-        let flash = smoothstep(0.42, 0.62, spot) * smoothstep(0.1, 0.35, gate) * storm;
-        glow += Vec3::new(0.55, 0.65, 1.0) * (flash * 0.5);
+        let flash = smoothstep(0.42 - 0.15 * u.eye_near, 0.62, spot)
+            * smoothstep(0.1 - 0.4 * u.eye_near, 0.35, gate)
+            * storm;
+        glow += Vec3::new(0.55, 0.65, 1.0) * (flash * (0.5 + 0.8 * u.eye_near));
     }
 
     let n = f.normal;

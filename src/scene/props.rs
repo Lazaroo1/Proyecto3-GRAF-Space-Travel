@@ -48,10 +48,11 @@ pub enum PropKind {
     Wreck,
     Boulder,
     Beacon,
+    Vent,
 }
 
 impl PropKind {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Spire,
         Self::Ruin,
         Self::Mushroom,
@@ -60,6 +61,7 @@ impl PropKind {
         Self::Wreck,
         Self::Boulder,
         Self::Beacon,
+        Self::Vent,
     ];
 
     /// Posicion en `ALL` (y en la lista de modelos).
@@ -76,7 +78,7 @@ impl PropKind {
         match self {
             Self::Wreck | Self::Boulder | Self::Beacon => 1.0,
             Self::Spire | Self::Ruin => 0.75,
-            Self::Mushroom | Self::Coral | Self::Spike => 0.5,
+            Self::Mushroom | Self::Coral | Self::Spike | Self::Vent => 0.5,
         }
     }
 }
@@ -123,6 +125,10 @@ const CAP: Vec3 = Vec3::new(0.36, 0.05, 0.3);
 const TIP: Vec3 = Vec3::new(1.0, 0.0, 1.0);
 /// La lampara de la baliza (el shader la enciende).
 const LAMP: Vec3 = Vec3::new(1.0, 0.0, 0.0);
+/// La boca de lava de los geiseres (el shader la enciende).
+const POOL: Vec3 = Vec3::new(1.0, 1.0, 0.0);
+/// Altura de la boca de los geiseres, en unidades del modelo.
+pub const VENT_TOP: f32 = 7.3;
 /// Paredes de adentro del casco: el shader las oscurece con el rojo.
 const INSIDE: Vec3 = Vec3::new(0.15, 1.0, 1.0);
 
@@ -280,18 +286,169 @@ fn beacon(detail: usize) -> Mesh {
     b.build()
 }
 
-/// Pone la baliza en su lugar de Cementerio, fijo en el espacio del
-/// planeta, y aparta los naufragios de su pie.
-pub fn beacon_site(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField) {
-    let dir = DVec3::new(0.32, 0.22, 0.92).normalize();
-    instances.retain(|p| (p.position.normalize() - dir).length() * radius > 30.0);
-    let height = field.sample(dir.as_vec3()).height as f64;
-    instances.push(Instance {
-        kind: PropKind::Beacon,
-        position: dir * (radius + height - 0.8),
-        rotation: upright_rotation(dir, 0.7),
-        scale: 1.0,
+/// Un geiser de Pira: un cono de roca rugosa con una boca de lava y rocas
+/// al pie.
+fn vent(detail: usize) -> Mesh {
+    let mut b = MeshBuilder::new();
+    b.color(STONE);
+    let sides = [6, 10, 16][detail];
+    b.frustum(Vec3::new(0.0, -1.5, 0.0), Vec3::Y, 8.0, 5.2, 1.9, sides, false, (false, false));
+    // Labio de la boca.
+    b.frustum(Vec3::new(0.0, 6.5, 0.0), Vec3::Y, 0.8, 1.95, 1.65, sides, false, (false, true));
+    b.color(POOL);
+    b.frustum(Vec3::new(0.0, VENT_TOP - 0.1, 0.0), Vec3::Y, 0.12, 1.5, 1.5, sides, false, (false, true));
+    if detail >= 1 {
+        b.color(STONE);
+        for k in 0..[0, 4, 7][detail] {
+            let h = hash_u32(0x7E47 + k as u32);
+            let a = (h & 0xFFFF) as f32 / 65536.0 * TAU;
+            let r = 4.6 + 1.6 * ((h >> 16) & 0xFF) as f32 / 255.0;
+            b.cuboid(
+                Vec3::new(a.cos() * r, 0.2, a.sin() * r),
+                tilted(a),
+                Vec3::new(0.7, 0.5, 0.6),
+            );
+        }
+    }
+    let mut mesh = b.build();
+    // Roca rugosa: el cono se abolla, la boca no.
+    let noise = Perlin::new(0x7E47);
+    mesh.deform(|p| {
+        if p.y > VENT_TOP - 0.3 {
+            return p;
+        }
+        let bump = 1.0 + 0.16 * noise.fbm(p * 0.7, 3);
+        Vec3::new(p.x * bump, p.y, p.z * bump)
     });
+    mesh
+}
+
+/// Una instancia en el lugar: a `x` a la derecha y `z` al frente del centro
+/// (unidades del mundo), sobre el terreno.
+fn at_site(
+    radius: f64,
+    field: &dyn HeightField,
+    frame: (DVec3, DVec3, DVec3),
+    kind: PropKind,
+    x: f64,
+    z: f64,
+    scale: f32,
+    yaw: f64,
+    sink: f64,
+) -> Instance {
+    let (n, forward, right) = frame;
+    let dir = (n + (right * x + forward * z) / radius).normalize();
+    let height = field.sample(dir.as_vec3()).height as f64;
+    Instance {
+        kind,
+        position: dir * (radius + height - sink * scale as f64),
+        rotation: upright_rotation(dir, yaw),
+        scale,
+    }
+}
+
+/// Quita del lugar los objetos repartidos a menos de `clear` unidades.
+fn clear_site(instances: &mut Vec<Instance>, radius: f64, normal: DVec3, clear: f64) {
+    instances.retain(|p| (p.position.normalize() - normal).length() * radius > clear);
+}
+
+/// Los geiseres de Pira: una docena de bocas de lava alrededor de un claro.
+pub fn vent_field(
+    instances: &mut Vec<Instance>,
+    radius: f64,
+    field: &dyn HeightField,
+    seed: u32,
+    frame: (DVec3, DVec3, DVec3),
+) {
+    clear_site(instances, radius, frame.0, 110.0);
+    for k in 0..12u32 {
+        let h = hash_u32(seed ^ k.wrapping_mul(0x9E37) ^ 0x6E15);
+        let angle = unit(h) as f64 * std::f64::consts::TAU;
+        let distance = 22.0 + 70.0 * unit(hash_u32(h)) as f64;
+        instances.push(at_site(
+            radius,
+            field,
+            frame,
+            PropKind::Vent,
+            angle.cos() * distance,
+            angle.sin() * distance + 40.0,
+            0.9 + 0.8 * unit(hash_u32(h ^ 3)),
+            unit(hash_u32(h ^ 5)) as f64 * std::f64::consts::TAU,
+            0.4,
+        ));
+    }
+}
+
+/// La catedral de Requiem: una aguja mayor en medio de un circulo de agujas
+/// y unas ruinas alrededor.
+pub fn cathedral(
+    instances: &mut Vec<Instance>,
+    radius: f64,
+    field: &dyn HeightField,
+    seed: u32,
+    frame: (DVec3, DVec3, DVec3),
+) {
+    clear_site(instances, radius, frame.0, 120.0);
+    let center = 60.0;
+    instances.push(at_site(radius, field, frame, PropKind::Spire, 0.0, center, 2.3, 0.3, 0.8));
+    for k in 0..9u32 {
+        let h = hash_u32(seed ^ k.wrapping_mul(0x51ED) ^ 0xCA7E);
+        let angle = k as f64 / 9.0 * std::f64::consts::TAU;
+        instances.push(at_site(
+            radius,
+            field,
+            frame,
+            PropKind::Spire,
+            angle.cos() * 48.0,
+            center + angle.sin() * 48.0,
+            1.0 + 0.35 * unit(h),
+            angle,
+            0.8,
+        ));
+    }
+    for k in 0..5u32 {
+        let h = hash_u32(seed ^ k.wrapping_mul(0x7A11) ^ 0x2B1E);
+        let angle = (k as f64 + 0.5) / 5.0 * std::f64::consts::TAU + 0.3;
+        instances.push(at_site(
+            radius,
+            field,
+            frame,
+            PropKind::Ruin,
+            angle.cos() * 82.0,
+            center + angle.sin() * 82.0,
+            0.9 + 0.3 * unit(h),
+            unit(hash_u32(h)) as f64 * std::f64::consts::TAU,
+            0.5,
+        ));
+    }
+}
+
+/// La baliza de Cementerio con las naves que cayeron a su alrededor.
+pub fn beacon_site(
+    instances: &mut Vec<Instance>,
+    radius: f64,
+    field: &dyn HeightField,
+    seed: u32,
+    frame: (DVec3, DVec3, DVec3),
+) {
+    clear_site(instances, radius, frame.0, 90.0);
+    instances.push(at_site(radius, field, frame, PropKind::Beacon, 0.0, 0.0, 1.0, 0.7, 0.8));
+    for k in 0..8u32 {
+        let h = hash_u32(seed ^ k.wrapping_mul(0x3C6E) ^ 0xB41A);
+        let angle = (k as f64 + unit(h) as f64 * 0.6) / 8.0 * std::f64::consts::TAU;
+        let distance = 32.0 + 40.0 * unit(hash_u32(h)) as f64;
+        instances.push(at_site(
+            radius,
+            field,
+            frame,
+            PropKind::Wreck,
+            angle.cos() * distance,
+            angle.sin() * distance,
+            0.9 + 0.4 * unit(hash_u32(h ^ 7)),
+            unit(hash_u32(h ^ 9)) as f64 * std::f64::consts::TAU,
+            1.0,
+        ));
+    }
 }
 
 fn mushroom(detail: usize) -> Mesh {
@@ -599,6 +756,7 @@ pub fn build_models() -> Vec<PropModel> {
                 PropKind::Wreck => wreck(detail),
                 PropKind::Boulder => boulder(detail),
                 PropKind::Beacon => beacon(detail),
+                PropKind::Vent => vent(detail),
             };
             let mut lods = [make(2), make(1), make(0)];
             if matches!(kind, PropKind::Mushroom | PropKind::Coral) {
