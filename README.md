@@ -6,9 +6,11 @@ Un sistema solar explorable en nave, dibujado con un renderer por software
 propio en CPU. **Ocaso**, una supergigante roja, agoniza y late como un
 corazón, y se puede volar entre sus cinco planetas todo el tiempo que se
 quiera. Con **J** empieza el final: el latido se acelera, la estrella suelta
-una capa de gas, colapsa en una supernova fallida y en su lugar nace
+una capa de gas que arde, colapsa en una supernova fallida y en su lugar nace
 **Gargantúa**, un agujero negro con su disco de acreción que curva la luz de
-todo el cielo. Otra J la hace renacer.
+todo el cielo. Gargantúa estira a Pira, la deshace y su gas entra al disco en
+espiral hasta mezclarse con él. Se puede volar al disco; quien cruza el
+horizonte muere y el tiempo se rebobina. Otra J hace renacer a la estrella.
 
 ![Gargantúa: el ojo se abre](media/24_el_ojo.png)
 
@@ -18,6 +20,7 @@ todo el cielo. Otra J la hace renacer.
 | ![Vigía y su ojo-tormenta](media/06_vigia.png) | ![Pira: corteza en placas y lava](media/02_pira.png) |
 | ![Agujas góticas de Réquiem](media/10_agujas.png) | ![Cementerio: naves en los anillos y la baliza](media/08_cementerio.png) |
 | ![Superficie de Jardín](media/23_jardin_biopunk.png) | ![Pira y su cola de polvo](media/14_cola.png) |
+| ![Gargantúa se come a Pira](media/30_comida.png) | ![El gas de Pira se mezcla con el disco](media/31_digestion.png) |
 
 ## Lugares para visitar
 
@@ -49,7 +52,7 @@ Recorrido sugerido para grabarlo (F9 oculta el HUD):
 3. Con O (crucero), dar la vuelta al planeta sobre el bosque de hongos.
 4. Subir y alejarse con Shift.
 5. J: el estertor (la nebulosa y las llamaradas), el silencio, la onda
-   gravitacional y Gargantúa formando su disco, todo en medio minuto.
+   gravitacional, Gargantúa naciendo blanca azulada y comiéndose a Pira.
 
 ## Ejecutar
 
@@ -63,7 +66,7 @@ Opciones:
 
 ```sh
 cargo run --release -- --res 1920x1080        # resolución del render (por defecto 1280x720)
-cargo run --release -- --captura capturas     # las 30 vistas fijas como PNG, sin abrir ventana
+cargo run --release -- --captura capturas     # las 32 vistas fijas como PNG, sin abrir ventana
 cargo run --release -- --bench 30             # mide cada vista fija y da medianas por etapa
 cargo run --release -- --wire --lod           # empieza con wireframe y colores de LOD
 cargo test --release                          # pruebas de vuelo, raster, sombras y gas volumétrico
