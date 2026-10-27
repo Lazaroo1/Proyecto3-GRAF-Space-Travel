@@ -223,7 +223,7 @@ pub const PRESETS: [Preset; 32] = [
         act: None,
     },
     Preset {
-        name: "10_monolitos",
+        name: "10_glifo",
         shot: Shot::Landmark {
             body: "Requiem",
             kind: PropKind::Monolith,
@@ -369,7 +369,7 @@ pub const PRESETS: [Preset; 32] = [
         act: None,
     },
     Preset {
-        name: "28_catedral",
+        name: "28_monolitos",
         shot: Shot::Site {
             body: "Requiem",
             altitude: 14.0,

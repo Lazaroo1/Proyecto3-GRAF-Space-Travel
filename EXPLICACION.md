@@ -19,6 +19,43 @@
   tanto de radio) y, si pasa cerca, se suma en pedazos: sin eso se veían
   discos apilados.
 
+- **Lunas** (`system.rs::Host`): una luna guarda una copia de la órbita de
+  su planeta y su posición es la de él más la suya: sigue siendo función
+  solo del tiempo. Si la órbita del planeta cambia (panel T), sus lunas se
+  actualizan.
+- **Vigía como su lámina**: paleta más profunda (índigo, morado, orquídea y
+  rosa en las crestas), brazos en espiral logarítmica que caen al ojo y un
+  iris de gas turbulento (ruido en polares que se retuerce y corre hacia
+  adentro, con filamentos donde cruza por cero) que brilla rosa y magenta,
+  con la pupila negra y redonda. Un ciclo lento le sube y le baja la fuerza a
+  la tormenta y corre su color del rosa al violeta. Los relámpagos son
+  destellos chicos dentro de las nubes del vórtice. Tiene **anillos
+  delgados de polvo** que brillan a contraluz.
+- **Párpado y El espejo** ([shaders/parpado.rs](src/shaders/parpado.rs)): la
+  luna de Vigía, acoplada por marea (le da siempre la misma cara), con
+  cordilleras de cristal y lagos. Del lado de Vigía hay un lago grande: su
+  agua refleja el cielo y, si el rayo reflejado pega en la esfera de Vigía,
+  ese punto se sombrea **con el mismo shader de Vigía**, así que el ojo
+  también se ve en el lago. Fresnel de Schlick; la nave levanta ondas
+  (anillos que se alejan del punto bajo ella). Los racimos de cristal reflejan
+  lo mismo y tienen vetas de luz que se encienden con la nave cerca. Es el
+  lugar de Vigía para la tecla N.
+- **Anillos de varios estilos** (`rings.rs::RingStyle`): el mismo disco
+  analítico sirve para las naves de Cementerio, el polvo de Vigía (bandas
+  delgadas con divisiones nítidas) y las ruinas de Réquiem (bloques y
+  puentes: cajas giradas en las mismas celdas polares). Si un rayo cruza
+  varios, se mezclan del más lejano al más cercano.
+- **Réquiem como su lámina**: las agujas góticas se volvieron **monolitos**:
+  losas de piedra oscura en tramos que no calzan, gastadas (vetas,
+  grietas, escarcha que chorrea), con un glifo tallado en sus caras anchas
+  (un círculo cruzado por una línea) que brilla apenas, late con la estrella,
+  se enciende con la nave cerca y queda encendido después del colapso. En
+  su lugar, todos miran a la estrella y varios se inclinan hacia ella:
+  apuntan a donde va a nacer Gargantúa. Hay **picos de roca** oscuros en las
+  alturas nevadas, **dunas** en la nieve (ondas de diente de sierra suave que
+  inclinan la normal, solo de cerca), un **anillo de ruinas** y una luna,
+  **Epitafio**, grande en su cielo.
+
 # Cambios de la cuarta revisión
 
 - **Las fases como las referencias**: la nebulosa del estertor tiene dos
@@ -245,8 +282,10 @@ cara a la estrella.
 | --- | --- |
 | Pira | Corteza negra en placas con lava de cuerpo negro entre ellas, grietas que laten, acoplamiento de marea, una cola de polvo que la estrella le arranca y un campo de géiseres. |
 | Jardín | Arterias que laten con la estrella, poros, capilares; la superficie respira (desplazamiento en el vertex shader). |
-| Vigía | Gigante gaseoso morado con un vórtice que gira y una tormenta en forma de ojo que sigue a la nave; la pupila late. |
-| Réquiem | Hielo y escarcha bajo una luz fría, grietas que respiran luz y agujas góticas cuya luz sube con cada latido. |
+| Vigía | Gigante gaseoso morado con un vórtice que gira y una tormenta en forma de ojo, de gas rosa, que sigue a la nave; la pupila late. Anillos delgados de polvo. |
+| Párpado | La luna de Vigía: cristal y lagos espejo donde se refleja el ojo. |
+| Réquiem | Hielo y escarcha bajo una luz fría, grietas que respiran luz, dunas, picos de roca y monolitos con un glifo que apunta a donde nacerá Gargantúa. Un anillo de ruinas. |
+| Epitafio | La luna de Réquiem: hielo viejo lleno de cráteres. |
 | Cementerio | Cráteres y zanjas de naves estrelladas, anillos llenos de naves del éxodo y una baliza que sigue transmitiendo. |
 
 ## 4. Shaders ([shaders/](src/shaders))
@@ -265,7 +304,10 @@ su color HDR. Algunos ejemplos de técnica:
   línea, se dibuja su brillo promedio en vez de parpadear.
 - **Vigía** ([vigia.rs](src/shaders/vigia.rs)): coordenadas giradas con la
   fórmula de Rodrigues para el vórtice; el iris en coordenadas polares
-  alrededor del eje del ojo.
+  alrededor del eje del ojo, con ruido que se retuerce y corre hacia adentro.
+- **Párpado** ([parpado.rs](src/shaders/parpado.rs)): el agua refleja a
+  Vigía intersectando el rayo reflejado con su esfera y llamando al shader de
+  Vigía en ese punto.
 - **Anillos** ([rings.rs](src/shaders/rings.rs)): analíticos (intersección
   rayo-plano), con la sombra del planeta sobre ellos y la de ellos sobre el
   planeta. Las naves son celdas de Voronoi en coordenadas polares (un número
@@ -274,7 +316,8 @@ su color HDR. Algunos ejemplos de técnica:
   radio, en un minuto se estirarían en rayas).
 
 **Animados**: todos los que usan `u.time` o el latido: estrella, lava, venas,
-vórtice y pupila de Vigía, agujas, anillos, nebulosa y gas del disco.
+vórtice, tormenta y pupila de Vigía, glifos, cristales, lagos, anillos,
+nebulosa, Pira hirviendo y gas del disco.
 
 ## 5. Mapeo de normales ([shaders/textures.rs](src/shaders/textures.rs))
 
@@ -292,7 +335,7 @@ vórtice y pupila de Vigía, agujas, anillos, nebulosa y gas del disco.
 
 ## 6. Objetos de la superficie ([scene/props.rs](src/scene/props.rs))
 
-- **Modelos**: ocho tipos armados con código con `MeshBuilder`
+- **Modelos**: once tipos armados con código con `MeshBuilder`
   ([scene/builder.rs](src/scene/builder.rs)): cajas, conos truncados,
   elipsoides y tubos con transporte paralelo. Cada uno en tres niveles de
   detalle.
@@ -300,7 +343,7 @@ vórtice y pupila de Vigía, agujas, anillos, nebulosa y gas del disco.
   cada celda propone un candidato en un punto pseudoaleatorio (un hash de la
   semilla, la cara y la celda). Se acepta con una probabilidad que sale de
   **ruido fBm** (grupos y claros) por las reglas del terreno (no hay hongos en
-  la lava ni agujas en el hielo). La misma semilla da las mismas
+  la lava ni monolitos en el hielo). La misma semilla da las mismas
   posiciones; F6 la cambia.
 - **Posición y orientación**: cada objeto se guarda en el espacio de su
   planeta, con +Y sobre la normal radial y un giro al azar alrededor de ella;
@@ -312,7 +355,7 @@ vórtice y pupila de Vigía, agujas, anillos, nebulosa y gas del disco.
   suelo en vez de desaparecer de golpe.
 - **Sombra del planeta por pixel**: el rayo hacia la estrella pasa a una
   distancia `d` del centro; si `d` es menor que el radio, el planeta lo tapa.
-  La punta de una aguja sigue iluminada cuando su base ya está de noche.
+  La punta de un monolito sigue iluminada cuando su base ya está de noche.
 
 ## 7. Navegación ([scene/ship.rs](src/scene/ship.rs))
 
@@ -437,6 +480,6 @@ Las bioluminiscencias emiten y aportan luces puntuales de alcance finito.
 | El radio de un planeta | Se crea un terreno nuevo con ese radio (los chunks se regeneran alrededor de la cámara), se recalcula la tabla de su atmósfera y se vuelven a repartir sus objetos. La gravedad en la superficie se conserva: `μ = g r²`. |
 | Su periodo orbital | Cambia la velocidad en la órbita sin que salte: la fase se corrige para que en este instante siga en el mismo ángulo. Si estaba acoplado por marea (Pira), su giro cambia con él. |
 | Su periodo de giro | Igual, con la fase del giro. |
-| La intensidad de su shader | Escala su efecto propio (la lava, la bioluminiscencia, el ojo, el hielo y las agujas, la baliza y las luces de las naves). |
+| La intensidad de su shader | Escala su efecto propio (la lava, la bioluminiscencia, el ojo y los cristales, el hielo y los glifos, la baliza y las luces de las naves). |
 | La semilla | Otras posiciones para todos los objetos, siempre las mismas para esa semilla. |
 | El factor de LOD | Más o menos chunks (se ve en el contador de triángulos). |
