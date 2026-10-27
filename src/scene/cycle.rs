@@ -5,11 +5,12 @@
 //! | Desde J | Fase | Que pasa |
 //! | --- | --- | --- |
 //! | antes | Agonia | La supergigante roja late cada 1.9 s; Pira se le deshace encima. |
-//! | 0 - 20 s | Estertor | El latido se acelera hasta 0.7 s; la estrella se hincha, suelta una capa de gas y lanza llamaradas. |
-//! | 20 - 26 s | Silencio | Cae sobre si misma y su luz se drena. |
-//! | 26 - 30 s | Silencio | Oscuridad: solo queda la bioluminiscencia de Jardin. |
-//! | 30 s | El ojo se abre | Una onda gravitacional barre el sistema y nace Gargantua; su disco se enciende en 25 s. |
-//! | 55 s - | Despues | El disco ilumina el sistema con luz blanca azulada. |
+//! | 0 - 20 s | Estertor | El latido se acelera hasta 0.7 s; la estrella se hincha, suelta una capa de gas que arde y lanza llamaradas. |
+//! | 20 - 26 s | Silencio | Cae sobre si misma; su luz y la de la nebulosa se drenan. |
+//! | 26 - 30 s | Silencio | Oscuridad: los ojos se acostumbran y solo queda el cielo y la bioluminiscencia. |
+//! | 30 s | El ojo se abre | Una onda gravitacional barre el sistema y nace Gargantua, con un disco blanco azulado. |
+//! | 36 - 52 s | La comida | Gargantua estira a Pira hacia el agujero y la deshace; su gas entra al disco en espiral. |
+//! | 52 s - | Despues | El brazo de Pira se diluye en el disco, que se enfria a naranja fuego. Cruzar el horizonte mata y rebobina 15 s. |
 //! | J otra vez | Renacer | Fundido a blanco de 3 s y vuelve la agonia. |
 //!
 //! Todo es una **funcion pura** del tiempo y de los instantes en que se

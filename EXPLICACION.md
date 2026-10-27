@@ -1,3 +1,25 @@
+# Cambios de la cuarta revisión
+
+- **Las fases como las referencias**: la nebulosa del estertor tiene dos
+  capas (filamentos y nubes) y se apaga con la estrella, porque era ella la
+  que la iluminaba; en el silencio la exposición sube (los ojos se
+  acostumbran) y aparece el cielo; el disco nace blanco azulado (15 800 K) y
+  se enfría a naranja fuego (4 300 K).
+- **Gargantúa se come a Pira** (`cycle::swallow`, `app.rs::Warp`,
+  `shaders/gargantua.rs::Stream`): seis segundos después de abrirse el ojo,
+  los dibujos de Pira se deforman con una matriz que la estira hacia el
+  agujero y la adelgaza (la marea), la encoge y la acerca; su corteza se
+  funde y pierde su atmósfera y lo que tenía encima. A los 16 s ya no existe
+  (`Body::hidden`: no se dibuja ni se choca con ella). Su gas entra al disco
+  como un brazo en espiral **dentro del mismo volumen del Proyecto 2**: se
+  curva con la lente igual que el disco y tiene su misma turbulencia (la
+  textura de gas), así que al ensancharse y enrollarse (el gas de adentro
+  gira más rápido) se confunde con él. Se calienta al caer, del rojo al
+  blanco; cuando ya no hay Pira se vacía de afuera hacia adentro.
+- **Morir en el horizonte** (`App::watch_horizon`): la nave guarda dónde
+  estuvo cada medio segundo. A menos de 1.6 rs del agujero la pantalla se
+  funde a negro y el tiempo vuelve 15 s, con la nave donde estaba.
+
 # Cambios de la tercera revisión
 
 - **Jardín** volvió a como estaba en la primera revisión.
