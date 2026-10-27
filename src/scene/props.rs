@@ -2,8 +2,9 @@
 //!
 //! # Modelos
 //! Todos generados con codigo (`MeshBuilder`), cada uno en tres niveles de
-//! detalle: agujas goticas y sus ruinas (Requiem), hongos y corales
-//! (Jardin), espinas de obsidiana (Pira) y naves naufragas (Cementerio).
+//! detalle: monolitos, sus ruinas y picos de roca (Requiem), hongos y
+//! corales (Jardin), espinas de obsidiana y geiseres (Pira), naves
+//! naufragas y la baliza (Cementerio) y cristales (Parpado).
 //!
 //! # Distribucion
 //! Cada cara del cubo-esfera se divide en una grilla; cada celda propone un
@@ -40,7 +41,7 @@ use crate::terrain::{HeightField, TerrainSample, cube_to_sphere};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PropKind {
-    Spire,
+    Monolith,
     Ruin,
     Mushroom,
     Coral,
@@ -50,11 +51,12 @@ pub enum PropKind {
     Beacon,
     Vent,
     Crystal,
+    Crag,
 }
 
 impl PropKind {
-    pub const ALL: [Self; 10] = [
-        Self::Spire,
+    pub const ALL: [Self; 11] = [
+        Self::Monolith,
         Self::Ruin,
         Self::Mushroom,
         Self::Coral,
@@ -64,6 +66,7 @@ impl PropKind {
         Self::Beacon,
         Self::Vent,
         Self::Crystal,
+        Self::Crag,
     ];
 
     /// Posicion en `ALL` (y en la lista de modelos).
@@ -78,8 +81,8 @@ impl PropKind {
     /// ensuciarian.
     pub fn visibility(self) -> f32 {
         match self {
-            Self::Wreck | Self::Boulder | Self::Beacon => 1.0,
-            Self::Spire | Self::Ruin => 0.75,
+            Self::Wreck | Self::Boulder | Self::Beacon | Self::Crag => 1.0,
+            Self::Monolith | Self::Ruin => 0.75,
             Self::Mushroom | Self::Coral | Self::Spike | Self::Vent | Self::Crystal => 0.5,
         }
     }
@@ -108,14 +111,10 @@ pub const CORAL_TOP: f32 = 12.9;
 /// apoyado en `y = 0`.
 const HULL: f32 = 3.2;
 
-/// Pisos de las agujas de Requiem: altura de abajo y de arriba y radios
-/// (el shader abre ventanas de luz en cada piso), y altura de la punta.
-pub const SPIRE_TIERS: [(f32, f32, f32, f32); 3] = [
-    (1.6, 9.1, 1.6, 1.3),
-    (9.1, 15.1, 1.15, 0.9),
-    (15.1, 20.1, 0.82, 0.6),
-];
-pub const SPIRE_TIP: f32 = 29.5;
+/// Monolitos de Requiem: medio ancho, medio grosor y altura de la losa, y la
+/// altura del centro del glifo (en sus dos caras anchas, `z` = +-grosor).
+pub const MONOLITH: (f32, f32, f32) = (1.35, 0.45, 13.0);
+pub const GLYPH_HEIGHT: f32 = 8.6;
 /// Altura de la luz de la baliza de Cementerio, en unidades del modelo.
 pub const BEACON_TOP: f32 = 46.0;
 
@@ -140,103 +139,93 @@ fn tilted(angle: f32) -> [Vec3; 3] {
     [Vec3::new(c, s, 0.0), Vec3::new(-s, c, 0.0), Vec3::Z]
 }
 
-/// Aguja gotica de Requiem: pisos octogonales que se afinan, con cornisas,
-/// pinaculos alrededor de la base y una punta larga. `broken`: la de una
-/// ruina, partida a media altura y con los pedazos al pie.
-fn spire(detail: usize, broken: bool) -> Mesh {
+/// Monolito de Requiem: una losa alta de piedra oscura, gastada. El cuerpo
+/// va en tres tramos que no calzan del todo (la piedra se partio y se
+/// asento) y remata en un corte inclinado; al pie, cascajo. Las caras
+/// anchas (`z`) llevan el glifo, que dibuja el shader. `broken`: el de una
+/// ruina, partido a media altura con el pedazo de arriba tirado al lado.
+fn monolith(detail: usize, broken: bool) -> Mesh {
     let mut b = MeshBuilder::new();
     b.color(STONE);
-    let sides = [4, 8, 8][detail];
-    // Zocalo, hundido en el suelo.
-    b.frustum(
-        Vec3::new(0.0, -1.0, 0.0),
-        Vec3::Y,
-        2.6,
-        2.5,
-        2.1,
-        sides,
-        false,
-        (false, true),
-    );
-    let mut y = SPIRE_TIERS[0].0;
+    let (half_x, half_z, height) = MONOLITH;
+    let axes = [Vec3::X, Vec3::Y, Vec3::Z];
+    if detail == 0 {
+        let top = if broken { height * 0.55 } else { height };
+        b.cuboid(Vec3::new(0.0, (top - 1.0) * 0.5, 0.0), axes, Vec3::new(half_x, (top + 1.0) * 0.5, half_z));
+        return b.build();
+    }
+    let tiers = [(-1.0, 4.6, 1.0, 0.0), (4.6, 10.2, 0.96, 0.05), (10.2, height - 0.6, 0.92, -0.04)];
     let count = if broken { 2 } else { 3 };
-    for &(bottom, top, r0, r1) in &SPIRE_TIERS[..count] {
-        let h = top - bottom;
-        b.frustum(Vec3::new(0.0, bottom, 0.0), Vec3::Y, h, r0, r1, sides, false, (false, true));
-        if detail >= 1 {
-            // Cornisa: un anillo un poco mas ancho que remata el piso.
-            b.frustum(
-                Vec3::new(0.0, top - 0.3, 0.0),
-                Vec3::Y,
-                0.42,
-                r1 + 0.32,
-                r1 + 0.12,
-                sides,
-                false,
-                (true, true),
-            );
-        }
-        y = top;
+    for (k, &(bottom, top, width, shift)) in tiers[..count].iter().enumerate() {
+        // El tramo de arriba de una ruina quedo a media altura.
+        let top = if broken && k == 1 { top - 2.2 } else { top };
+        b.cuboid(
+            Vec3::new(shift, (bottom + top) * 0.5, -shift * 0.6),
+            axes,
+            Vec3::new(half_x * width, (top - bottom) * 0.5, half_z * width),
+        );
     }
     if broken {
-        // Remate quebrado e inclinado, y la punta caida al pie.
-        b.frustum(
-            Vec3::new(0.15, y, 0.0),
-            Vec3::new(0.2, 1.0, 0.06).normalize(),
-            2.0,
-            0.85,
-            0.4,
-            sides,
-            false,
-            (false, true),
+        // El pedazo de arriba, tirado y medio enterrado.
+        b.cuboid(
+            Vec3::new(3.6, 0.55, 0.9),
+            [Vec3::new(0.15, -0.99, 0.0).normalize(), Vec3::new(0.99, 0.15, 0.0).normalize(), Vec3::Z],
+            Vec3::new(half_x * 0.9, 3.4, half_z * 0.9),
         );
-        if detail >= 1 {
-            b.frustum(
-                Vec3::new(2.0, 0.4, 1.0),
-                Vec3::new(1.0, 0.12, 0.35).normalize(),
-                7.5,
-                0.55,
-                0.0,
-                sides,
-                false,
-                (true, false),
-            );
-            b.cuboid(Vec3::new(-2.3, 0.5, -1.6), tilted(-1.1), Vec3::new(0.55, 0.9, 0.5));
-        }
     } else {
-        b.frustum(
-            Vec3::new(0.0, y, 0.0),
-            Vec3::Y,
-            SPIRE_TIP - y,
-            0.55,
-            0.0,
-            sides,
-            false,
-            (false, false),
+        // Remate cortado en diagonal.
+        b.cuboid(
+            Vec3::new(0.0, height - 0.55, 0.0),
+            tilted(0.32),
+            Vec3::new(half_x * 0.88, 0.75, half_z * 0.9),
         );
-    }
-    if detail >= 1 {
-        // Pinaculos alrededor de la base.
-        for k in 0..4 {
-            let a = (k as f32 + 0.5) * TAU / 4.0;
-            let at = Vec3::new(a.cos() * 2.4, 1.3, a.sin() * 2.4);
-            b.frustum(at, Vec3::Y, 2.4, 0.36, 0.3, sides.min(6), false, (false, true));
-            b.frustum(at + Vec3::Y * 2.4, Vec3::Y, 3.4, 0.34, 0.0, sides.min(6), false, (false, false));
-        }
     }
     if detail >= 2 {
-        // Arbotantes: lajas inclinadas del suelo contra el primer piso.
-        for k in 0..4 {
-            let a = k as f32 * TAU / 4.0;
-            let radial = Vec3::new(a.cos(), 0.0, a.sin());
-            let long = (Vec3::Y * 5.6 - radial * 1.9).normalize();
-            let side = Vec3::Y.cross(radial).normalize();
-            let normal = long.cross(side);
-            b.cuboid(
-                radial * 2.45 + Vec3::Y * 2.9,
-                [normal, long, side],
-                Vec3::new(0.45, 3.0, 0.13),
-            );
+        // Cascajo al pie.
+        for k in 0..5u32 {
+            let h = hash_u32(0x30A0 ^ k.wrapping_mul(0x9E37_79B9) ^ broken as u32);
+            let unit = |shift: u32| ((h >> shift) & 0xFF) as f32 / 255.0;
+            let angle = unit(0) * TAU;
+            let at = Vec3::new(angle.cos() * (1.9 + 1.4 * unit(8)), 0.1, angle.sin() * (1.2 + 1.0 * unit(8)));
+            let size = 0.25 + 0.35 * unit(16);
+            b.cuboid(at, tilted(unit(24) * 2.0), Vec3::new(size, size * 0.8, size * 1.1));
+        }
+    }
+    b.build()
+}
+
+/// Pico de roca de Requiem: una aguja natural, oscura y angulosa, en tres
+/// tramos quebrados que se afinan hasta la punta; los mas detallados tienen
+/// otros mas chicos al lado.
+fn crag(detail: usize) -> Mesh {
+    let mut b = MeshBuilder::new();
+    b.color(STONE);
+    let sides = [4, 5, 5][detail];
+    let count = [1, 2, 3][detail];
+    for k in 0..count {
+        let h = hash_u32(0xC2A6 ^ (k as u32).wrapping_mul(0x9E37_79B9));
+        let unit = |shift: u32| ((h >> shift) & 0xFF) as f32 / 255.0;
+        let angle = unit(0) * TAU;
+        let mut base = if k == 0 {
+            Vec3::new(0.0, -1.0, 0.0)
+        } else {
+            Vec3::new(angle.cos(), 0.0, angle.sin()) * (1.8 + 1.2 * unit(8)) - Vec3::Y
+        };
+        let height = if k == 0 { 17.0 } else { 6.0 + 7.0 * unit(16) };
+        let mut radius = if k == 0 { 2.3 } else { 1.0 + 0.7 * unit(24) };
+        for segment in 0..3u32 {
+            let bend = hash_u32(h ^ segment.wrapping_mul(0x51ED));
+            let lean = Vec3::new(
+                (((bend >> 4) & 0xFF) as f32 / 255.0 - 0.5) * 0.45,
+                1.0,
+                (((bend >> 12) & 0xFF) as f32 / 255.0 - 0.5) * 0.45,
+            )
+            .normalize();
+            let length = height / 3.0 * (0.85 + 0.3 * ((bend >> 20) & 0xFF) as f32 / 255.0);
+            let next = if segment == 2 { 0.0 } else { radius * 0.6 };
+            b.frustum(base, lean, length, radius, next, sides, false, (false, false));
+            base += lean * length;
+            radius = next;
         }
     }
     b.build()
@@ -381,46 +370,67 @@ pub fn vent_field(
     }
 }
 
-/// La catedral de Requiem: una aguja mayor en medio de un circulo de agujas
-/// y unas ruinas alrededor.
-pub fn cathedral(
+/// Los monolitos de Requiem: uno enorme en medio y un campo alrededor,
+/// todos con el glifo hacia la estrella y varios inclinados hacia ella:
+/// apuntan a donde va a nacer Gargantua. Entre ellos, ruinas; atras, picos
+/// de roca.
+pub fn monolith_field(
     instances: &mut Vec<Instance>,
     radius: f64,
     field: &dyn HeightField,
     seed: u32,
     frame: (DVec3, DVec3, DVec3),
 ) {
-    clear_site(instances, radius, frame.0, 120.0);
-    let center = 60.0;
-    instances.push(at_site(radius, field, frame, PropKind::Spire, 0.0, center, 2.3, 0.3, 0.8));
-    for k in 0..9u32 {
+    clear_site(instances, radius, frame.0, 130.0);
+    let forward = frame.1;
+    let center = 55.0;
+    // De pie con la cara del glifo hacia la estrella e inclinado `lean`
+    // hacia ella.
+    let stand = |kind: PropKind, x: f64, z: f64, scale: f32, lean: f64| {
+        let mut instance = at_site(radius, field, frame, kind, x, z, scale, 0.0, 0.8);
+        let up = instance.position.normalize();
+        instance.rotation =
+            upright_rotation(up, yaw_toward(up, forward)) * DQuat::from_axis_angle(DVec3::X, lean);
+        instance
+    };
+    instances.push(stand(PropKind::Monolith, 0.0, center, 2.6, 0.0));
+    for k in 0..11u32 {
         let h = hash_u32(seed ^ k.wrapping_mul(0x51ED) ^ 0xCA7E);
-        let angle = k as f64 / 9.0 * std::f64::consts::TAU;
-        instances.push(at_site(
-            radius,
-            field,
-            frame,
-            PropKind::Spire,
-            angle.cos() * 48.0,
-            center + angle.sin() * 48.0,
-            1.0 + 0.35 * unit(h),
-            angle,
-            0.8,
+        let angle = (k as f64 + 0.3 * unit(h) as f64) / 11.0 * std::f64::consts::TAU;
+        let distance = 30.0 + 26.0 * unit(hash_u32(h)) as f64;
+        let kind = if unit(hash_u32(h ^ 1)) < 0.3 {
+            PropKind::Ruin
+        } else {
+            PropKind::Monolith
+        };
+        let lean = if unit(hash_u32(h ^ 2)) < 0.45 {
+            0.12 + 0.25 * unit(hash_u32(h ^ 3)) as f64
+        } else {
+            0.0
+        };
+        instances.push(stand(
+            kind,
+            angle.cos() * distance,
+            center + angle.sin() * distance,
+            0.9 + 0.6 * unit(hash_u32(h ^ 4)),
+            lean,
         ));
     }
-    for k in 0..5u32 {
-        let h = hash_u32(seed ^ k.wrapping_mul(0x7A11) ^ 0x2B1E);
-        let angle = (k as f64 + 0.5) / 5.0 * std::f64::consts::TAU + 0.3;
+    // Picos de roca atras, como un cerco.
+    for k in 0..9u32 {
+        let h = hash_u32(seed ^ k.wrapping_mul(0x2B1E) ^ 0x7A11);
+        let angle = (k as f64 + 0.5 * unit(h) as f64) / 9.0 * std::f64::consts::TAU;
+        let distance = 85.0 + 35.0 * unit(hash_u32(h)) as f64;
         instances.push(at_site(
             radius,
             field,
             frame,
-            PropKind::Ruin,
-            angle.cos() * 82.0,
-            center + angle.sin() * 82.0,
-            0.9 + 0.3 * unit(h),
-            unit(hash_u32(h)) as f64 * std::f64::consts::TAU,
-            0.5,
+            PropKind::Crag,
+            angle.cos() * distance,
+            center + angle.sin() * distance,
+            0.9 + 0.7 * unit(hash_u32(h ^ 5)),
+            unit(hash_u32(h ^ 9)) as f64 * std::f64::consts::TAU,
+            1.0,
         ));
     }
 }
@@ -818,8 +828,8 @@ pub fn build_models() -> Vec<PropModel> {
         .iter()
         .map(|&kind| {
             let make = |detail: usize| match kind {
-                PropKind::Spire => spire(detail, false),
-                PropKind::Ruin => spire(detail, true),
+                PropKind::Monolith => monolith(detail, false),
+                PropKind::Ruin => monolith(detail, true),
                 PropKind::Mushroom => mushroom(detail),
                 PropKind::Coral => coral(detail),
                 PropKind::Spike => spikes(detail),
@@ -828,6 +838,7 @@ pub fn build_models() -> Vec<PropModel> {
                 PropKind::Beacon => beacon(detail),
                 PropKind::Vent => vent(detail),
                 PropKind::Crystal => crystal(detail),
+                PropKind::Crag => crag(detail),
             };
             let mut lods = [make(2), make(1), make(0)];
             if matches!(kind, PropKind::Mushroom | PropKind::Coral) {
@@ -962,6 +973,15 @@ pub fn scatter(
 }
 
 /// Orientacion con +Y sobre `up` y un giro `yaw` alrededor de el.
+/// Giro alrededor de la vertical `up` que deja la cara +z del modelo
+/// mirando hacia `toward` (con los mismos ejes que `upright_rotation`).
+fn yaw_toward(up: DVec3, toward: DVec3) -> f64 {
+    let helper = if up.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
+    let x = helper.cross(up).normalize();
+    let z = x.cross(up);
+    toward.dot(x).atan2(toward.dot(z))
+}
+
 fn upright_rotation(up: DVec3, yaw: f64) -> DQuat {
     let helper = if up.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
     let x = helper.cross(up).normalize();
@@ -1164,19 +1184,34 @@ pub fn select(
 /// Reglas de cada planeta, por nombre.
 pub fn rules_for(planet: &str) -> Vec<Scatter> {
     match planet {
-        // Las ruinas: en tierra firme y plana, nunca en las llanuras de hielo.
+        // Monolitos y ruinas en tierra firme y plana, nunca en las llanuras
+        // de hielo; picos de roca en las alturas nevadas.
         "Requiem" => vec![
             Scatter {
-                kind: PropKind::Spire,
-                cells: 22,
-                scale: (0.8, 1.3),
+                kind: PropKind::Monolith,
+                cells: 18,
+                scale: (0.8, 1.4),
                 sink: 0.8,
                 upright: true,
                 accept: |density, s, slope| {
                     (1.0 - s.attrs.x)
                         * smoothstep(0.6, 0.2, slope)
-                        * smoothstep(0.55, 0.7, density)
-                        * 0.7
+                        * smoothstep(0.58, 0.72, density)
+                        * 0.6
+                },
+            },
+            Scatter {
+                kind: PropKind::Crag,
+                cells: 34,
+                scale: (0.6, 1.6),
+                sink: 1.0,
+                upright: true,
+                accept: |density, s, slope| {
+                    (1.0 - s.attrs.x)
+                        * (0.3 + 0.7 * s.attrs.y)
+                        * smoothstep(0.95, 0.4, slope)
+                        * smoothstep(0.5, 0.68, density)
+                        * 0.55
                 },
             },
             Scatter {

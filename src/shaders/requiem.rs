@@ -4,7 +4,12 @@
 //!
 //! Lo vivo: bajo los mares de hielo corre una red de grietas con luz fria
 //! (donde dos celdas de Voronoi se tocan) que respira despacio, mas visible
-//! de noche, y despues del colapso se enciende como las agujas.
+//! de noche, y despues del colapso se enciende como los glifos de los
+//! monolitos.
+//!
+//! En la nieve de tierra firme, dunas: el viento la peina en ondas (un seno
+//! a lo largo del viento, torcido por ruido) que inclinan la normal. Solo
+//! de cerca, cuando una onda mide varios pixeles.
 use super::{Fragment, Uniforms, detail, pbr};
 use crate::math::{Vec3, smoothstep};
 
@@ -18,6 +23,26 @@ const CRACK_LIGHT: Vec3 = Vec3::new(0.14, 0.48, 1.0);
 pub fn cold_light(sun: Vec3) -> Vec3 {
     let gray = Vec3::new(0.82, 0.9, 1.0) * sun.luminance();
     sun.lerp(gray, 0.75)
+}
+
+/// Largo de una duna, en unidades del mundo.
+const DUNE: f32 = 16.0;
+
+/// La normal `n` con las ondas de las dunas donde hay nieve (`amount`).
+fn dunes(f: &Fragment, u: &Uniforms, n: Vec3, footprint: f32, amount: f32) -> Vec3 {
+    let visible = smoothstep(DUNE * 0.4, DUNE * 0.12, footprint) * amount;
+    if visible <= 0.0 {
+        return n;
+    }
+    // El viento sopla siempre igual en el espacio del planeta.
+    let wind = Vec3::new(0.8, 0.0, 0.6);
+    let bend = u.noise.noise(f.local * 0.04) * 3.0;
+    let phase = f.local.dot(wind) * (std::f32::consts::TAU / DUNE) + bend;
+    // Cara de barlovento larga y sotavento corto: un diente de sierra suave.
+    let slope = phase.cos() + 0.45 * (2.0 * phase).cos();
+    let world_wind = f.object_to_world.mul_vec(wind);
+    let along = (world_wind - n * world_wind.dot(n)).normalize();
+    (n - along * (slope * 0.22 * visible)).normalize()
 }
 
 pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
@@ -42,13 +67,14 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     let aa = (footprint * 0.035).max(0.002);
     let seams = smoothstep(0.012 + aa, 0.002, cells.1 - cells.0) * ice;
     albedo = albedo.lerp(ICE, ice * 0.85) * (1.0 - seams * 0.6);
+    let normal = dunes(f, u, rock.normal, footprint, frost * (1.0 - ice));
     let lit = pbr::shade_light(
         f,
         u,
         albedo,
         0.8 - 0.62 * ice - 0.2 * frost,
         0.02,
-        rock.normal,
+        normal,
         rock.ao,
         cold_light(u.sun_light),
     );

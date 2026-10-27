@@ -322,10 +322,12 @@ pub fn composite(color: Vec3, dir: Vec3, depth: f32, ring: &RingInfo, u: &Unifor
     let forward = dir.dot(to_sun).max(0.0).powi(6) * scatter;
     let glint = (-dir).dot(ring.normal).abs() * 0.2;
     let light = if shadowed { 0.02 } else { 0.35 + forward + glint };
-    // El polvo de Vigia, como sus nubes, guarda su color con la luz roja.
+    // El polvo de Vigia, como sus nubes, guarda su color con la luz roja;
+    // las ruinas de Requiem, tan lejos, la reciben fria como su planeta.
     let sun = match ring.style {
         RingStyle::Dust => Vec3::splat(u.sun_light.luminance() * 1.3),
-        _ => u.sun_light,
+        RingStyle::Ruins => super::requiem::cold_light(u.sun_light),
+        RingStyle::Wrecks => u.sun_light,
     };
     color.lerp(albedo * sun * light, alpha) + glow
 }
