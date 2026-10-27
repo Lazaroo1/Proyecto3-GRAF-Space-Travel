@@ -24,7 +24,98 @@ pub struct BlackHole<'a> {
     pub outer: f32,
     pub peak: f32,
     pub cone_cos: f32,
+    /// El gas de Pira entrando al disco, cuando Gargantua se la come.
+    pub stream: Option<Stream>,
 }
+
+/// Pira deshecha: su gas entra al disco como un brazo en espiral. Sale de
+/// donde esta Pira, baja al plano del disco, se calienta al caer y, como el
+/// gas de adentro gira mas rapido, se enrolla y se abre con el tiempo hasta
+/// diluirse en el disco. Cuando Pira ya no esta, lo de afuera se vacia: el
+/// gas sigue cayendo.
+#[derive(Clone, Copy, Debug)]
+pub struct Stream {
+    /// Pira, en el marco del disco (y es la normal) y en `rs`.
+    start: P2Vec,
+    /// Su radio y su angulo en el disco.
+    radius: f32,
+    angle: f32,
+    /// Segundos desde que empezo a deshacerse.
+    age: f32,
+}
+
+/// Segundos que tarda Gargantua en deshacer a Pira (despues, el brazo se
+/// vacia de afuera hacia adentro).
+const FEEDING: f32 = 16.0;
+/// Pasado esto ya no queda nada del brazo: se mezclo con el disco.
+pub const STREAM_LIFE: f32 = 75.0;
+
+impl Stream {
+    pub fn new(start: P2Vec, age: f32) -> Self {
+        Self {
+            start,
+            radius: start.x.hypot(start.z),
+            angle: fast_atan2(start.z, start.x),
+            age,
+        }
+    }
+
+    /// Hasta donde llega, en `rs` desde el agujero.
+    pub fn reach(&self) -> f32 {
+        self.radius + 2.0
+    }
+
+    /// Luz que emite y profundidad optica por `rs` de recorrido en `q`. El
+    /// gas del brazo tiene la misma turbulencia que el del disco (`gas`): asi
+    /// se ve hecho de lo mismo y, al ensancharse, se confunde con el.
+    #[inline]
+    fn sample(&self, q: P2Vec, gas: &GasTexture) -> Option<(Vec3, f32)> {
+        let rp = self.radius;
+        let r = q.x.hypot(q.z);
+        if !(3.0..rp + 1.5).contains(&r) {
+            return None;
+        }
+        let u = ((rp - r) / (rp - 3.0)).clamp(0.0, 1.0);
+        // Baja de la altura de Pira al plano del disco.
+        let ys = self.start.y * (1.0 - u) * (1.0 - u);
+        let thick = 0.18 + 0.45 * (1.0 - u);
+        let dy = (q.y - ys) / thick;
+        if dy.abs() > 3.0 {
+            return None;
+        }
+        // El gas del disco gira hacia angulos decrecientes y el de adentro
+        // mas rapido: el brazo se adelanta hacia adentro y se enrolla.
+        let ratio = rp / r;
+        let wind = u * (1.4 + self.age * 0.07 * ratio * ratio.sqrt());
+        let gap = (fast_atan2(q.z, q.x) - (self.angle - wind) + std::f32::consts::PI)
+            .rem_euclid(std::f32::consts::TAU)
+            - std::f32::consts::PI;
+        let spread = 1.0 + self.age / 20.0;
+        let d = gap * r / ((0.25 + 0.7 * u) * spread);
+        if d.abs() > 3.0 {
+            return None;
+        }
+        // Se desvanece en la punta, junto al agujero y, cuando ya no hay
+        // Pira, desde afuera hacia adentro.
+        let drained = ((self.age - FEEDING) / 18.0).clamp(0.0, 1.2);
+        let ends = crate::math::smoothstep(rp + 1.5, rp - 0.5, r)
+            * crate::math::smoothstep(3.0, 4.0, r)
+            * crate::math::smoothstep(drained - 0.05, drained + 0.25, u);
+        // Recien soltado brilla; en un minuto ya se diluyo en el disco.
+        let fade = crate::math::smoothstep(0.0, 2.0, self.age)
+            * (-self.age / 30.0).exp()
+            * crate::math::smoothstep(STREAM_LIFE, STREAM_LIFE - 15.0, self.age);
+        let shape = (-(d * d) - dy * dy).exp() * ends * fade;
+        if shape < 2e-3 {
+            return None;
+        }
+        let density = shape * gas.turbulence(q) / spread;
+        let temperature = 2400.0 + 5000.0 * u;
+        let emission = crate::math::blackbody::planckian_rgb(temperature) * (1.2 + 2.5 * u);
+        Some((emission, density * 0.6))
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Traced {
     pub captured: bool,
@@ -33,6 +124,7 @@ pub struct Traced {
     pub transmittance: f32,
     pub depth: f32,
 }
+
 impl BlackHole<'_> {
     fn local(&self, v: Vec3) -> P2Vec {
         P2Vec::new(v.dot(self.axis_a), v.dot(self.normal), -v.dot(self.axis_b))
@@ -90,15 +182,20 @@ impl BlackHole<'_> {
         lens
     }
 
+    /// Hasta donde hay gas, en `rs`: el disco o el brazo de Pira.
+    fn extent(&self) -> f32 {
+        self.stream.map_or(self.outer, |s| self.outer.max(s.reach()))
+    }
+
     /// Distancia a la camara desde la que puede haber gas.
     fn gas_begins(&self) -> f32 {
-        (self.center.length() - self.outer * self.rs).max(0.0)
+        (self.center.length() - self.extent() * self.rs).max(0.0)
     }
 
     /// Distancia a la camara pasada la cual ya no hay gas: un limite mas
     /// lejano da lo mismo que ninguno.
     fn gas_ends(&self) -> f32 {
-        self.center.length() + (self.outer * 1.01 + 1.0) * self.rs
+        self.center.length() + (self.extent() * 1.01 + 1.0) * self.rs
     }
 
     /// Lo caro: el RK4 y la transferencia del Proyecto 2 a traves del gas,
@@ -116,6 +213,7 @@ impl BlackHole<'_> {
             ..Medium::VARIANT
         };
         let radial = RadialTable::shared();
+        let extent = self.extent();
         // El origen puede estar muy lejos del sistema: los pasos exteriores
         // son mayores sin saltarse la envoltura de 19 rs.
         for _ in 0..p2::config::MAX_STEPS {
@@ -127,7 +225,7 @@ impl BlackHole<'_> {
             // Saliendo, fuera de la esfera de fotones, el radio solo crece:
             // pasada la envoltura ya no queda gas que cruzar, y la direccion
             // final al cielo ya salio de la tabla.
-            if r > self.outer + 1.0 && previous.dot(photon.vel) > 0.0 {
+            if r > extent + 1.0 && previous.dot(photon.vel) > 0.0 {
                 break;
             }
             let step = if r > 40.0 && previous.dot(photon.vel) < 0.0 {
@@ -142,6 +240,18 @@ impl BlackHole<'_> {
             let hit_distance = (mid - origin).length() * self.rs;
             if hit_distance >= limit {
                 break;
+            }
+            if let Some(stream) = &self.stream {
+                if let Some((emission, density)) = stream.sample(mid, self.gas) {
+                    let length = (photon.pos - previous).length();
+                    let alpha = 1.0 - (-density * length).exp();
+                    gas.light += emission * (alpha * gas.transmittance);
+                    let after = gas.transmittance * (1.0 - alpha);
+                    if gas.transmittance > 0.5 && after <= 0.5 {
+                        gas.depth = hit_distance;
+                    }
+                    gas.transmittance = after;
+                }
             }
             if mid.x.hypot(mid.z) >= self.outer {
                 continue;
@@ -456,6 +566,7 @@ mod tests {
             density: 1.0,
             outer: 19.0,
             peak: 6500.0,
+            stream: None,
             cone_cos: table.disk_cone(19.0).cos(),
         }
     }

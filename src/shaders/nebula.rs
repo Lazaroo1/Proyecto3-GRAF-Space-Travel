@@ -28,44 +28,54 @@ impl Nebula {
     const LIFE: f32 = 70.0;
 
     /// La cascara `age` segundos despues de soltarse, alrededor de una
-    /// estrella de radio `base` en `center`.
-    pub fn at(age: f32, center: Vec3, base: f32) -> Option<Self> {
+    /// estrella de radio `base` en `center`. `light` es cuanta luz le da la
+    /// estrella: cuando colapsa, la nebulosa se apaga con ella.
+    pub fn at(age: f32, center: Vec3, base: f32, light: f32) -> Option<Self> {
         if !(0.0..Self::LIFE).contains(&age) {
             return None;
         }
         Some(Self {
             center,
             radius: base * (1.04 + 0.32 * age),
-            glow: smoothstep(0.0, 2.0, age) * (-age / 20.0).exp(),
+            glow: smoothstep(0.0, 2.0, age) * (-age / 20.0).exp() * light,
             cooled: smoothstep(0.0, 16.0, age),
             age,
         })
     }
 
-    /// Luz de la cascara en la direccion `dir` (unitaria) antes de `depth`.
+    /// Luz de la cascara en la direccion `dir` (unitaria) antes de `depth`:
+    /// la de afuera, con filamentos, y una interior mas densa, con nubes.
     pub fn light(&self, dir: Vec3, depth: f32, noise: &Perlin) -> Vec3 {
+        self.layer(dir, depth, noise, self.radius, 0.0, 1.0)
+            + self.layer(dir, depth, noise, self.radius * 0.55, 13.7, 0.7)
+    }
+
+    fn layer(&self, dir: Vec3, depth: f32, noise: &Perlin, radius: f32, seed: f32, weight: f32) -> Vec3 {
         let b = dir.dot(self.center);
-        let c = self.center.length_squared() - self.radius * self.radius;
+        let c = self.center.length_squared() - radius * radius;
         let disc = b * b - c;
         if disc <= 0.0 {
             return Vec3::ZERO;
         }
         let root = disc.sqrt();
-        let young = Vec3::new(1.5, 0.5, 0.12);
-        let old = Vec3::new(1.0, 0.09, 0.18);
+        let young = Vec3::new(1.9, 0.62, 0.14);
+        let old = Vec3::new(1.1, 0.12, 0.16);
         let color = young.lerp(old, self.cooled);
         let mut light = Vec3::ZERO;
         for hit in [b - root, b + root] {
             if hit <= 0.0 || hit >= depth {
                 continue;
             }
-            let normal = (dir * hit - self.center) / self.radius;
-            // Tramo dentro de la cascara, en grosores.
-            let path = (1.0 / normal.dot(dir).abs().max(0.1)).min(8.0);
-            let q = normal * 2.0 + Vec3::splat(self.age * 0.01);
+            let normal = (dir * hit - self.center) / radius;
+            // Tramo dentro de la cascara, en grosores. Se acota y se apaga
+            // hacia el borde: una cascara de verdad tiene grosor y no dibuja
+            // un circulo nitido donde se ve de canto.
+            let facing = normal.dot(dir).abs();
+            let path = (1.0 / facing.max(0.25)).min(4.0) * smoothstep(0.0, 0.3, facing);
+            let q = normal * 2.0 + Vec3::splat(self.age * 0.01 + seed);
             // Grumos grandes: hay regiones casi vacias y otras densas. En
             // las vacias no hace falta lo demas.
-            let clumps = smoothstep(-0.25, 0.45, noise.noise(q * 0.55 + Vec3::new(9.0, 3.0, 1.0)));
+            let clumps = smoothstep(-0.3, 0.4, noise.noise(q * 0.55 + Vec3::new(9.0, 3.0, 1.0)));
             if clumps <= 0.0 {
                 continue;
             }
@@ -73,9 +83,9 @@ impl Nebula {
             let ridge = |x: f32, k: i32| (1.0 - x.abs()).powi(k);
             let filaments = ridge(noise.noise(q * 1.5 + Vec3::splat(warp * 1.2)), 9)
                 + 0.45 * ridge(noise.noise(q * 4.2 + Vec3::splat(warp * 2.0)), 12);
-            let haze = (0.5 + 0.5 * noise.fbm(q * 1.4 + Vec3::new(4.0, 1.0, 7.0), 2)).powi(2);
-            let density = clumps * (filaments * 0.8 + haze * 0.35);
-            light += color * (density * path * self.glow * 0.14);
+            let billows = (0.5 + 0.5 * noise.fbm(q * 1.4 + Vec3::new(4.0, 1.0, 7.0), 2)).powi(2);
+            let density = clumps * (filaments * 0.8 + billows * 0.7);
+            light += color * (density * path * self.glow * 0.3 * weight);
         }
         light
     }

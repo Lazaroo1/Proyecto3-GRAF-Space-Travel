@@ -289,6 +289,7 @@ mod tests {
             eye_dir: Vec3::Z,
             eye_near: 0.0,
             ship: Vec3::ZERO,
+            melt: 0.0,
             ring: None,
             atmospheres: &[],
             sky_view: None,

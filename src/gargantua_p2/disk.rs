@@ -314,6 +314,24 @@ impl GasTexture {
             }
         });
     }
+    /// La turbulencia del gas de la Variante en `hit` (marco del disco, en
+    /// `rs`), con el mismo mapeo que `prepare_variant`. Mas alla del borde
+    /// del disco se repite la ultima fila.
+    pub fn turbulence(&self, hit: Vec3) -> f32 {
+        let radius = Vec2::new(hit.x, hit.z).length().max(1e-3);
+        let angle = crate::math::fast_atan2(hit.z, hit.x);
+        let outer_z = hit.y / (radius * config::OUTER_GAS_HEIGHT_RATIO);
+        let tex_x = angle.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU
+            * config::PREVIEW_GAS_TEXTURE_WIDTH as f32;
+        let tex_y = ((radius - config::DISK_INNER_RADIUS)
+            / (config::OUTER_GAS_END - config::DISK_INNER_RADIUS)
+            * (config::PREVIEW_GAS_TEXTURE_HEIGHT - 1) as f32)
+            .clamp(0.0, (config::PREVIEW_GAS_TEXTURE_HEIGHT - 1) as f32);
+        let tex_z = ((outer_z / 7.0 + 0.5) * (config::PREVIEW_GAS_TEXTURE_LAYERS - 1) as f32)
+            .clamp(0.0, (config::PREVIEW_GAS_TEXTURE_LAYERS - 1) as f32);
+        self.sample(tex_x, tex_y, tex_z)
+    }
+
     fn sample(&self, x: f32, y: f32, z: f32) -> f32 {
         if self.layers == 1 {
             return self.sample_layer(x, y, 0);
