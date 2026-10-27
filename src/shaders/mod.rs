@@ -19,6 +19,7 @@ mod images;
 mod jardin;
 mod nebula;
 mod tail;
+mod vapor;
 mod pbr;
 mod pira;
 mod props;
@@ -36,6 +37,7 @@ pub use atmosphere::{AtmosphereFrame, AtmosphereModel, AtmosphereParams, SkyView
 pub use gargantua::BlackHole;
 pub use nebula::Nebula;
 pub use tail::Tail;
+pub use vapor::Vapor;
 pub use pbr::PointLight;
 pub use props::{BEACON_PERIOD, PropStyle, beacon_flash, vent_activity};
 pub use rings::RingInfo;
@@ -119,6 +121,8 @@ pub struct Uniforms<'a> {
     pub nebula: Option<Nebula>,
     /// La cola de polvo de Pira.
     pub tail: Option<Tail>,
+    /// Pira hirviendo mientras Gargantua se la come.
+    pub vapor: Option<Vapor>,
     /// Gargantua, cuando ya existe.
     pub black_hole: Option<&'a BlackHole<'a>>,
     /// Centro de la estrella, relativo a la camara.
@@ -287,7 +291,11 @@ pub fn limb_haze(f: &Fragment, color: Vec3, strength: f32, ndl: f32) -> Vec3 {
 /// Si hay algun volumen que componer este frame.
 #[inline]
 pub fn has_volumes(u: &Uniforms) -> bool {
-    u.ring.is_some() || !u.atmospheres.is_empty() || u.nebula.is_some() || u.tail.is_some()
+    u.ring.is_some()
+        || !u.atmospheres.is_empty()
+        || u.nebula.is_some()
+        || u.tail.is_some()
+        || u.vapor.is_some()
 }
 
 /// Pasos de la atmosfera por pixel de cielo: ahi esta el detalle fino del
@@ -302,6 +310,9 @@ const SKY_FOG_STEPS: usize = 6;
 pub fn volumes(color: Vec3, dir: Vec3, depth: f32, sky: bool, u: &Uniforms) -> Vec3 {
     let dir = dir.normalize();
     let mut color = color;
+    if let Some(vapor) = &u.vapor {
+        color = vapor.apply(color, dir, depth, u.noise);
+    }
     if let Some(nebula) = &u.nebula {
         color += nebula.light(dir, depth, u.noise);
     }

@@ -1,3 +1,24 @@
+# Cambios de la quinta revisión
+
+- **Pira ya no se estira** ([shaders/vapor.rs](src/shaders/vapor.rs)): la
+  deformación de la cuarta revisión se veía como una goma. Ahora la marea la
+  hace hervir: la costra se rompe en placas cada vez más chicas que se hunden
+  en lava cada vez más caliente, primero del lado del agujero; el planeta se
+  encoge entero (sin deformarse) mientras pierde lo que se lleva el brazo, y
+  encima hierve una corona delgada de vapor incandescente con llamas que
+  suben (ruido estirado hacia afuera), abultada hacia el agujero. Es un
+  volumen marchado en línea recta, de adelante hacia atrás: cada muestra
+  emite con su color de cuerpo negro y tapa lo de atrás; la forma es un
+  perfil suave erosionado por ruido. Cuando ya no queda planeta, lo último es
+  un resplandor que solo brilla y se va con el brazo.
+- **El brazo nace como un embudo** (`gargantua.rs::Stream`): sale de todo el
+  lado de Pira que da al agujero (y se encoge con ella), casi derecho hacia
+  el agujero, y después se curva y se adelgaza en un chorro. Lejos del
+  agujero un paso del rayo mide más que el chorro, así que un paso largo se
+  revisa contra una tabla del eje (dirección, altura, grosor y ancho cada
+  tanto de radio) y, si pasa cerca, se suma en pedazos: sin eso se veían
+  discos apilados.
+
 # Cambios de la cuarta revisión
 
 - **Las fases como las referencias**: la nebulosa del estertor tiene dos
@@ -5,11 +26,11 @@
   que la iluminaba; en el silencio la exposición sube (los ojos se
   acostumbran) y aparece el cielo; el disco nace blanco azulado (15 800 K) y
   se enfría a naranja fuego (4 300 K).
-- **Gargantúa se come a Pira** (`cycle::swallow`, `app.rs::Warp`,
+- **Gargantúa se come a Pira** (`cycle::swallow`,
   `shaders/gargantua.rs::Stream`): seis segundos después de abrirse el ojo,
-  los dibujos de Pira se deforman con una matriz que la estira hacia el
-  agujero y la adelgaza (la marea), la encoge y la acerca; su corteza se
-  funde y pierde su atmósfera y lo que tenía encima. A los 16 s ya no existe
+  los dibujos de Pira se deformaban con una matriz que la estiraba hacia el
+  agujero (reemplazado en la quinta revisión); su corteza se funde y pierde
+  su atmósfera y lo que tenía encima. A los 16 s ya no existe
   (`Body::hidden`: no se dibuja ni se choca con ella). Su gas entra al disco
   como un brazo en espiral **dentro del mismo volumen del Proyecto 2**: se
   curva con la lente igual que el disco y tiene su misma turbulencia (la

@@ -1017,10 +1017,11 @@ impl App {
             .max(1.0);
         self.build_path(t, &camera, pixel_angle);
         self.emit_particles(t, &camera, ship_pos, ship_rot, show_ship);
-        // Gargantua se come a Pira: la estira hacia el agujero y la deshace.
-        let warp = self.system.find("Pira").filter(|_| state.swallow > 0.0).map(|i| {
-            let toward = (self.system.bodies[0].position(t) - self.system.bodies[i].position(t)).normalize();
-            Warp::new(i, state.swallow as f64, toward)
+        // Gargantua se come a Pira: hierve y se encoge dentro de su vapor.
+        let melting = self.system.find("Pira").filter(|_| state.stream_age > 0.0);
+        let shrink = melting.map(|body| Shrink {
+            body,
+            scale: shaders::Vapor::core(state.stream_age) as f64,
         });
         let mut draws = build_draws(
             &self.system,
@@ -1031,7 +1032,7 @@ impl App {
             show_ship,
             star_radius,
             star_material,
-            warp,
+            shrink,
         );
         self.prop_stats = prop_draws(
             &self.system,
@@ -1041,7 +1042,7 @@ impl App {
             &cull_view,
             pixel_angle,
             light_radius,
-            warp,
+            melting,
             &mut draws,
         );
         for mesh in [&self.path_mesh, &self.frustum_mesh] {
@@ -1146,7 +1147,7 @@ impl App {
         // Las mas cercanas primero: el shading recorre todas por pixel.
         points.sort_by(|a, b| a.pos.length_squared().total_cmp(&b.pos.length_squared()));
         points.truncate(12);
-        let atmospheres = atmosphere_frames(&self.system, t, &camera, &view, warp.map(|w| w.body));
+        let atmospheres = atmosphere_frames(&self.system, t, &camera, &view, melting);
         // Si la camara esta dentro de una atmosfera, su cielo sale de una tabla.
         let sky_view = atmospheres
             .iter()
@@ -1191,7 +1192,9 @@ impl App {
                             state.stream_age,
                         )
                     });
-                let extent = stream.map_or(state.disk_outer, |s| state.disk_outer.max(s.reach()));
+                let extent = stream
+                    .as_ref()
+                    .map_or(state.disk_outer, |s| state.disk_outer.max(s.reach()));
                 Some(BlackHole {
                     center: (star_pos - camera.pos).as_vec3(),
                     rs: state.rs as f32,
@@ -1259,6 +1262,21 @@ impl App {
             star_glow: state.star_glow,
             flares: state.flares,
             tail: pira_tail(&self.system, t, camera.pos, sun_light).filter(|_| state.star_glow > 0.01),
+            vapor: melting.and_then(|i| {
+                let pira = &self.system.bodies[i];
+                let center = pira.position(t);
+                let toward = (star_pos - center).normalize();
+                let velocity = pira.velocity(t);
+                let ahead = (velocity - toward * velocity.dot(toward)).normalize();
+                shaders::Vapor::at(
+                    (center - camera.pos).as_vec3(),
+                    pira.radius as f32,
+                    toward.as_vec3(),
+                    ahead.as_vec3(),
+                    state.stream_age,
+                    sun_light,
+                )
+            }),
             nebula: shaders::Nebula::at(
                 state.shell_age,
                 (star_pos - camera.pos).as_vec3(),
@@ -2140,7 +2158,7 @@ fn prop_draws<'a>(
     cull_view: &View,
     pixel_angle: f64,
     light_radius: f64,
-    warp: Option<Warp>,
+    melting: Option<usize>,
     draws: &mut Vec<Draw<'a>>,
 ) -> PropStats {
     let mut stats = PropStats::default();
@@ -2150,10 +2168,9 @@ fn prop_draws<'a>(
     for (index, (body, set)) in system.bodies.iter().zip(&system.props).enumerate() {
         let Some(field) = &body.surface else { continue };
         // Lo que hay sobre Pira cae primero cuando Gargantua la deshace.
-        if set.instances.is_empty() || body.hidden || warp.is_some_and(|w| w.body == index) {
+        if set.instances.is_empty() || body.hidden || melting == Some(index) {
             continue;
         }
-        let grow = warp.filter(|w| w.body == index).map_or(1.0, |w| w.grow);
         let quat = body.rotation(t);
         let rotation = quat.to_mat3();
         let body_pos = body.position(t);
@@ -2193,10 +2210,8 @@ fn prop_draws<'a>(
             );
             let position = instance.position + instance.position.normalize() * lift as f64;
             let rot = rotation.mul(&instance.rotation.to_mat3());
-            let (linear, offset) = match warp {
-                Some(w) => w.apply(index, center, rot.scale(scale), rotation.mul_vec(position)),
-                None => (rot.scale(scale), center + rotation.mul_vec(position)),
-            };
+            let linear = rot.scale(scale);
+            let offset = center + rotation.mul_vec(position);
             let disc = (star_radius / (star_pos - body_pos).length())
                 .min(1.0)
                 .asin() as f32;
@@ -2218,7 +2233,7 @@ fn prop_draws<'a>(
                 }),
                 bounds_center: (offset + linear.mul_vec(mesh.bounds_center.as_dvec3()))
                     .as_vec3(),
-                bounds_radius: mesh.bounds_radius * (scale * grow) as f32,
+                bounds_radius: mesh.bounds_radius * scale as f32,
                 tag: pick.lod as u32 + 1,
             });
         }
@@ -2226,42 +2241,12 @@ fn prop_draws<'a>(
     stats
 }
 
-/// Como Gargantua deforma a Pira mientras se la come: la estira hacia el
-/// agujero y la adelgaza (la marea), la encoge y la acerca.
+/// Lo que queda de Pira mientras hierve: se encoge entera (sin deformarse)
+/// dentro del vapor que la tapa.
 #[derive(Clone, Copy)]
-struct Warp {
+struct Shrink {
     body: usize,
-    stretch: DMat3,
-    shift: DVec3,
-    grow: f64,
-}
-
-impl Warp {
-    /// La deformacion de Pira con `swallow` (0 a 1) hacia `toward` (unitario).
-    fn new(body: usize, swallow: f64, toward: DVec3) -> Self {
-        let shrink = 1.0 - swallow.powf(2.5);
-        let along = (1.0 + 1.5 * swallow) * shrink;
-        let across = (1.0 - 0.6 * swallow) * shrink;
-        let column = |e: DVec3| e * across + toward * (toward.dot(e) * (along - across));
-        Self {
-            body,
-            stretch: DMat3::from_cols(column(DVec3::X), column(DVec3::Y), column(DVec3::Z)),
-            shift: toward * (swallow * swallow * 160.0),
-            grow: along.max(across),
-        }
-    }
-
-    /// Matriz y posicion de un dibujo de `body`: `linear` lo orienta y
-    /// `offset` es su posicion desde el centro del cuerpo.
-    fn apply(&self, body: usize, center: DVec3, linear: DMat3, offset: DVec3) -> (DMat3, DVec3) {
-        if body != self.body {
-            return (linear, center + offset);
-        }
-        (
-            self.stretch.mul(&linear),
-            center + self.shift + self.stretch.mul_vec(offset),
-        )
-    }
+    scale: f64,
 }
 
 /// Un dibujo por chunk de terreno visible, uno por cuerpo sin terreno y otro
@@ -2276,7 +2261,7 @@ fn build_draws<'a>(
     show_ship: bool,
     star_radius: f64,
     star_material: Material,
-    warp: Option<Warp>,
+    shrink: Option<Shrink>,
 ) -> Vec<Draw<'a>> {
     let mut draws = Vec::new();
     for (index, (body, terrain)) in system.bodies.iter().zip(&system.terrains).enumerate() {
@@ -2288,12 +2273,10 @@ fn build_draws<'a>(
         match terrain {
             Some(terrain) => {
                 let normal = rotation.to_f32();
-                let grow = warp.filter(|w| w.body == index).map_or(1.0, |w| w.grow) as f32;
+                let scale = shrink.filter(|s| s.body == index).map_or(1.0, |s| s.scale);
+                let linear = rotation.scale(scale);
                 for chunk in terrain.selected() {
-                    let (linear, offset) = match warp {
-                        Some(w) => w.apply(index, center, rotation, rotation.mul_vec(chunk.center)),
-                        None => (rotation, center + rotation.mul_vec(chunk.center)),
-                    };
+                    let offset = center + linear.mul_vec(chunk.center);
                     draws.push(Draw {
                         mesh: &chunk.mesh,
                         indices: terrain.indices(),
@@ -2302,7 +2285,7 @@ fn build_draws<'a>(
                         normal,
                         material: body.material,
                         bounds_center: offset.as_vec3(),
-                        bounds_radius: chunk.radius * grow,
+                        bounds_radius: chunk.radius * scale as f32,
                         tag: chunk.key.level as u32 + 1,
                     });
                 }

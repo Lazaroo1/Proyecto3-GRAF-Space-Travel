@@ -61,8 +61,22 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     // ancha donde fluye y del lado dia.
     let reach = 0.05 + 0.12 * flow + 0.08 * day;
     let sea = molten * smoothstep(reach, reach * 0.3, plates.1 - plates.0);
-    // Mientras Gargantua se la come, la lava sube por todas las grietas.
-    let sea = sea.max(u.melt * smoothstep(0.12 + 0.3 * u.melt, 0.02, plates.1 - plates.0));
+    // Mientras Gargantua se la come, la costra se rompe en placas cada vez
+    // mas chicas que se hunden en lava cada vez mas caliente, primero del
+    // lado del agujero (la marea la calienta por ahi).
+    let tide = smoothstep(-0.4, 0.9, f.normal.dot(f.light_dir(u)));
+    let melt = (u.melt * (0.75 + 0.5 * tide)).min(1.0);
+    let sea = if melt > 0.0 {
+        let drift = Vec3::new(0.0, t * 0.06, t * 0.04) * melt;
+        let floes = u.noise.cells(f.local * (0.05 + 0.09 * melt) + warp * 0.5 + drift);
+        // Lava junto a los bordes de cada placa: el canal se ensancha y la
+        // placa se achica hasta hundirse.
+        let gap = 0.04 + 0.55 * melt;
+        let open = smoothstep(gap, gap * 0.55, floes.1 - floes.0);
+        sea.max(open * smoothstep(0.0, 0.2, melt))
+    } else {
+        sea
+    };
     let crust = 1.0 - sea;
 
     let basalt = rock.color * Vec3::new(0.06, 0.052, 0.05) * (0.6 + 0.6 * plates.0.min(1.0));
@@ -72,8 +86,8 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     let delay = (u.noise.noise(f.local * 0.01) * 0.5 + 0.5) * 2.0;
     let pulse = 0.75 + 0.5 * u.beat_at(delay);
     let cracks = (big + fine) * (0.55 + 0.45 * day + 0.6 * heat);
-    let glow = (cracks * 1.4 + sea * (0.35 + 0.65 * flow)) * pulse * u.gains.pira;
-    let temperature = 1150.0 + 900.0 * (flow * sea + big * 0.6 + 0.2 * day);
+    let glow = (cracks * 1.4 + sea * (0.35 + 0.65 * flow)) * pulse * u.gains.pira * (1.0 + 1.2 * melt);
+    let temperature = 1150.0 + 900.0 * (flow * sea + big * 0.6 + 0.2 * day) + 1200.0 * melt * (0.4 + 0.6 * flow);
     // Y la corteza misma se pone al rojo.
     let ember = planckian_rgb(950.0 + 350.0 * u.melt) * (u.melt * (0.03 + 0.05 * flow));
     lit + planckian_rgb(temperature) * (glow * 2.6) + ember

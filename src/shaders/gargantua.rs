@@ -33,7 +33,7 @@ pub struct BlackHole<'a> {
 /// gas de adentro gira mas rapido, se enrolla y se abre con el tiempo hasta
 /// diluirse en el disco. Cuando Pira ya no esta, lo de afuera se vacia: el
 /// gas sigue cayendo.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Stream {
     /// Pira, en el marco del disco (y es la normal) y en `rs`.
     start: P2Vec,
@@ -42,27 +42,217 @@ pub struct Stream {
     angle: f32,
     /// Segundos desde que empezo a deshacerse.
     age: f32,
+    /// Lo que solo depende de la edad: cuanto queda de Pira (su embudo se
+    /// encoge con ella), cuanto se ensancho el brazo, hasta donde se vacio y
+    /// su brillo.
+    alive: f32,
+    spread: f32,
+    drained: f32,
+    fade: f32,
+    /// El eje cada tanto de radio, de `3 rs` a Pira: para decidir rapido si
+    /// un paso del rayo pasa cerca.
+    track: [Track; TRACK_SIZE],
 }
 
-/// Segundos que tarda Gargantua en deshacer a Pira (despues, el brazo se
-/// vacia de afuera hacia adentro).
-const FEEDING: f32 = 16.0;
+const TRACK_SIZE: usize = 48;
+
+/// Un punto del eje en la tabla: direccion en el plano, altura, y los
+/// margenes (grosor, ancho y cuanto gira por `rs`).
+#[derive(Clone, Copy, Debug, Default)]
+struct Track {
+    dir: (f32, f32),
+    ys: f32,
+    thick: f32,
+    width: f32,
+    slope: f32,
+}
+
+/// Segundos que el brazo recibe gas: lo que tarda Pira en deshacerse y un
+/// poco mas (despues, se vacia de afuera hacia adentro).
+const FEEDING: f32 = super::vapor::MELT + 2.0;
 /// Pasado esto ya no queda nada del brazo: se mezclo con el disco.
 pub const STREAM_LIFE: f32 = 75.0;
 
+/// El eje del brazo a una distancia del agujero.
+struct Axis {
+    /// Avance desde Pira (0) hasta el borde interior del disco (1).
+    u: f32,
+    /// Altura y grosor, angulo y ancho (en `rs`).
+    ys: f32,
+    thick: f32,
+    phi: f32,
+    width: f32,
+    /// Cuanto cambia el angulo del eje por `rs` de radio.
+    slope: f32,
+}
+
 impl Stream {
     pub fn new(start: P2Vec, age: f32) -> Self {
-        Self {
+        use crate::math::smoothstep;
+        let mut stream = Self {
             start,
             radius: start.x.hypot(start.z),
             angle: fast_atan2(start.z, start.x),
             age,
+            alive: super::Vapor::core(age) * smoothstep(super::vapor::MELT, super::vapor::MELT - 2.0, age),
+            spread: 1.0 + age / 30.0,
+            drained: ((age - FEEDING) / 18.0).clamp(0.0, 1.2),
+            // Recien soltado brilla; en un minuto ya se diluyo en el disco.
+            fade: smoothstep(0.0, 2.0, age)
+                * (-age / 30.0).exp()
+                * smoothstep(STREAM_LIFE, STREAM_LIFE - 15.0, age),
+            track: [Track::default(); TRACK_SIZE],
+        };
+        for k in 0..TRACK_SIZE {
+            let axis = stream.axis(stream.track_radius(k as f32));
+            stream.track[k] = Track {
+                dir: (axis.phi.cos(), axis.phi.sin()),
+                ys: axis.ys,
+                thick: axis.thick,
+                width: axis.width,
+                slope: axis.slope,
+            };
         }
+        stream
+    }
+
+    /// Radio de la entrada `k` (fraccionaria) de la tabla del eje.
+    #[inline]
+    fn track_radius(&self, k: f32) -> f32 {
+        3.0 + (self.radius + 1.5 - 3.0) * k / (TRACK_SIZE - 1) as f32
     }
 
     /// Hasta donde llega, en `rs` desde el agujero.
     pub fn reach(&self) -> f32 {
         self.radius + 2.0
+    }
+
+    #[inline]
+    fn axis(&self, r: f32) -> Axis {
+        let rp = self.radius;
+        let u = ((rp - r) / (rp - 3.0)).clamp(0.0, 1.0);
+        // Un embudo junto a Pira (sale de todo el lado que da al agujero) y
+        // despues un chorro delgado.
+        let funnel = (1.0 - u).powi(8) * self.alive;
+        // El gas del disco gira hacia angulos decrecientes y el de adentro
+        // mas rapido: el brazo se adelanta hacia adentro y se enrolla. Sale
+        // casi derecho hacia el agujero y se curva despues.
+        let ratio = rp / r.max(3.0);
+        let late = self.age * 0.07 * ratio * ratio.sqrt();
+        let root = u.sqrt();
+        let wind = u * root * (1.4 + late);
+        Axis {
+            u,
+            // Baja de la altura de Pira al plano del disco.
+            ys: self.start.y * (1.0 - u) * (1.0 - u),
+            thick: 0.12 + 0.2 * (1.0 - u) + 0.9 * funnel,
+            phi: self.angle - wind,
+            width: (0.14 + 0.45 * u + funnel) * self.spread,
+            slope: 1.5 * (root * (1.4 + late) / (rp - 3.0) + u * root * late / r.max(3.0)),
+        }
+    }
+
+    /// Luz y profundidad optica del brazo a lo largo de un tramo largo
+    /// (casi recto) de `a` a `b`. Lejos del agujero un paso del rayo mide
+    /// mas que el grosor del brazo: muestrearlo en un punto dibujaria discos
+    /// apilados. Se descarta rapido si el tramo pasa lejos; si no, se suma el
+    /// brazo en pedazos del tramo: su forma (gaussiana, de la tabla del eje)
+    /// y, solo donde la forma pesa, la turbulencia. El color se toma donde
+    /// el tramo pasa mas cerca.
+    #[inline]
+    fn through(&self, a: P2Vec, b: P2Vec, gas: &GasTexture) -> Option<(Vec3, f32)> {
+        if self.fade <= 0.0 {
+            return None;
+        }
+        let mid = (a + b) * 0.5;
+        let length = (b - a).length();
+        let half = length * 0.5;
+        let r = mid.x.hypot(mid.z);
+        if r - half > self.radius + 1.5 || r + half < 3.0 {
+            return None;
+        }
+        // Ni por encima ni por debajo de todo lo que el brazo puede ocupar.
+        if mid.y.abs() > self.start.y.abs() + 3.7 + half {
+            return None;
+        }
+        let track = self.track_at(r);
+        if (mid.y - track.ys).abs() > 3.0 * track.thick + half {
+            return None;
+        }
+        // Lejos del punto del eje a ese mismo radio (con margen por lo que
+        // el radio cambia a lo largo del tramo), no lo toca.
+        let off = (mid.x - track.dir.0 * r).hypot(mid.z - track.dir.1 * r);
+        if off > 3.0 * track.width + half * (1.0 + track.slope * r) {
+            return None;
+        }
+        let pieces = ((length / 0.4).ceil() as usize).clamp(1, 5);
+        let piece = length / pieces as f32;
+        let (mut total, mut best, mut nearest) = (0.0, 0.0, mid);
+        for k in 0..pieces {
+            let q = a + (b - a) * ((k as f32 + 0.5) / pieces as f32);
+            let shape = self.shape(q);
+            if shape > 0.01 {
+                total += shape * gas.turbulence(q);
+                if shape > best {
+                    (best, nearest) = (shape, q);
+                }
+            }
+        }
+        if total * piece < 1e-3 {
+            return None;
+        }
+        let rq = nearest.x.hypot(nearest.z);
+        let u = ((self.radius - rq) / (self.radius - 3.0)).clamp(0.0, 1.0);
+        Some((glow(u), self.fade / self.spread * 0.9 * total * piece))
+    }
+
+    /// El eje a la distancia `r`, de la tabla.
+    #[inline]
+    fn track_at(&self, r: f32) -> Track {
+        let x = ((r - 3.0) / (self.radius + 1.5 - 3.0) * (TRACK_SIZE - 1) as f32)
+            .clamp(0.0, (TRACK_SIZE - 1) as f32 - 1e-3);
+        let (k, f) = (x as usize, x.fract());
+        let (a, b) = (&self.track[k], &self.track[k + 1]);
+        let mix = |p: f32, q: f32| p + (q - p) * f;
+        Track {
+            dir: (mix(a.dir.0, b.dir.0), mix(a.dir.1, b.dir.1)),
+            ys: mix(a.ys, b.ys),
+            thick: mix(a.thick, b.thick),
+            width: mix(a.width, b.width),
+            slope: mix(a.slope, b.slope),
+        }
+    }
+
+    /// La forma del brazo en `q` (0 a 1), sin turbulencia: gaussiana de
+    /// lado (la cuerda hasta el eje a ese radio, casi el arco) y de alto.
+    #[inline]
+    fn shape(&self, q: P2Vec) -> f32 {
+        let r = q.x.hypot(q.z);
+        if !(3.0..self.radius + 1.5).contains(&r) {
+            return 0.0;
+        }
+        let track = self.track_at(r);
+        let dy = (q.y - track.ys) / track.thick;
+        if dy.abs() > 3.0 {
+            return 0.0;
+        }
+        let (cx, cz) = (q.x - track.dir.0 * r, q.z - track.dir.1 * r);
+        let d2 = (cx * cx + cz * cz) / (track.width * track.width);
+        if d2 > 9.0 {
+            return 0.0;
+        }
+        let u = ((self.radius - r) / (self.radius - 3.0)).clamp(0.0, 1.0);
+        (-d2 - dy * dy).exp() * self.ends(r, u)
+    }
+
+    /// Lo que se desvanece en la punta, junto al agujero y, cuando ya no hay
+    /// Pira, desde afuera hacia adentro.
+    #[inline]
+    fn ends(&self, r: f32, u: f32) -> f32 {
+        let rp = self.radius;
+        crate::math::smoothstep(rp + 1.5, rp - 0.5, r)
+            * crate::math::smoothstep(3.0, 4.0, r)
+            * crate::math::smoothstep(self.drained - 0.05, self.drained + 0.25, u)
     }
 
     /// Luz que emite y profundidad optica por `rs` de recorrido en `q`. El
@@ -75,45 +265,48 @@ impl Stream {
         if !(3.0..rp + 1.5).contains(&r) {
             return None;
         }
-        let u = ((rp - r) / (rp - 3.0)).clamp(0.0, 1.0);
-        // Baja de la altura de Pira al plano del disco.
-        let ys = self.start.y * (1.0 - u) * (1.0 - u);
-        let thick = 0.18 + 0.45 * (1.0 - u);
-        let dy = (q.y - ys) / thick;
+        let axis = self.axis(r);
+        let dy = (q.y - axis.ys) / axis.thick;
         if dy.abs() > 3.0 {
             return None;
         }
-        // El gas del disco gira hacia angulos decrecientes y el de adentro
-        // mas rapido: el brazo se adelanta hacia adentro y se enrolla.
-        let ratio = rp / r;
-        let wind = u * (1.4 + self.age * 0.07 * ratio * ratio.sqrt());
-        let gap = (fast_atan2(q.z, q.x) - (self.angle - wind) + std::f32::consts::PI)
-            .rem_euclid(std::f32::consts::TAU)
-            - std::f32::consts::PI;
-        let spread = 1.0 + self.age / 20.0;
-        let d = gap * r / ((0.25 + 0.7 * u) * spread);
+        let angle = fast_atan2(q.z, q.x);
+        let d = wrap(angle - axis.phi) * r / axis.width;
         if d.abs() > 3.0 {
             return None;
         }
-        // Se desvanece en la punta, junto al agujero y, cuando ya no hay
-        // Pira, desde afuera hacia adentro.
-        let drained = ((self.age - FEEDING) / 18.0).clamp(0.0, 1.2);
-        let ends = crate::math::smoothstep(rp + 1.5, rp - 0.5, r)
-            * crate::math::smoothstep(3.0, 4.0, r)
-            * crate::math::smoothstep(drained - 0.05, drained + 0.25, u);
-        // Recien soltado brilla; en un minuto ya se diluyo en el disco.
-        let fade = crate::math::smoothstep(0.0, 2.0, self.age)
-            * (-self.age / 30.0).exp()
-            * crate::math::smoothstep(STREAM_LIFE, STREAM_LIFE - 15.0, self.age);
-        let shape = (-(d * d) - dy * dy).exp() * ends * fade;
+        let u = axis.u;
+        let shape = (-(d * d) - dy * dy).exp() * self.ends(r, u) * self.fade;
         if shape < 2e-3 {
             return None;
         }
-        let density = shape * gas.turbulence(q) / spread;
-        let temperature = 2400.0 + 5000.0 * u;
-        let emission = crate::math::blackbody::planckian_rgb(temperature) * (1.2 + 2.5 * u);
-        Some((emission, density * 0.6))
+        let density = shape * gas.turbulence_at(r, angle, q.y) / self.spread;
+        Some((glow(u), density * 0.9))
     }
+}
+
+/// Luz del brazo a su avance `u`: se calienta al caer, del rojo (2400 K)
+/// al blanco (7400 K), y brilla mas. De una tabla: el color de cuerpo negro
+/// es caro para cada muestra.
+#[inline]
+fn glow(u: f32) -> Vec3 {
+    const SIZE: usize = 64;
+    static TABLE: std::sync::OnceLock<[Vec3; SIZE]> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        std::array::from_fn(|i| {
+            let u = i as f32 / (SIZE - 1) as f32;
+            crate::math::blackbody::planckian_rgb(2400.0 + 5000.0 * u) * (1.6 + 3.0 * u)
+        })
+    });
+    let x = u.clamp(0.0, 1.0) * (SIZE - 1) as f32;
+    let i = (x as usize).min(SIZE - 2);
+    table[i].lerp(table[i + 1], x - i as f32)
+}
+
+/// Un angulo llevado a `[-pi, pi)`.
+#[inline]
+fn wrap(angle: f32) -> f32 {
+    (angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -184,7 +377,7 @@ impl BlackHole<'_> {
 
     /// Hasta donde hay gas, en `rs`: el disco o el brazo de Pira.
     fn extent(&self) -> f32 {
-        self.stream.map_or(self.outer, |s| self.outer.max(s.reach()))
+        self.stream.as_ref().map_or(self.outer, |s| self.outer.max(s.reach()))
     }
 
     /// Distancia a la camara desde la que puede haber gas.
@@ -242,9 +435,17 @@ impl BlackHole<'_> {
                 break;
             }
             if let Some(stream) = &self.stream {
-                if let Some((emission, density)) = stream.sample(mid, self.gas) {
-                    let length = (photon.pos - previous).length();
-                    let alpha = 1.0 - (-density * length).exp();
+                // El brazo es mas delgado que un paso lejos del agujero: se
+                // muestrea en pedazos del paso (casi recto) para no dibujar
+                // discos apilados.
+                let length = (photon.pos - previous).length();
+                let crossed = if length <= 0.25 {
+                    stream.sample(mid, self.gas).map(|(e, d)| (e, d * length))
+                } else {
+                    stream.through(previous, photon.pos, self.gas)
+                };
+                if let Some((emission, depth)) = crossed {
+                    let alpha = 1.0 - (-depth).exp();
                     gas.light += emission * (alpha * gas.transmittance);
                     let after = gas.transmittance * (1.0 - alpha);
                     if gas.transmittance > 0.5 && after <= 0.5 {
@@ -303,11 +504,6 @@ impl BlackHole<'_> {
     /// Color de un pixel de cielo visto a traves del agujero. Las estrellas
     /// del fondo se ven en la direccion curvada; la corona de la estrella que
     /// colapsa esta junto al agujero, no detras, y no se curva.
-    #[cfg(test)]
-    pub fn sky(&self, dir: Vec3, u: &Uniforms) -> (Vec3, f32) {
-        self.sky_from(self.trace(dir, f32::INFINITY), dir, u)
-    }
-
     fn sky_from(&self, traced: Traced, dir: Vec3, u: &Uniforms) -> (Vec3, f32) {
         let background = if traced.captured {
             Vec3::ZERO
