@@ -124,7 +124,7 @@ pub struct Preset {
     pub act: Option<f64>,
 }
 
-pub const PRESETS: [Preset; 25] = [
+pub const PRESETS: [Preset; 26] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
@@ -201,9 +201,9 @@ pub const PRESETS: [Preset; 25] = [
         name: "08_cementerio",
         shot: Shot::Orbit {
             body: "Cementerio",
-            distance: 5.0,
+            distance: 4.2,
             azimuth: 0.9,
-            elevation: 0.35,
+            elevation: 0.7,
         },
         time: 40.0,
         act: None,
@@ -337,6 +337,17 @@ pub const PRESETS: [Preset; 25] = [
         shot: Shot::Star,
         time: 40.0,
         act: Some(17.0),
+    },
+    Preset {
+        name: "26_baliza",
+        shot: Shot::Landmark {
+            body: "Cementerio",
+            kind: PropKind::Beacon,
+            distance: 110.0,
+            sun: 0.25,
+        },
+        time: 40.0,
+        act: None,
     },
     Preset {
         name: "24_el_ojo",
@@ -1225,6 +1236,17 @@ impl App {
             );
         }
 
+        if let Some((top, up)) = beacon_lamp(system, t) {
+            let start = out.len();
+            out.resize(start + effects::BEACON_COUNT, blank);
+            effects::beacon_waves(
+                &mut out[start..],
+                (top - camera.pos).as_vec3(),
+                up.as_vec3(),
+                t,
+                shaders::BEACON_PERIOD,
+            );
+        }
         if let Some(i) = system.find("Jardin") {
             let jardin = &system.bodies[i];
             let altitude = (camera.pos - jardin.position(t)).length() - jardin.radius;
@@ -1647,6 +1669,23 @@ fn markers(
         .collect()
 }
 
+/// La lampara de la baliza de Cementerio en el mundo y la vertical ahi.
+fn beacon_lamp(system: &System, t: f64) -> Option<(DVec3, DVec3)> {
+    let i = system.find("Cementerio")?;
+    let body = &system.bodies[i];
+    let beacon = system.props[i]
+        .instances
+        .iter()
+        .find(|p| p.kind == PropKind::Beacon)?;
+    let rotation = body.rotation(t);
+    let up = rotation.rotate(beacon.position.normalize());
+    let lamp = beacon.position
+        + beacon
+            .rotation
+            .rotate(DVec3::Y * (props::BEACON_TOP * beacon.scale) as f64);
+    Some((body.position(t) + rotation.rotate(lamp), up))
+}
+
 /// Direccion de la nave vista desde el centro de Vigia, en su propio espacio:
 /// hacia ahi quiere mirar el ojo.
 fn eye_target(system: &System, ship_pos: DVec3, t: f64) -> DVec3 {
@@ -1693,9 +1732,14 @@ fn atmosphere_frames<'a>(
 fn ring_info(system: &System, t: f64, camera: DVec3) -> Option<RingInfo> {
     let body = &system.bodies[system.ring_body];
     let (inner, outer) = body.rings?;
+    let normal = body.rotation(t).rotate(DVec3::Y);
+    // Ejes del plano que no giran con el planeta: los restos orbitan solos.
+    let axis_a = normal.cross(DVec3::Z).normalize();
     Some(RingInfo {
         center: (body.position(t) - camera).as_vec3(),
-        normal: body.rotation(t).rotate(DVec3::Y).as_vec3(),
+        normal: normal.as_vec3(),
+        axis_a: axis_a.as_vec3(),
+        axis_b: normal.cross(axis_a).as_vec3(),
         inner: (inner * body.radius) as f32,
         outer: (outer * body.radius) as f32,
         planet_radius: body.radius as f32,

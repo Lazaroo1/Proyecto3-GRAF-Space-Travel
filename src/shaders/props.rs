@@ -59,6 +59,7 @@ pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
         PropKind::Spike => spike(&c),
         PropKind::Wreck => wreck(&c),
         PropKind::Boulder => boulder(&c),
+        PropKind::Beacon => beacon(&c),
     }
 }
 
@@ -143,6 +144,31 @@ fn spire(c: &Ctx) -> Vec3 {
     };
     lit(&cold, albedo, f.normal, 0.3 + 0.5 * frost.min(1.0), 60.0, 0.0) + emission
 }
+
+/// La baliza: metal oscuro y una lampara roja que destella cada 2.4 s,
+/// como si siguiera transmitiendo la historia del exodo.
+fn beacon(c: &Ctx) -> Vec3 {
+    let (f, u) = (c.f, c.u);
+    let wear = u.noise.fbm(f.local * 0.6, 3) * 0.5 + 0.5;
+    let albedo = Vec3::new(0.10, 0.10, 0.11).lerp(Vec3::new(0.22, 0.12, 0.07), wear * 0.6);
+    let lamp = f.color.x > 0.5 && f.color.y < 0.5;
+    let flash = beacon_flash(u.time);
+    let emission = if lamp {
+        Vec3::new(1.0, 0.06, 0.03) * (0.3 + 12.0 * flash)
+    } else {
+        Vec3::ZERO
+    };
+    lit(c, albedo, f.normal, 0.5, 40.0, 0.0) + emission * u.gains.cementerio
+}
+
+/// Destello de la baliza: sube de golpe y se apaga en medio segundo.
+pub fn beacon_flash(time: f32) -> f32 {
+    let phase = (time / BEACON_PERIOD).fract() * BEACON_PERIOD;
+    (-phase / 0.18).exp()
+}
+
+/// Cada cuanto destella la baliza (y sale una onda).
+pub const BEACON_PERIOD: f32 = 2.4;
 
 /// Hongo bioluminiscente: tallo palido y translucido con un anillo que
 /// brilla, sombrero oscuro de terciopelo con puntos de luz que laten, y por
