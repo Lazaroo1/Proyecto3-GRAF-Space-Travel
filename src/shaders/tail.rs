@@ -20,7 +20,7 @@ use crate::math::blackbody::planckian_rgb;
 use crate::math::{Perlin, Vec3, smoothstep};
 
 /// Muestras por rayo dentro de la cola.
-const STEPS: usize = 14;
+const STEPS: usize = 6;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Tail {
@@ -64,10 +64,11 @@ impl Tail {
         let off = (y - c * x * x) / (1.0 + slope * slope).sqrt();
         let w = self.width(s);
         let r = (off * off + z * z).sqrt() / w;
-        if r > 2.5 {
+        if r > 2.2 {
             return (0.0, s);
         }
-        let fade = smoothstep(0.0, 0.05, s) * (1.0 - s).powf(1.5);
+        let rest = 1.0 - s;
+        let fade = smoothstep(0.0, 0.05, s) * rest * rest.sqrt();
         // Estrias: ruido estirado a lo largo de la cola que fluye hacia afuera.
         let streaks = noise.noise(Vec3::new(
             x * 0.003 - self.time * 0.04,
@@ -93,29 +94,53 @@ impl Tail {
             return Vec3::ZERO;
         }
         let root = disc.sqrt();
-        let (t0, t1) = ((b - root).max(0.0), (b + root).min(depth));
+        let (mut t0, mut t1) = ((b - root).max(0.0), (b + root).min(depth));
+        // Solo el tramo del rayo entre el planeta y la punta de la cola: x
+        // (lo lejos que esta de la estrella) cambia linealmente con t.
+        let (rate, start) = (dir.dot(self.away), -self.origin.dot(self.away));
+        if rate.abs() > 1e-6 {
+            let (a, b) = (-start / rate, (self.length - start) / rate);
+            t0 = t0.max(a.min(b));
+            t1 = t1.min(a.max(b));
+        } else if !(0.0..self.length).contains(&start) {
+            return Vec3::ZERO;
+        }
         if t1 <= t0 {
             return Vec3::ZERO;
         }
+        // Si el rayo pasa lejos del eje (recto) mas de lo que la cola se
+        // abre y se curva ahi, no la toca.
+        let e = -self.origin.dot(self.away);
+        let d = -self.origin.dot(dir);
+        let denom = 1.0 - rate * rate;
+        let x = if denom > 1e-6 {
+            ((e - rate * d) / denom).clamp(0.0, self.length)
+        } else {
+            self.length * 0.5
+        };
+        let on_axis = self.origin + self.away * x;
+        let gap = (dir * dir.dot(on_axis).max(0.0) - on_axis).length();
+        let s = x / self.length;
+        if gap > 2.2 * self.width(s) + self.drift * s * s + 0.5 * self.planet_radius {
+            return Vec3::ZERO;
+        }
         let dt = (t1 - t0) / STEPS as f32;
-        let dust = Vec3::new(0.9, 0.62, 0.42);
+        // Dispersion hacia adelante: brilla mucho mas a contraluz. La
+        // direccion a la estrella casi no cambia a lo largo del rayo.
+        let to_star = (self.star - dir * (0.5 * (t0 + t1))).normalize();
         let g: f32 = 0.65;
+        let base = 1.0 + g * g - 2.0 * g * dir.dot(to_star);
+        let phase = (1.0 - g * g) / (base * base.sqrt());
+        let scattered = self.light * Vec3::new(0.9, 0.62, 0.42) * (0.05 + 0.08 * phase);
+        // Vapor caliente junto al planeta, con el color de la roca fundida.
+        let vapor = planckian_rgb(1900.0) * 0.5;
         let mut light = Vec3::ZERO;
         for k in 0..STEPS {
             let t = t0 + (k as f32 + 0.5) * dt;
-            let p = dir * t;
-            let (density, s) = self.density(p, noise);
-            if density <= 0.0 {
-                continue;
+            let (density, s) = self.density(dir * t, noise);
+            if density > 0.0 {
+                light += (scattered + vapor * (-s * 9.0).exp()) * (density * dt);
             }
-            // Dispersion hacia adelante: brilla mucho mas a contraluz.
-            let to_star = (self.star - p).normalize();
-            let cos = dir.dot(to_star);
-            let phase = (1.0 - g * g) / (1.0 + g * g - 2.0 * g * cos).powf(1.5);
-            let scattered = self.light * dust * (0.05 + 0.08 * phase);
-            // Vapor caliente junto al planeta.
-            let vapor = planckian_rgb(1500.0 + 600.0 * (1.0 - s)) * (0.5 * (-s * 9.0).exp());
-            light += (scattered + vapor) * (density * dt);
         }
         light
     }
