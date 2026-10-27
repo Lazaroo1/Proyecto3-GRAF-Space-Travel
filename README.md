@@ -17,7 +17,21 @@ todo el cielo. Otra J la hace renacer.
 | ![Agonía: la estrella late y Pira se le deshace encima](media/22_agonia.png) | ![Estertor: la estrella suelta su capa de gas](media/25_estertor.png) |
 | ![Vigía y su ojo-tormenta](media/06_vigia.png) | ![Pira: corteza en placas y lava](media/02_pira.png) |
 | ![Agujas góticas de Réquiem](media/10_agujas.png) | ![Cementerio: naves en los anillos y la baliza](media/08_cementerio.png) |
-| ![Superficie de Jardín](media/23_jardin_biopunk.png) | ![Silencio: solo queda la bioluminiscencia](media/17_colapso.png) |
+| ![Superficie de Jardín](media/23_jardin_biopunk.png) | ![Pira y su cola de polvo](media/14_cola.png) |
+
+## Lugares para visitar
+
+Cada planeta tiene un lugar en su superficie que **reacciona a la nave**,
+con luces que alumbran lo de alrededor y algo que flota a su lado. La tecla
+**N** viaja al siguiente; cerca de cada planeta, el HUD marca su lugar.
+
+| | |
+| --- | --- |
+| ![Los géiseres de Pira](media/27_geiseres.png) | **Los géiseres** (Pira): bocas de lava que hacen erupción de vez en cuando y despiertan al pasar la nave; alumbran el suelo y suben brasas a su alrededor. |
+| ![La catedral de Réquiem](media/28_catedral.png) | **La catedral** (Réquiem): un círculo de agujas alrededor de una aguja mayor. Se encienden empezando por lo que la nave tiene más cerca y alumbran el hielo de azul. Cae nieve. |
+| ![La baliza de Cementerio](media/26_baliza.png) | **La baliza** (Cementerio): naves caídas alrededor de la torre. A su paso les vuelven las luces y echan chispas; la baliza titila más rápido y su onda sube. |
+| ![El ojo de Vigía de cerca](media/29_ojo_cerca.png) | **El ojo** (Vigía): sigue a la nave y, cuando se acerca, cierra la pupila, enciende el iris y los relámpagos se juntan debajo de ella. Jirones de nube pasan rozando. |
+| ![El claro de Jardín](media/11_hongos.png) | **El claro** (Jardín): colonias de hongos y corales que alumbran el suelo, con esporas flotando. |
 
 ## Video
 
@@ -29,8 +43,8 @@ simulación acelerada x3, así que no es una medición de FPS en tiempo real.
 
 Recorrido sugerido para grabarlo (F9 oculta el HUD):
 
-1. Desde el inicio, junto a Pira, alejarse con Shift para ver el chorro de
-   brasas cayendo a la estrella.
+1. Desde el inicio, junto a Pira, alejarse con Shift para ver la cola de
+   polvo que la estrella le arranca.
 2. Volar a Jardín y bajar hasta la superficie: el modo local se activa solo.
 3. Con O (crucero), dar la vuelta al planeta sobre el bosque de hongos.
 4. Subir y alejarse con Shift.
@@ -49,7 +63,7 @@ Opciones:
 
 ```sh
 cargo run --release -- --res 1920x1080        # resolución del render (por defecto 1280x720)
-cargo run --release -- --captura capturas     # las 27 vistas fijas como PNG, sin abrir ventana
+cargo run --release -- --captura capturas     # las 30 vistas fijas como PNG, sin abrir ventana
 cargo run --release -- --bench 30             # mide cada vista fija y da medianas por etapa
 cargo run --release -- --wire --lod           # empieza con wireframe y colores de LOD
 cargo test --release                          # pruebas de vuelo, raster, sombras y gas volumétrico
@@ -67,6 +81,7 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | Turbo | Shift |
 | **Freno de emergencia** (prioridad sobre turbo y crucero) | **X sostenida** |
 | **Recuperar posicion** junto a Pira, conservando el ciclo | **Inicio / Home** |
+| **Viajar al siguiente lugar** (géiseres, catedral, baliza, claro) | **N** |
 | Acercar / alejar la cámara | Rueda |
 | Cámara de persecución / cabina | C |
 | Asistente de vuelo / gravedad | Z / G |
@@ -130,12 +145,12 @@ Las vistas fijas se generan con `--captura` (nombres entre paréntesis).
 
 | Característica del menú | Cómo está hecho | Dónde verlo |
 | --- | --- | --- |
-| **5 planetas** que orbitan, rotan y se ven de cerca (50) | Pira (corteza negra en placas con lava que late, acoplada por marea; la estrella se la come y le arranca un penacho de roca vaporizada), Jardín (mundo vivo que respira, con arterias y capilares que laten), Vigía (gigante gaseoso morado con un ojo-tormenta que gira, sigue a la nave y dilata la pupila con el latido), Réquiem (mundo helado con agujas góticas y grietas de luz fría) y Cementerio (anillos llenos de naves del éxodo y una baliza que sigue transmitiendo). Órbitas y giros son funciones del tiempo. | (02) a (08); volar a cualquiera |
-| **8 tipos de modelos** propios en la superficie (20) | Aguja gótica y aguja en ruinas (Réquiem), hongo y coral (Jardín), espinas de obsidiana (Pira), nave náufraga y baliza de celosía (Cementerio) y rocas, armados con código en `scene/props.rs`, cada uno en tres niveles de detalle. | (10) a (13), (26) |
+| **5 planetas** que orbitan, rotan y se ven de cerca (50) | Pira (corteza negra en placas con lava que late, acoplada por marea; la estrella la está desintegrando y le arranca una cola de polvo, como a K2-22b), Jardín (mundo vivo que respira, con una red de luz bajo la piel), Vigía (gigante gaseoso morado con un ojo-tormenta que gira, sigue a la nave y dilata la pupila con el latido), Réquiem (mundo helado con agujas góticas y grietas de luz fría) y Cementerio (anillos llenos de naves del éxodo y una baliza que sigue transmitiendo). Órbitas y giros son funciones del tiempo. | (02) a (08); volar a cualquiera |
+| **9 tipos de modelos** propios en la superficie (20) | Aguja gótica y aguja en ruinas (Réquiem), hongo y coral (Jardín), espinas de obsidiana y géiser (Pira), nave náufraga y baliza de celosía (Cementerio) y rocas, armados con código en `scene/props.rs`, cada uno en tres niveles de detalle. | (10) a (13), (26) |
 | **Distribución procedural** reproducible con ruido (10) | Una grilla por cara del cubo-esfera; cada celda propone un punto y lo acepta con una probabilidad de ruido fBm (grupos y claros) por las reglas del terreno (pendiente, hielo, lava, valles). Misma semilla, mismas ubicaciones. | F6 o T → semilla |
 | **Posición y orientación** sobre la superficie curva que gira (5) | Cada objeto vive en el espacio de su planeta, parado sobre la normal radial y hundido en el suelo; gira con el planeta y sube y baja con la respiración de Jardín. | Cualquier superficie |
-| **Shaders propios** distintos (24) | Estrella (granulación de plasma, onda del latido, llamaradas), Pira (placas de Voronoi y lava de cuerpo negro), Jardín (arterias y capilares con antialiasing), Vigía (paleta propia, vórtice de Rodrigues, iris y relámpagos; del mapa del Hubble solo se toma el detalle de las nubes), Réquiem (hielo con grietas de luz fría), Cementerio, anillos de naves, agujas, baliza, nebulosa del estertor y Gargantúa. | Todas las vistas |
-| **Shader animado** (8) | La estrella late y cada latido cruza su superficie; la lava y las arterias laten con retraso; Jardín respira; el vórtice de Vigía gira y su pupila se dilata; la luz sube por las agujas; los anillos orbitan con luces que parpadean; la nebulosa se expande; el gas del disco fluye. | (02), (04), (06), (10), (18), (25) |
+| **Shaders propios** distintos (24) | Estrella (granulación de plasma, onda del latido, llamaradas), Pira (placas de Voronoi y lava de cuerpo negro), Jardín (tejido con luz interna y poros), Vigía (paleta propia, vórtice de Rodrigues, iris y relámpagos; del mapa del Hubble solo se toma el detalle de las nubes), Réquiem (hielo con grietas de luz fría), Cementerio, anillos de naves, agujas, baliza, nebulosa del estertor y Gargantúa. | Todas las vistas |
+| **Shader animado** (8) | La estrella late y cada latido cruza su superficie; la lava y la luz de Jardín laten con retraso; Jardín respira; los géiseres hacen erupción; el vórtice de Vigía gira y su pupila se dilata; la luz sube por las agujas; los anillos orbitan con luces que parpadean; la nebulosa se expande; el gas del disco fluye. | (02), (04), (06), (10), (18), (25) |
 | **Mapeo de normales** (8) | Las placas del casco de los naufragios (generadas al arrancar), la roca y el tejido orgánico en triplanar, con mipmaps; tangentes por vértice y base TBN por pixel. | (13), (05) |
 | **Deformación de la geometría** con ruido (10) | Las funciones de altura de cada planeta desplazan los vértices del cubo-esfera (cráteres, crestas, mares de lava, zanjas); Jardín además respira en el vertex shader. | Todas; `--wire` |
 | **Generación de geometría** propia antes de rasterizar (10) | Quadtree de chunks del cubo-esfera generados en paralelo con faldones, icosfera por subdivisión, modelos con `MeshBuilder`, cintas para líneas, recorte de Sutherland-Hodgman. | F3, F4 |
@@ -153,7 +168,8 @@ Además, fuera del menú:
 - **El ciclo** ([src/scene/cycle.rs](src/scene/cycle.rs)): una función pura del tiempo y del instante en que se presionó J, por eso se puede rebobinar.
 - **Nebulosa del estertor** ([src/shaders/nebula.rs](src/shaders/nebula.rs)): una cáscara que se expande; cada rayo la corta en a lo más dos puntos, ahí se evalúan filamentos de ruido, y el borde brilla más porque se ve de canto.
 - **Atmósferas** con dispersión de Rayleigh y Mie, perspectiva aérea por vértice y una tabla del cielo cuando la cámara está adentro.
-- **Partículas** aditivas con profundidad: el penacho de roca que Pira pierde, los arcos de plasma de la estrella, las ondas de la baliza, esporas que brillan de noche y el fuego de los motores.
+- **Partículas** aditivas con profundidad: los arcos de plasma de la estrella, las fuentes de lava de los géiseres, brasas, nieve, polvo y bruma alrededor de la nave según el planeta, chispas de los naufragios, las ondas de la baliza, esporas que brillan de noche y el fuego de los motores.
+- **Cola de Pira** ([src/shaders/tail.rs](src/shaders/tail.rs)): un volumen marchado a lo largo de una parábola que sale del lado de noche, lejos de la estrella; el polvo brilla más a contraluz (Henyey-Greenstein).
 - **Sonido sintetizado**: el latido sincronizado con el que se ve, motor, viento y un tono por planeta.
 - **Bloom** y tonemap HDR que conserva el tono.
 
