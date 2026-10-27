@@ -63,13 +63,17 @@ impl Nebula {
             // Tramo dentro de la cascara, en grosores.
             let path = (1.0 / normal.dot(dir).abs().max(0.1)).min(8.0);
             let q = normal * 2.0 + Vec3::splat(self.age * 0.01);
+            // Grumos grandes: hay regiones casi vacias y otras densas. En
+            // las vacias no hace falta lo demas.
+            let clumps = smoothstep(-0.25, 0.45, noise.noise(q * 0.55 + Vec3::new(9.0, 3.0, 1.0)));
+            if clumps <= 0.0 {
+                continue;
+            }
             let warp = noise.noise(q * 0.9);
             let ridge = |x: f32, k: i32| (1.0 - x.abs()).powi(k);
             let filaments = ridge(noise.noise(q * 1.5 + Vec3::splat(warp * 1.2)), 9)
                 + 0.45 * ridge(noise.noise(q * 4.2 + Vec3::splat(warp * 2.0)), 12);
-            // Grumos grandes: hay regiones casi vacias y otras densas.
-            let clumps = smoothstep(-0.25, 0.45, noise.noise(q * 0.55 + Vec3::new(9.0, 3.0, 1.0)));
-            let haze = (0.5 + 0.5 * noise.fbm(q * 1.4 + Vec3::new(4.0, 1.0, 7.0), 3)).powi(2);
+            let haze = (0.5 + 0.5 * noise.fbm(q * 1.4 + Vec3::new(4.0, 1.0, 7.0), 2)).powi(2);
             let density = clumps * (filaments * 0.8 + haze * 0.35);
             light += color * (density * path * self.glow * 0.14);
         }
