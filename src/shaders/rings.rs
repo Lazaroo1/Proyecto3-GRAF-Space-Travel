@@ -1,4 +1,5 @@
-//! Anillos de Cementerio: un disco analitico, no una malla.
+//! Anillos de Cementerio: un disco analitico, no una malla, lleno de los
+//! restos de las naves del exodo que nunca escapo.
 //!
 //! Por cada pixel se intersecta el rayo de la camara con el plano de los
 //! anillos y se compara con la profundidad del visibility buffer: si el
@@ -6,13 +7,19 @@
 //! como opacidad; si esta detras, la superficie lo tapa. Asi los anillos son
 //! semitransparentes sin ordenar triangulos.
 //!
-//! La densidad depende solo de la distancia al centro: bandas de ruido 1D,
+//! La densidad depende de la distancia al centro: bandas de ruido 1D,
 //! bordes suaves y una division oscura. Con la misma funcion se calculan las
 //! dos sombras: la de los anillos sobre el planeta y la del planeta sobre los
 //! anillos.
+//!
+//! Encima, los restos: celdas de Voronoi en el plano del anillo, cada una un
+//! pedazo de casco de metal con su propio brillo, separadas por huecos, que
+//! orbitan en bloque. Algunas naves todavia tienen una luz
+//! de navegacion que parpadea. Cuando un pedazo mide menos que un pixel se
+//! dibuja su promedio: de lejos el anillo se ve granulado, sin parpadear.
 
 use super::Uniforms;
-use crate::math::{smoothstep, Perlin, Vec3};
+use crate::math::{Perlin, Vec3, hash_u32, smoothstep};
 
 #[derive(Clone, Copy, Debug)]
 pub struct RingInfo {
@@ -20,6 +27,9 @@ pub struct RingInfo {
     pub center: Vec3,
     /// Normal del plano de los anillos.
     pub normal: Vec3,
+    /// Ejes del plano (fijos, no giran con el planeta).
+    pub axis_a: Vec3,
+    pub axis_b: Vec3,
     pub inner: f32,
     pub outer: f32,
     /// Radio del planeta, para su sombra sobre los anillos.
@@ -28,6 +38,125 @@ pub struct RingInfo {
 
 const DUST: Vec3 = Vec3::new(0.62, 0.55, 0.48);
 const DARK_DUST: Vec3 = Vec3::new(0.30, 0.26, 0.24);
+const STEEL: Vec3 = Vec3::new(0.22, 0.24, 0.27);
+const RUST: Vec3 = Vec3::new(0.26, 0.13, 0.07);
+/// Tamano de un pedazo de casco, en unidades del mundo.
+const PIECE: f32 = 14.0;
+
+/// Voronoi 2D: distancia al centro mas cercano, al segundo, el hash de la
+/// celda mas cercana y su centro. Las celdas se repiten cada `period` en y:
+/// la vuelta completa del anillo cierra sin costura.
+fn pieces(x: f32, y: f32, period: i32, seed: u32) -> (f32, f32, u32, (f32, f32)) {
+    let (ix, iy) = (x.floor() as i32, y.floor() as i32);
+    let mut best = (f32::MAX, f32::MAX, 0u32, (0.0, 0.0));
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            let (cx, cy) = (ix + dx, iy + dy);
+            let h = hash_u32(
+                (cx as u32).wrapping_mul(0x8DA6_B343)
+                    ^ (cy.rem_euclid(period) as u32).wrapping_mul(0xD816_3841)
+                    ^ seed,
+            );
+            let px = cx as f32 + 0.15 + 0.7 * (h & 0xFFFF) as f32 / 65536.0;
+            let py = cy as f32 + 0.15 + 0.7 * (h >> 16) as f32 / 65536.0;
+            let d = (x - px).hypot(y - py);
+            if d < best.0 {
+                best = (d, best.0, h, (px, py));
+            } else if d < best.1 {
+                best.1 = d;
+            }
+        }
+    }
+    best
+}
+
+/// Una nave en su celda: un casco que se afina hacia la nariz, con alas
+/// cruzadas atras, un poco girado. Coordenadas en unidades del mundo desde
+/// el centro de la celda; devuelve cuanto tapa y un brillo en el lomo.
+fn ship(ox: f32, oy: f32, id: u32, footprint: f32) -> (f32, f32) {
+    let unit = |k: u32| (hash_u32(id ^ k) >> 8) as f32 / 16_777_216.0;
+    let turn = (unit(12) - 0.5) * 0.9;
+    let (s, c) = turn.sin_cos();
+    let (x, y) = (ox * c - oy * s, ox * s + oy * c);
+    let half = 9.0 + 7.0 * unit(13);
+    let radius = (2.0 + 1.6 * unit(14)) * (1.0 - 0.45 * smoothstep(-half, half, y));
+    let body = x.hypot((y.abs() - half).max(0.0)) - radius;
+    let wing_y = y + half * 0.55;
+    let wings = (x.abs() - radius * 2.6).max(wing_y.abs() - 1.3);
+    let d = body.min(wings);
+    let cover = smoothstep(0.5 + footprint, -0.5, d);
+    let spine = smoothstep(radius * 0.5, 0.0, x.abs()) * smoothstep(0.0, -1.0, body);
+    (cover, spine)
+}
+
+/// Esquirlas de chatarra: pedazos angulosos (celdas de Voronoi encogidas).
+fn scrap(x: f32, y: f32, period: i32, chance: f32) -> f32 {
+    let (f1, f2, id, _) = pieces(x, y, period, 0xBEEF);
+    if (hash_u32(id ^ 11) >> 8) as f32 / 16_777_216.0 > chance {
+        return 0.0;
+    }
+    smoothstep(0.35, 0.45, f2 - f1) * smoothstep(0.42, 0.3, f1)
+}
+
+/// Lo que hay en un punto del anillo: cuanto tapa, su color y la luz que
+/// emite. `footprint` es lo que mide un pixel en el plano.
+fn debris(ring: &RingInfo, hit: Vec3, footprint: f32, time: f32, noise: &Perlin) -> (f32, Vec3, Vec3) {
+    // Gira en bloque a la velocidad de Kepler del radio medio: con la de
+    // cada radio, en un minuto los pedazos vecinos ya se habrian estirado
+    // en rayas.
+    let middle = 0.5 * (ring.inner + ring.outer);
+    let spin = time * 900.0 / middle.powf(1.5);
+    let (a, b) = (hit.dot(ring.axis_a), hit.dot(ring.axis_b));
+    let r = a.hypot(b);
+    let theta = b.atan2(a) + spin;
+    // Polar, estirado a lo largo de la orbita: un numero entero de celdas
+    // por vuelta.
+    let per_turn = (std::f32::consts::TAU * middle / (PIECE * 2.4)).round();
+    let x = r / PIECE;
+    let y = theta / std::f32::consts::TAU * per_turn;
+    let period = per_turn as i32;
+    // Cumulos de restos con claros entre ellos, a la escala de una flota.
+    let clumps = smoothstep(-0.4, 0.25, noise.noise(Vec3::new(x * 0.25, (y * 0.3).sin() * 3.0, (y * 0.3).cos() * 3.0)));
+    let resolved = smoothstep(0.5, 0.15, footprint / PIECE);
+    let average = (0.1 + 0.2 * clumps, STEEL.lerp(RUST, 0.4) * 0.8);
+    if resolved <= 0.0 {
+        return (average.0, average.1, Vec3::ZERO);
+    }
+    let (_, _, id, center) = pieces(x, y, period, 0x5EED);
+    let unit = |k: u32| (hash_u32(id ^ k) >> 8) as f32 / 16_777_216.0;
+    let (ox, oy) = ((x - center.0) * PIECE, (y - center.1) * PIECE * 2.4);
+    let (hull, spine) = if unit(11) < 0.5 * clumps + 0.12 {
+        ship(ox, oy, id, footprint)
+    } else {
+        (0.0, 0.0)
+    };
+    let chips = scrap(x * 3.0, y * 3.0, period * 3, 0.4 * clumps);
+    let paint = STEEL.lerp(RUST, unit(3)).lerp(Vec3::splat(0.06), unit(9) * 0.6)
+        * (0.5 + 0.6 * unit(4))
+        * (1.0 + 0.8 * spine);
+    let cover = hull.max(chips * 0.75);
+    let color = if hull >= chips { paint } else { STEEL.lerp(RUST, 0.6) * 0.6 };
+    // Algunas naves todavia tienen su luz de navegacion, en la popa.
+    let mut light = Vec3::ZERO;
+    if hull > 0.0 && id % 4 == 0 {
+        let half = 9.0 + 7.0 * unit(13);
+        let d = ox.hypot(oy + half);
+        let size = 0.9;
+        let spot = smoothstep(size + footprint, 0.0, d) * (size / (size + footprint)).powi(2);
+        let blink = smoothstep(0.8, 0.97, (time * (1.4 + unit(5)) + unit(6) * 6.28).sin());
+        let tint = if unit(7) < 0.6 {
+            Vec3::new(1.0, 0.08, 0.04)
+        } else {
+            Vec3::new(0.8, 0.9, 1.0)
+        };
+        light = tint * (spot * blink * 18.0);
+    }
+    (
+        average.0 + (cover - average.0) * resolved,
+        average.1.lerp(color, resolved),
+        light * resolved,
+    )
+}
 
 /// Densidad de los anillos (0 a ~0.9) a la distancia `r` del centro.
 pub fn density(ring: &RingInfo, r: f32, noise: &Perlin) -> f32 {
@@ -81,9 +210,16 @@ pub fn composite(color: Vec3, dir: Vec3, depth: f32, ring: &RingInfo, u: &Unifor
     let c = oc.length_squared() - ring.planet_radius * ring.planet_radius;
     let shadowed = b < 0.0 && b * b - c > 0.0;
     let s = (r - ring.inner) / (ring.outer - ring.inner);
-    let albedo = DARK_DUST.lerp(DUST, smoothstep(0.1, 0.9, alpha) * (0.7 + 0.3 * s));
-    // El polvo dispersa hacia adelante: brilla mas a contraluz.
+    let dust = DARK_DUST.lerp(DUST, smoothstep(0.1, 0.9, alpha) * (0.7 + 0.3 * s));
+    // Lo que mide un pixel en el plano, visto de lado crece.
+    let footprint = t * u.pixel_angle / denom.abs().max(0.05);
+    let (cover, metal, beacon) = debris(ring, hit - ring.center, footprint, u.time, u.noise);
+    let albedo = dust.lerp(metal, 0.75);
+    let alpha = (alpha * (0.15 + 1.1 * cover)).min(0.97);
+    // El polvo dispersa hacia adelante: brilla mas a contraluz; el metal
+    // devuelve destellos.
     let forward = dir.dot(to_sun).max(0.0).powi(6) * 1.5;
-    let light = if shadowed { 0.02 } else { 0.35 + forward };
-    color.lerp(albedo * u.sun_light * light, alpha)
+    let glint = (-dir).dot(ring.normal).abs() * 0.2;
+    let light = if shadowed { 0.02 } else { 0.35 + forward + glint };
+    color.lerp(albedo * u.sun_light * light, alpha) + beacon * u.gains.cementerio
 }

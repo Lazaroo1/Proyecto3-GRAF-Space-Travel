@@ -47,10 +47,11 @@ pub enum PropKind {
     Spike,
     Wreck,
     Boulder,
+    Beacon,
 }
 
 impl PropKind {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Spire,
         Self::Ruin,
         Self::Mushroom,
@@ -58,6 +59,7 @@ impl PropKind {
         Self::Spike,
         Self::Wreck,
         Self::Boulder,
+        Self::Beacon,
     ];
 
     /// Posicion en `ALL` (y en la lista de modelos).
@@ -72,7 +74,7 @@ impl PropKind {
     /// ensuciarian.
     pub fn visibility(self) -> f32 {
         match self {
-            Self::Wreck | Self::Boulder => 1.0,
+            Self::Wreck | Self::Boulder | Self::Beacon => 1.0,
             Self::Spire | Self::Ruin => 0.75,
             Self::Mushroom | Self::Coral | Self::Spike => 0.5,
         }
@@ -110,6 +112,8 @@ pub const SPIRE_TIERS: [(f32, f32, f32, f32); 3] = [
     (15.1, 20.1, 0.82, 0.6),
 ];
 pub const SPIRE_TIP: f32 = 29.5;
+/// Altura de la luz de la baliza de Cementerio, en unidades del modelo.
+pub const BEACON_TOP: f32 = 46.0;
 
 // Colores de vertice: algunos shaders los usan como marcas.
 const STONE: Vec3 = Vec3::new(0.0, 0.0, 0.0);
@@ -117,6 +121,8 @@ const STEM: Vec3 = Vec3::new(0.72, 0.66, 0.6);
 const CAP: Vec3 = Vec3::new(0.36, 0.05, 0.3);
 /// Bulbos del coral (el verde en 0 marca la punta que brilla).
 const TIP: Vec3 = Vec3::new(1.0, 0.0, 1.0);
+/// La lampara de la baliza (el shader la enciende).
+const LAMP: Vec3 = Vec3::new(1.0, 0.0, 0.0);
 /// Paredes de adentro del casco: el shader las oscurece con el rojo.
 const INSIDE: Vec3 = Vec3::new(0.15, 1.0, 1.0);
 
@@ -226,6 +232,66 @@ fn spire(detail: usize, broken: bool) -> Mesh {
         }
     }
     b.build()
+}
+
+/// La baliza de Cementerio: una torre de celosia de cuatro patas que se
+/// juntan arriba, con travesanos, una plataforma, una antena y la lampara.
+fn beacon(detail: usize) -> Mesh {
+    let mut b = MeshBuilder::new();
+    b.color(STONE);
+    let (base, top) = (5.0, 1.2);
+    let height = 40.0;
+    let leg = |k: usize, y: f32| {
+        let a = (k as f32 + 0.5) * TAU / 4.0;
+        let r = base + (top - base) * y / height;
+        Vec3::new(a.cos() * r, y, a.sin() * r)
+    };
+    let sides = [3, 4, 6][detail];
+    for k in 0..4 {
+        let (p0, p1) = (leg(k, -1.0), leg(k, height));
+        b.frustum(p0, (p1 - p0).normalize(), (p1 - p0).length(), 0.45, 0.28, sides, false, (false, true));
+    }
+    if detail >= 1 {
+        // Travesanos en zigzag entre patas vecinas.
+        let levels = [5, 8, 12][detail];
+        for i in 0..levels {
+            let (y0, y1) = (
+                height * i as f32 / levels as f32,
+                height * (i + 1) as f32 / levels as f32,
+            );
+            for k in 0..4 {
+                let (a, c) = (leg(k, y0), leg((k + 1) % 4, y1));
+                let axis = (c - a).normalize();
+                let side = axis.cross(Vec3::Y).normalize();
+                b.cuboid((a + c) * 0.5, [side, axis, side.cross(axis)], Vec3::new(0.12, (c - a).length() * 0.5, 0.12));
+            }
+        }
+    }
+    // Plataforma, antena y la lampara.
+    b.frustum(Vec3::new(0.0, height, 0.0), Vec3::Y, 1.0, 2.6, 2.4, sides.max(4), false, (true, true));
+    b.frustum(Vec3::new(0.0, height + 1.0, 0.0), Vec3::Y, 4.0, 0.25, 0.12, sides, false, (false, true));
+    b.color(LAMP);
+    b.ellipsoid(Vec3::new(0.0, BEACON_TOP, 0.0), Vec3::splat(1.1), [3, 4, 6][detail], [6, 8, 12][detail], false);
+    if detail >= 1 {
+        // La antena parabolica, apuntando al cielo de lado.
+        b.color(STONE);
+        b.ellipsoid(Vec3::new(2.4, height - 4.0, 0.0), Vec3::new(2.2, 0.5, 2.2), 4, [8, 10, 16][detail], true);
+    }
+    b.build()
+}
+
+/// Pone la baliza en su lugar de Cementerio, fijo en el espacio del
+/// planeta, y aparta los naufragios de su pie.
+pub fn beacon_site(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField) {
+    let dir = DVec3::new(0.32, 0.22, 0.92).normalize();
+    instances.retain(|p| (p.position.normalize() - dir).length() * radius > 30.0);
+    let height = field.sample(dir.as_vec3()).height as f64;
+    instances.push(Instance {
+        kind: PropKind::Beacon,
+        position: dir * (radius + height - 0.8),
+        rotation: upright_rotation(dir, 0.7),
+        scale: 1.0,
+    });
 }
 
 fn mushroom(detail: usize) -> Mesh {
@@ -532,6 +598,7 @@ pub fn build_models() -> Vec<PropModel> {
                 PropKind::Spike => spikes(detail),
                 PropKind::Wreck => wreck(detail),
                 PropKind::Boulder => boulder(detail),
+                PropKind::Beacon => beacon(detail),
             };
             let mut lods = [make(2), make(1), make(0)];
             if matches!(kind, PropKind::Mushroom | PropKind::Coral) {

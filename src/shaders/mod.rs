@@ -35,7 +35,7 @@ pub use atmosphere::{AtmosphereFrame, AtmosphereModel, AtmosphereParams, SkyView
 pub use gargantua::BlackHole;
 pub use nebula::Nebula;
 pub use pbr::PointLight;
-pub use props::PropStyle;
+pub use props::{BEACON_PERIOD, PropStyle};
 pub use rings::RingInfo;
 pub use ship::ShipStyle;
 pub use sky::{SkyCube, shade as sky};

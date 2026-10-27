@@ -100,6 +100,35 @@ pub fn prominences(
     }
 }
 
+/// Ondas que la baliza de Cementerio emite con cada destello.
+const BEACON_WAVES: usize = 3;
+const BEACON_WAVE_POINTS: usize = 260;
+pub const BEACON_COUNT: usize = BEACON_WAVES * BEACON_WAVE_POINTS;
+
+/// La transmision de la baliza: con cada destello sale un anillo de luz roja
+/// que se abre sobre el horizonte y sube, y se apaga. `top` es la lampara y
+/// `up` la vertical del planeta ahi, ambos relativos a la camara.
+pub fn beacon_waves(out: &mut [Particle], top: Vec3, up: Vec3, t: f64, period: f32) {
+    let (a, b) = basis(up);
+    let life = period * BEACON_WAVES as f32;
+    let time = t as f32;
+    for (i, p) in out.iter_mut().enumerate() {
+        let wave = i / BEACON_WAVE_POINTS;
+        let k = (i % BEACON_WAVE_POINTS) as f32 / BEACON_WAVE_POINTS as f32;
+        // Cada onda nace un periodo despues de la anterior.
+        let age = (time - wave as f32 * period).rem_euclid(life);
+        let radius = 3.0 + age * 32.0;
+        let angle = k * std::f32::consts::TAU;
+        let ring = a * angle.cos() + b * angle.sin();
+        let fade = (1.0 - age / life).powi(2) * smoothstep(0.0, 0.15, age);
+        *p = Particle {
+            pos: top + ring * radius + up * (age * 6.0),
+            radius: 0.8 + age * 0.35,
+            color: Vec3::new(1.0, 0.1, 0.05) * (0.55 * fade),
+        };
+    }
+}
+
 #[inline]
 fn unit(h: u32) -> f32 {
     (h >> 8) as f32 / 16_777_216.0

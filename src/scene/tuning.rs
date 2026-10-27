@@ -36,6 +36,9 @@ impl System {
                 self.garden_grove_frame(),
             );
         }
+        if body.name == "Cementerio" {
+            props::beacon_site(&mut instances, body.radius, &**field);
+        }
         PropSet::new(instances, &self.prop_models)
     }
 
