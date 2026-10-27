@@ -110,6 +110,8 @@ pub struct PostParams<'a> {
     pub ripple: Option<Ripple>,
     /// Fundido a blanco (0 a 1).
     pub whiteout: f32,
+    /// Fundido a negro (al cruzar el horizonte de Gargantua).
+    pub blackout: f32,
 }
 
 /// La onda gravitacional del colapso: un anillo que se expande desde el
@@ -197,7 +199,8 @@ pub fn tonemap_rows(first_row: usize, out: &mut [u8], hdr: &[Vec3], p: &PostPara
                     (hdr[index] + glow[x] * p.bloom_intensity) * p.exposure,
                     p.p2_curve,
                 )
-                .lerp(Vec3::ONE, p.whiteout);
+                .lerp(Vec3::ONE, p.whiteout)
+                    * (1.0 - p.blackout);
                 let d = dither(x, y);
                 px[0] = encode(mapped.x, d, lut);
                 px[1] = encode(mapped.y, d, lut);
@@ -225,7 +228,8 @@ pub fn tonemap_rows(first_row: usize, out: &mut [u8], hdr: &[Vec3], p: &PostPara
                     (*color + *light * p.bloom_intensity) * p.exposure,
                     p.p2_curve,
                 )
-                .lerp(Vec3::ONE, p.whiteout);
+                .lerp(Vec3::ONE, p.whiteout)
+                    * (1.0 - p.blackout);
                 let d = dither(x0 + i, y);
                 px[0] = encode(mapped.x, d, lut);
                 px[1] = encode(mapped.y, d, lut);

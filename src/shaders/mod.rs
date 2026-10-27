@@ -141,6 +141,8 @@ pub struct Uniforms<'a> {
     /// Posicion de la nave, relativa a la camara: lo que hay en los lugares
     /// de cada planeta despierta cuando se acerca.
     pub ship: Vec3,
+    /// Cuanto se ha fundido Pira mientras Gargantua se la come (0 a 1).
+    pub melt: f32,
     /// Anillos de Cementerio, si existen.
     pub ring: Option<RingInfo>,
     /// Atmosferas visibles, de la mas lejana a la mas cercana.

@@ -131,7 +131,7 @@ pub struct Preset {
     pub act: Option<f64>,
 }
 
-pub const PRESETS: [Preset; 29] = [
+pub const PRESETS: [Preset; 31] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
@@ -387,6 +387,18 @@ pub const PRESETS: [Preset; 29] = [
         act: None,
     },
     Preset {
+        name: "30_comida",
+        shot: Shot::Gaze { body: "Pira" },
+        time: 830.0,
+        act: Some(44.0),
+    },
+    Preset {
+        name: "31_digestion",
+        shot: Shot::Gaze { body: "Pira" },
+        time: 830.0,
+        act: Some(62.0),
+    },
+    Preset {
         name: "24_el_ojo",
         shot: Shot::BlackHole,
         time: 835.0,
@@ -413,9 +425,14 @@ pub struct App {
     pub cycle: CycleState,
     /// Cuando se desataron el final y el renacer (tecla J).
     pub timeline: Timeline,
-    /// El ultimo lugar visitado con N y su nombre para el HUD.
+    /// El ultimo lugar visitado con N.
     next_site: usize,
-    pub site_banner: Option<&'static str>,
+    /// Un aviso para el HUD (el lugar al que se llego, la muerte...).
+    pub banner: Option<&'static str>,
+    /// Donde estuvo la nave cada medio segundo, para rebobinar si muere.
+    history: std::collections::VecDeque<(f64, ShipState, DQuat)>,
+    /// Cuando cruzo el horizonte de Gargantua.
+    dying: Option<f64>,
     /// Tabla de geodesicas de Gargantua: se rehace al cambiar la distancia.
     lens: Option<LensTable>,
     /// Camara congelada (F7): el culling y el LOD se calculan desde ella
@@ -583,7 +600,9 @@ impl App {
             cycle: cycle::at(t, &Timeline::default(), system_star_radius),
             timeline: Timeline::default(),
             next_site: usize::MAX,
-            site_banner: None,
+            banner: None,
+            history: std::collections::VecDeque::new(),
+            dying: None,
             lens: None,
             freeze: None,
             markers: Vec::new(),
@@ -666,7 +685,55 @@ impl App {
             time,
             act: self.timeline.since(time),
         });
-        self.site_banner = Some(site.name);
+        self.banner = Some(site.name);
+    }
+
+    /// Si la nave cruza el horizonte de Gargantua muere: la pantalla se va a
+    /// negro y el tiempo se rebobina quince segundos, con la nave donde
+    /// estaba entonces.
+    fn watch_horizon(&mut self) {
+        if self.history.back().is_none_or(|h| self.sim_time - h.0 >= 0.5) {
+            self.history.push_back((self.sim_time, self.ship, self.aim));
+            if self.history.len() > 80 {
+                self.history.pop_front();
+            }
+        }
+        if let Some(start) = self.dying {
+            if self.sim_time - start > 1.4 {
+                let target = start - 15.0;
+                let back = self
+                    .history
+                    .iter()
+                    .rev()
+                    .find(|h| h.0 <= target)
+                    .or(self.history.front())
+                    .copied();
+                if let Some((time, ship, aim)) = back {
+                    self.history.retain(|h| h.0 <= time);
+                    self.ship = ship;
+                    self.ship_prev = ship;
+                    self.aim = aim;
+                    self.sim_time = time;
+                    self.accumulator = 0.0;
+                    self.local_up = None;
+                }
+                self.dying = None;
+                self.banner = Some("Rebobinando");
+            }
+            return;
+        }
+        let state = cycle::at(self.sim_time, &self.timeline, self.system.star_base);
+        let hole = self.system.bodies[0].position(self.sim_time);
+        if state.rs > 0.5 && (self.ship.world_pos - hole).length() < cycle::HORIZON * state.rs {
+            self.dying = Some(self.sim_time);
+            self.banner = Some("Cruzaste el horizonte");
+        }
+    }
+
+    /// Que tan oscura esta la pantalla mientras la nave muere (0 a 1).
+    fn death_fade(&self) -> f32 {
+        self.dying
+            .map_or(0.0, |start| smoothstep(0.0, 1.0, (self.sim_time - start) as f32))
     }
 
     /// J: desata el final de la estrella o, si ya empezo, su renacer.
@@ -778,6 +845,8 @@ impl App {
             // Rebobinar: todo el sistema es funcion del tiempo y vuelve atras;
             // la nave se queda quieta respecto a su cuerpo.
             self.skip(-config::REWIND_SPEED * frame_dt);
+            self.history.retain(|h| h.0 <= self.sim_time);
+            self.dying = None;
             return;
         }
         // Acumulador: se dan tantos pasos fijos como quepan en el tiempo real;
@@ -786,8 +855,11 @@ impl App {
         while self.accumulator >= config::PHYSICS_DT {
             // La estrella del ciclo cambia de tamano: la nave choca con ella
             // (o con la zona de exclusion del agujero) a su radio de ahora.
-            self.system.bodies[0].radius =
-                cycle::at(self.sim_time, &self.timeline, self.system.star_base).collision_radius;
+            let now = cycle::at(self.sim_time, &self.timeline, self.system.star_base);
+            self.system.bodies[0].radius = now.collision_radius;
+            if let Some(i) = self.system.find("Pira") {
+                self.system.bodies[i].hidden = now.swallow >= 1.0;
+            }
             self.ship_prev = self.ship;
             self.flight = ship::step(
                 &mut self.ship,
@@ -801,6 +873,7 @@ impl App {
             self.accumulator -= config::PHYSICS_DT;
         }
         self.timeline.advance(self.sim_time);
+        self.watch_horizon();
         // El fuego de los motores sigue al empuje (y al crucero).
         let cruise = if self.flight.local && self.settings.cruise {
             config::CRUISE_THRUST
@@ -915,6 +988,9 @@ impl App {
         let pixel_angle = 2.0 * (camera.fov_y * 0.5).tan() / self.renderer.height() as f64;
         let state = cycle::at(t, &self.timeline, self.system.star_base);
         self.system.bodies[0].radius = state.collision_radius;
+        if let Some(i) = self.system.find("Pira") {
+            self.system.bodies[i].hidden = state.swallow >= 1.0;
+        }
         let star = &self.system.bodies[0];
         self.cycle = state;
         let beat = if state.star_radius > 0.0 {
@@ -941,6 +1017,11 @@ impl App {
             .max(1.0);
         self.build_path(t, &camera, pixel_angle);
         self.emit_particles(t, &camera, ship_pos, ship_rot, show_ship);
+        // Gargantua se come a Pira: la estira hacia el agujero y la deshace.
+        let warp = self.system.find("Pira").filter(|_| state.swallow > 0.0).map(|i| {
+            let toward = (self.system.bodies[0].position(t) - self.system.bodies[i].position(t)).normalize();
+            Warp::new(i, state.swallow as f64, toward)
+        });
         let mut draws = build_draws(
             &self.system,
             t,
@@ -950,6 +1031,7 @@ impl App {
             show_ship,
             star_radius,
             star_material,
+            warp,
         );
         self.prop_stats = prop_draws(
             &self.system,
@@ -959,6 +1041,7 @@ impl App {
             &cull_view,
             pixel_angle,
             light_radius,
+            warp,
             &mut draws,
         );
         for mesh in [&self.path_mesh, &self.frustum_mesh] {
@@ -1063,7 +1146,7 @@ impl App {
         // Las mas cercanas primero: el shading recorre todas por pixel.
         points.sort_by(|a, b| a.pos.length_squared().total_cmp(&b.pos.length_squared()));
         points.truncate(12);
-        let atmospheres = atmosphere_frames(&self.system, t, &camera, &view);
+        let atmospheres = atmosphere_frames(&self.system, t, &camera, &view, warp.map(|w| w.body));
         // Si la camara esta dentro de una atmosfera, su cielo sale de una tabla.
         let sky_view = atmospheres
             .iter()
@@ -1092,6 +1175,23 @@ impl App {
                     .rotate(DVec3::Y);
                 let axis_a = normal.cross(DVec3::Z).normalize();
                 let axis_b = normal.cross(axis_a);
+                // Pira en el marco del disco (el mismo de `BlackHole::local`).
+                let stream = self
+                    .system
+                    .find("Pira")
+                    .filter(|_| (0.0..shaders::gargantua::STREAM_LIFE).contains(&state.stream_age))
+                    .map(|i| {
+                        let v = (self.system.bodies[i].position(t) - star_pos) / state.rs;
+                        shaders::gargantua::Stream::new(
+                            crate::gargantua_p2::math::Vec3::new(
+                                v.dot(axis_a) as f32,
+                                v.dot(normal) as f32,
+                                -v.dot(axis_b) as f32,
+                            ),
+                            state.stream_age,
+                        )
+                    });
+                let extent = stream.map_or(state.disk_outer, |s| state.disk_outer.max(s.reach()));
                 Some(BlackHole {
                     center: (star_pos - camera.pos).as_vec3(),
                     rs: state.rs as f32,
@@ -1104,9 +1204,10 @@ impl App {
                     outer: state.disk_outer,
                     peak: state.disk_peak,
                     cone_cos: table
-                        .disk_cone(state.disk_outer.max(3.5))
+                        .disk_cone(extent.max(3.5))
                         .max(table.shadow() * 1.2)
                         .cos(),
+                    stream,
                 })
             }
             _ => None,
@@ -1115,6 +1216,7 @@ impl App {
         self.renderer.exposure =
             self.exposure * state.exposure * if self.renderer.p2_curve { 5.0 } else { 1.0 };
         self.renderer.whiteout = state.whiteout;
+        self.renderer.blackout = self.death_fade();
         // Lo que esta detras del agujero y cae en su sombra no se ve: las
         // brasas de Pira del otro lado no pueden brillar sobre ella.
         if let Some(hole) = &hole {
@@ -1156,11 +1258,12 @@ impl App {
             heart,
             star_glow: state.star_glow,
             flares: state.flares,
-            tail: pira_tail(&self.system, t, camera.pos, sun_light),
+            tail: pira_tail(&self.system, t, camera.pos, sun_light).filter(|_| state.star_glow > 0.01),
             nebula: shaders::Nebula::at(
                 state.shell_age,
                 (star_pos - camera.pos).as_vec3(),
                 self.system.star_base as f32,
+                state.shell_light,
             ),
             black_hole: hole.as_ref(),
             sun_pos: (star_pos - camera.pos).as_vec3(),
@@ -1177,6 +1280,7 @@ impl App {
                 smoothstep(4.0, 1.25, distance as f32)
             },
             ship: (ship_pos - camera.pos).as_vec3(),
+            melt: state.swallow,
             ring: ring_info(&self.system, t, camera.pos),
             atmospheres: &atmospheres,
             sky_view: sky_view.as_ref(),
@@ -1355,7 +1459,7 @@ impl App {
             let Some(i) = system.find(name) else { continue };
             let body = &system.bodies[i];
             let altitude = (camera.pos - body.position(t)).length() - body.radius;
-            if altitude < top {
+            if altitude < top && !body.hidden {
                 let start = out.len();
                 out.resize(start + effects::MOTE_COUNT, blank);
                 let strength = smoothstep(top as f32, top as f32 * 0.4, altitude as f32);
@@ -1790,6 +1894,7 @@ fn markers(
         .bodies
         .iter()
         .enumerate()
+        .filter(|(_, body)| !body.hidden)
         .filter_map(|(i, body)| {
             let rel = body.position(t) - camera.pos;
             let distance = rel.length();
@@ -1850,6 +1955,9 @@ fn markers(
 fn pira_tail(system: &System, t: f64, camera: DVec3, light: Vec3) -> Option<shaders::Tail> {
     let i = system.find("Pira")?;
     let pira = &system.bodies[i];
+    if pira.hidden {
+        return None;
+    }
     let center = pira.position(t);
     let star = system.bodies[0].position(t);
     let away = (center - star).normalize();
@@ -1885,6 +1993,9 @@ fn props_near(
         return Vec::new();
     };
     let b = &system.bodies[i];
+    if b.hidden {
+        return Vec::new();
+    }
     let center = b.position(t);
     if (center - camera).length() > b.radius + reach * 2.0 {
         return Vec::new();
@@ -1966,14 +2077,20 @@ fn atmosphere_frames<'a>(
     t: f64,
     camera: &Camera,
     view: &View,
+    melting: Option<usize>,
 ) -> Vec<AtmosphereFrame<'a>> {
     let star = system.bodies[0].position(t);
     let mut frames: Vec<(f64, AtmosphereFrame<'a>)> = system
         .bodies
         .iter()
         .zip(&system.atmospheres)
-        .filter_map(|(body, model)| {
+        .enumerate()
+        .filter_map(|(index, (body, model))| {
             let model = model.as_ref()?;
+            // Mientras Gargantua la deshace, Pira pierde su atmosfera.
+            if body.hidden || melting == Some(index) {
+                return None;
+            }
             let position = body.position(t);
             let center = position - camera.pos;
             let top = model.radius + model.params.thickness;
@@ -2023,17 +2140,20 @@ fn prop_draws<'a>(
     cull_view: &View,
     pixel_angle: f64,
     light_radius: f64,
+    warp: Option<Warp>,
     draws: &mut Vec<Draw<'a>>,
 ) -> PropStats {
     let mut stats = PropStats::default();
     let mut chosen = Vec::new();
     let star = &system.bodies[0];
     let (star_pos, star_radius) = (star.position(t), light_radius);
-    for (body, set) in system.bodies.iter().zip(&system.props) {
+    for (index, (body, set)) in system.bodies.iter().zip(&system.props).enumerate() {
         let Some(field) = &body.surface else { continue };
-        if set.instances.is_empty() {
+        // Lo que hay sobre Pira cae primero cuando Gargantua la deshace.
+        if set.instances.is_empty() || body.hidden || warp.is_some_and(|w| w.body == index) {
             continue;
         }
+        let grow = warp.filter(|w| w.body == index).map_or(1.0, |w| w.grow);
         let quat = body.rotation(t);
         let rotation = quat.to_mat3();
         let body_pos = body.position(t);
@@ -2073,7 +2193,10 @@ fn prop_draws<'a>(
             );
             let position = instance.position + instance.position.normalize() * lift as f64;
             let rot = rotation.mul(&instance.rotation.to_mat3());
-            let offset = center + rotation.mul_vec(position);
+            let (linear, offset) = match warp {
+                Some(w) => w.apply(index, center, rot.scale(scale), rotation.mul_vec(position)),
+                None => (rot.scale(scale), center + rotation.mul_vec(position)),
+            };
             let disc = (star_radius / (star_pos - body_pos).length())
                 .min(1.0)
                 .asin() as f32;
@@ -2081,7 +2204,7 @@ fn prop_draws<'a>(
                 mesh,
                 indices: &mesh.indices,
                 local_offset: Vec3::ZERO,
-                model: DMat4::from_affine(&rot.scale(scale), offset).to_f32(),
+                model: DMat4::from_affine(&linear, offset).to_f32(),
                 normal: rot.to_f32(),
                 material: Material::Prop(PropStyle {
                     kind: instance.kind,
@@ -2093,14 +2216,52 @@ fn prop_draws<'a>(
                     disc,
                     seed: (hash_u32(pick.index as u32 ^ 0x5EED) >> 8) as f32 / 16_777_216.0,
                 }),
-                bounds_center: (offset + rot.mul_vec(mesh.bounds_center.as_dvec3() * scale))
+                bounds_center: (offset + linear.mul_vec(mesh.bounds_center.as_dvec3()))
                     .as_vec3(),
-                bounds_radius: mesh.bounds_radius * scale as f32,
+                bounds_radius: mesh.bounds_radius * (scale * grow) as f32,
                 tag: pick.lod as u32 + 1,
             });
         }
     }
     stats
+}
+
+/// Como Gargantua deforma a Pira mientras se la come: la estira hacia el
+/// agujero y la adelgaza (la marea), la encoge y la acerca.
+#[derive(Clone, Copy)]
+struct Warp {
+    body: usize,
+    stretch: DMat3,
+    shift: DVec3,
+    grow: f64,
+}
+
+impl Warp {
+    /// La deformacion de Pira con `swallow` (0 a 1) hacia `toward` (unitario).
+    fn new(body: usize, swallow: f64, toward: DVec3) -> Self {
+        let shrink = 1.0 - swallow.powf(2.5);
+        let along = (1.0 + 1.5 * swallow) * shrink;
+        let across = (1.0 - 0.6 * swallow) * shrink;
+        let column = |e: DVec3| e * across + toward * (toward.dot(e) * (along - across));
+        Self {
+            body,
+            stretch: DMat3::from_cols(column(DVec3::X), column(DVec3::Y), column(DVec3::Z)),
+            shift: toward * (swallow * swallow * 160.0),
+            grow: along.max(across),
+        }
+    }
+
+    /// Matriz y posicion de un dibujo de `body`: `linear` lo orienta y
+    /// `offset` es su posicion desde el centro del cuerpo.
+    fn apply(&self, body: usize, center: DVec3, linear: DMat3, offset: DVec3) -> (DMat3, DVec3) {
+        if body != self.body {
+            return (linear, center + offset);
+        }
+        (
+            self.stretch.mul(&linear),
+            center + self.shift + self.stretch.mul_vec(offset),
+        )
+    }
 }
 
 /// Un dibujo por chunk de terreno visible, uno por cuerpo sin terreno y otro
@@ -2115,25 +2276,33 @@ fn build_draws<'a>(
     show_ship: bool,
     star_radius: f64,
     star_material: Material,
+    warp: Option<Warp>,
 ) -> Vec<Draw<'a>> {
     let mut draws = Vec::new();
     for (index, (body, terrain)) in system.bodies.iter().zip(&system.terrains).enumerate() {
+        if body.hidden {
+            continue;
+        }
         let rotation = body.rotation(t).to_mat3();
         let center = body.position(t) - camera.pos;
         match terrain {
             Some(terrain) => {
                 let normal = rotation.to_f32();
+                let grow = warp.filter(|w| w.body == index).map_or(1.0, |w| w.grow) as f32;
                 for chunk in terrain.selected() {
-                    let offset = center + rotation.mul_vec(chunk.center);
+                    let (linear, offset) = match warp {
+                        Some(w) => w.apply(index, center, rotation, rotation.mul_vec(chunk.center)),
+                        None => (rotation, center + rotation.mul_vec(chunk.center)),
+                    };
                     draws.push(Draw {
                         mesh: &chunk.mesh,
                         indices: terrain.indices(),
                         local_offset: chunk.center.as_vec3(),
-                        model: DMat4::from_affine(&rotation, offset).to_f32(),
+                        model: DMat4::from_affine(&linear, offset).to_f32(),
                         normal,
                         material: body.material,
                         bounds_center: offset.as_vec3(),
-                        bounds_radius: chunk.radius,
+                        bounds_radius: chunk.radius * grow,
                         tag: chunk.key.level as u32 + 1,
                     });
                 }
@@ -2206,6 +2375,33 @@ mod tests {
             (app.time() - start - 2.0).abs() < config::PHYSICS_DT * 1.1,
             "dos segundos de frames lentos deben avanzar dos segundos del ciclo"
         );
+    }
+
+    #[test]
+    fn crossing_the_horizon_kills_the_ship_and_rewinds_time() {
+        let mut app = App::new(64, 36).unwrap();
+        // Gargantua ya formada: la J fue hace dos minutos.
+        let now = app.time();
+        app.timeline = Timeline::at(now, Some(120.0));
+        // Unos segundos lejos del agujero, para tener historia.
+        let still = FrameInput::default();
+        for _ in 0..240 {
+            app.update(1.0 / 60.0, &still);
+        }
+        let before = app.time();
+        // Y de pronto, junto al horizonte.
+        let hole = app.system.bodies[0].position(before);
+        app.ship.world_pos = hole + DVec3::X * cycle::GARGANTUA_RS;
+        app.ship.rel_pos = app.ship.world_pos - app.system.bodies[app.ship.frame].position(before);
+        app.update(1.0 / 60.0, &still);
+        assert!(app.dying.is_some(), "deberia morir al cruzar el horizonte");
+        for _ in 0..120 {
+            app.update(1.0 / 60.0, &still);
+        }
+        assert!(app.dying.is_none());
+        assert!(app.time() < before, "el tiempo se rebobina: {} -> {}", before, app.time());
+        let distance = (app.ship.world_pos - app.system.bodies[0].position(app.time())).length();
+        assert!(distance > 3.0 * cycle::GARGANTUA_RS, "la nave vuelve lejos: {distance}");
     }
 
     #[test]

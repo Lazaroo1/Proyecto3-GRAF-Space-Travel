@@ -244,9 +244,9 @@ fn run_window(options: &Options) -> Result<(), String> {
         }
         if rl.is_key_pressed(KeyboardKey::KEY_N) {
             app.visit_next_site();
-            if let Some(name) = app.site_banner {
-                hud.preset = Some((name, hud.age));
-            }
+        }
+        if let Some(text) = app.banner.take() {
+            hud.preset = Some((text, hud.age));
         }
         if rl.is_key_pressed(KeyboardKey::KEY_F3) {
             app.debug.wireframe = !app.debug.wireframe;

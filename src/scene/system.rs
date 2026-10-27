@@ -48,6 +48,8 @@ pub struct Body {
     pub surface: Option<Arc<dyn HeightField>>,
     /// Anillos: radios interior y exterior, en radios del planeta.
     pub rings: Option<(f64, f64)>,
+    /// Ya no existe (Gargantua se la comio): no se choca con ella.
+    pub hidden: bool,
 }
 
 impl Body {
@@ -147,6 +149,7 @@ impl PlanetSpec {
             material: self.material,
             surface: Some(self.surface),
             rings: None,
+            hidden: false,
         };
         (body, terrain, atmosphere)
     }
@@ -231,6 +234,7 @@ impl System {
             }),
             surface: None,
             rings: None,
+            hidden: false,
         };
 
         let (mut pira, pira_terrain, pira_air) = PlanetSpec {
@@ -470,6 +474,7 @@ pub fn nearest_surface(bodies: &[Body], p: DVec3, t: f64) -> (usize, f64) {
     bodies
         .iter()
         .enumerate()
+        .filter(|(_, b)| !b.hidden)
         .map(|(i, b)| {
             let offset = p - b.position(t);
             (i, offset.length() - b.radius - b.surface_height(offset, t))

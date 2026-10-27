@@ -44,8 +44,13 @@ const BEAT_FAST: f64 = 0.7;
 pub const GARGANTUA_RS: f64 = 40.0;
 /// Radio exterior del disco formado, en `rs`.
 pub const DISK_OUTER: f32 = 19.0;
-/// La nave no puede acercarse al agujero a menos de tantos `rs`.
-const KEEP_OUT: f64 = 3.5;
+/// Pasado el horizonte (con un margen: la esfera de fotones) la nave muere
+/// y el tiempo se rebobina.
+pub const HORIZON: f64 = 1.6;
+/// Segundos despues de abrirse el ojo en que Gargantua empieza a comerse a
+/// Pira, y lo que tarda en deshacerla.
+const SWALLOW_START: f64 = 6.0;
+const SWALLOW_LENGTH: f64 = 16.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -152,6 +157,13 @@ pub struct CycleState {
     pub flares: f32,
     /// Segundos desde que la estrella solto su capa de gas (negativo antes).
     pub shell_age: f32,
+    /// Cuanta luz le da la estrella a esa capa: se apaga con ella.
+    pub shell_light: f32,
+    /// Cuanto se ha comido Gargantua a Pira (0 a 1; a 1 ya no queda).
+    pub swallow: f32,
+    /// Segundos desde que Pira empezo a deshacerse (negativo antes): su gas
+    /// entra al disco y se va mezclando.
+    pub stream_age: f32,
     /// Radio de Schwarzschild en unidades del mundo (0 antes del colapso).
     pub rs: f64,
     /// Segundos desde que se abrio el ojo (negativo antes).
@@ -262,15 +274,22 @@ pub fn at(t: f64, timeline: &Timeline, radius: f64) -> CycleState {
         star_glow: alive as f32 * (1.0 - u as f32),
         flares: (estertor * alive * (1.0 - u)) as f32,
         shell_age: (s_ - SHELL_RELEASE) as f32,
+        shell_light: (alive * drain) as f32,
+        swallow: s(SWALLOW_START, SWALLOW_START + SWALLOW_LENGTH, since_eye) as f32,
+        stream_age: (since_eye - SWALLOW_START) as f32,
         rs,
         since_eye,
         disk_density: born,
         disk_outer: 3.0 + (DISK_OUTER - 3.0) * grown,
-        disk_peak: 6500.0 + 1500.0 * (-(since_eye.max(0.0)) / 15.0).exp() as f32,
+        // Nace blanco azulado de caliente y se enfria a naranja fuego.
+        disk_peak: 4300.0 + 11_500.0 * (-(since_eye.max(0.0)) / 20.0).exp() as f32,
         biolum: 1.0 + 2.0 * s(ESTERTOR, collapse_end + 2.0, s_) as f32,
-        exposure: 1.0 / (1.0 + 2.0 * burst as f32),
+        // En el silencio los ojos se acostumbran a la oscuridad: aparece el
+        // cielo y la bioluminiscencia.
+        exposure: (1.0 + 2.5 * (s(ESTERTOR + 1.0, collapse_end + 1.0, s_) * (1.0 - open)) as f32)
+            / (1.0 + 2.0 * burst as f32),
         whiteout: fade_out.max(fade_in) as f32,
-        collision_radius: (star_radius * alive).max(KEEP_OUT * rs),
+        collision_radius: star_radius * alive,
     }
 }
 

@@ -176,6 +176,7 @@ pub struct Renderer {
     pub ripple: Option<Ripple>,
     /// Fundido a blanco de la imagen final (el renacer del ciclo).
     pub whiteout: f32,
+    pub blackout: f32,
     particle_bins: ParticleBins,
     /// Gas de Gargantua cada pocos pixeles; sus buffers se reutilizan.
     gas_field: GasField,
@@ -207,6 +208,7 @@ impl Renderer {
             cull: None,
             ripple: None,
             whiteout: 0.0,
+            blackout: 0.0,
             particle_bins: ParticleBins::new(),
             gas_field: GasField::default(),
             exposure: config::EXPOSURE,
@@ -403,6 +405,7 @@ impl Renderer {
             bloom_intensity: self.bloom_intensity,
             ripple: self.ripple,
             whiteout: self.whiteout,
+            blackout: self.blackout,
         };
         let hdr = &self.hdr;
         let block = width * 4 * POST_ROWS;
