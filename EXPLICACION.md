@@ -1,3 +1,26 @@
+# Cambios de la tercera revisión
+
+- **Jardín** volvió a como estaba en la primera revisión.
+- **La cola de Pira** ([shaders/tail.rs](src/shaders/tail.rs)): ya no hay
+  un chorro que cae a la estrella. Un planeta que se desintegra deja una cola
+  de polvo del lado contrario: la radiación lo empuja hacia afuera y el
+  planeta, que sigue en su órbita, lo deja atrás. En el marco de la cola su
+  eje es la parábola `y = c x²`; se marcha el rayo con 6 muestras, solo en
+  el tramo entre el planeta y la punta y solo si pasa cerca del eje. El
+  polvo dispersa la luz de la estrella hacia adelante (Henyey-Greenstein) y
+  junto al planeta el vapor brilla con su color de cuerpo negro.
+- **Lugares que reaccionan a la nave** (`System::sites`, `scene/props.rs`):
+  cada planeta tiene un lugar fijo en su espacio, como el claro de Jardín.
+  Los shaders reciben la posición de la nave (`Uniforms::ship`) y cada objeto
+  despierta según su distancia: los géiseres hacen erupción (fuentes de
+  partículas con gravedad), las agujas encienden sus ventanas desde lo más
+  cercano, los naufragios recuperan algunas luces y echan chispas, la baliza
+  titila más rápido y el ojo de Vigía cierra la pupila
+  (`Uniforms::eye_near`). Cerca del suelo de cada planeta flotan brasas,
+  nieve, polvo o bruma en un cubo que acompaña a la cámara. Las luces de los
+  géiseres, las agujas y la baliza se suman a las de los hongos (las 12 más
+  cercanas). N viaja de un lugar al siguiente.
+
 # Cambios de la segunda revisión
 
 - **El final a pedido** (`scene/cycle.rs`): ya no hay un ciclo fijo de 15
@@ -17,8 +40,7 @@
 - **Nebulosa** (`shaders/nebula.rs`): la capa de gas del estertor. Ver la
   sección 10.
 - **Pira**: corteza en placas de Voronoi con lava entre ellas, más del lado
-  que mira a la estrella; las grietas laten con retraso. El chorro es un
-  penacho continuo (manchas grandes y tenues) con brasas.
+  que mira a la estrella; las grietas laten con retraso.
 - **Vigía**: paleta morada propia sobre el detalle del Hubble, vórtice que
   gira, iris con fibras, pupila que se dilata con el latido y relámpagos.
 - **Réquiem**: agujas góticas en vez de monolitos (pisos octogonales,
@@ -27,7 +49,6 @@
 - **Cementerio**: los anillos están llenos de naves (siluetas por distancia
   con signo en celdas de Voronoi polares, con luces de navegación que
   parpadean) y una baliza de celosía emite una onda con cada destello.
-- **Jardín**: vuelven las arterias y capilares con antialiasing que laten.
 - **Rendimiento**: mapa de sombras en paralelo por franjas sin caras de
   espaldas a la luz, mapas de roca empaquetados en un texel de 8 bytes, gas
   de Gargantúa cada dos pixeles con tabla radial, y FTZ/DAZ en todos los
@@ -179,7 +200,7 @@ cara a la estrella.
 ### Las identidades
 | Planeta | Rasgo central |
 | --- | --- |
-| Pira | Corteza negra en placas con lava de cuerpo negro entre ellas, grietas que laten, acoplamiento de marea, y un penacho de roca vaporizada que cae a la estrella. |
+| Pira | Corteza negra en placas con lava de cuerpo negro entre ellas, grietas que laten, acoplamiento de marea, una cola de polvo que la estrella le arranca y un campo de géiseres. |
 | Jardín | Arterias que laten con la estrella, poros, capilares; la superficie respira (desplazamiento en el vertex shader). |
 | Vigía | Gigante gaseoso morado con un vórtice que gira y una tormenta en forma de ojo que sigue a la nave; la pupila late. |
 | Réquiem | Hielo y escarcha bajo una luz fría, grietas que respiran luz y agujas góticas cuya luz sube con cada latido. |
