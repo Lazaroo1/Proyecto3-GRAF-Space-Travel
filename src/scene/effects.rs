@@ -1,5 +1,5 @@
-//! Efectos de particulas: el chorro de brasas que Pira pierde hacia la
-//! estrella, las esporas que flotan sobre Jardin y el escape de la nave.
+//! Efectos de particulas: los arcos de plasma de la estrella, las esporas
+//! que flotan sobre Jardin, las ondas de la baliza y el escape de la nave.
 //!
 //! Ninguna particula guarda estado: cada una es una **funcion del tiempo**.
 //! Su edad es `fract(t / vida + fase)`, con una fase sacada de un hash de su
@@ -14,10 +14,6 @@ use crate::render::Particle;
 
 use super::Body;
 
-/// Particulas del chorro de Pira.
-pub const STREAM_COUNT: usize = 3500;
-/// Segundos que tarda una brasa en caer de Pira a la estrella.
-const STREAM_LIFE: f32 = 36.0;
 /// Esporas alrededor de la camara cerca de Jardin.
 pub const SPORE_COUNT: usize = 450;
 /// Lado del cubo de esporas (se repite al moverse la camara).
@@ -166,72 +162,6 @@ impl Blackbody {
     }
 }
 
-/// El chorro de brasas: sale de la cara de Pira que mira a la estrella y
-/// cae en espiral hacia ella, quedandose atras de la orbita del planeta (la
-/// materia conserva la velocidad con la que salio). Cada brasa recorre una
-/// curva de Bezier cuadratica y se calienta al acercarse: de rojo oscuro a
-/// amarillo.
-/// `sink` es el radio donde termina: la superficie de la estrella o, despues
-/// del colapso, el borde del disco de Gargantua.
-pub fn pira_stream(
-    out: &mut [Particle],
-    pira: &Body,
-    star: &Body,
-    sink: f64,
-    t: f64,
-    camera: DVec3,
-) {
-    let p = pira.position(t);
-    let star_pos = star.position(t);
-    let to_star = (star_pos - p).normalize();
-    let along_orbit = pira.velocity(t).normalize();
-    let start = p + to_star * (pira.radius * 0.97);
-    let end = star_pos - to_star * (sink * 0.98);
-    let span = (end - start).length();
-    // La curva se queda atras del planeta y un poco por fuera.
-    let control = (start + end) * 0.5 - along_orbit * (span * 0.32);
-    // Relativo a la camara en f64 y despues a f32.
-    let (start, control, end) = (
-        (start - camera).as_vec3(),
-        (control - camera).as_vec3(),
-        (end - camera).as_vec3(),
-    );
-    let (side_a, side_b) = basis(to_star.as_vec3());
-    let width = pira.radius as f32 * 0.45;
-    let colors = Blackbody::new();
-    let time = t as f32;
-    parallel::chunks_mut(out, 512, 512, |job, chunk| {
-        for (k, particle) in chunk.iter_mut().enumerate() {
-            let i = (job * 512 + k) as u32;
-            let h = hash_u32(i ^ 0x51A3_7F00);
-            let age = (time / STREAM_LIFE + unit(h)).fract();
-            // Cae cada vez mas rapido.
-            let s = age.powf(1.6);
-            let a = 1.0 - s;
-            let center = start * (a * a) + control * (2.0 * a * s) + end * (s * s);
-            // Helice alrededor del eje del chorro, que se angosta al caer.
-            let h2 = hash_u32(h);
-            let angle = unit(h2) * std::f32::consts::TAU + s * 9.0;
-            let radius = width * unit(hash_u32(h2)).sqrt() * (1.0 - 0.75 * s);
-            let pos = center + (side_a * angle.cos() + side_b * angle.sin()) * radius;
-            let fade = smoothstep(0.0, 0.06, s) * smoothstep(1.0, 0.9, s);
-            let temperature = 1500.0 + 2600.0 * s + 300.0 * unit(h2 >> 3);
-            // Tres de cada cuatro son el vapor de roca: manchas grandes y
-            // tenues que juntas forman un penacho continuo. El resto, brasas.
-            let (size, light) = if i % 4 != 0 {
-                (7.0 + 9.0 * unit(h >> 5) * (1.0 - 0.6 * s), 0.035)
-            } else {
-                (0.3 + 0.55 * unit(h >> 5), 4.0)
-            };
-            *particle = Particle {
-                pos,
-                radius: size,
-                color: colors.get(temperature) * (light * fade),
-            };
-        }
-    });
-}
-
 /// Esporas que flotan sobre Jardin, en un cubo que acompana a la camara. Se
 /// guardan en el espacio del planeta (giran con el suelo, no se deslizan) y
 /// cada una sube despacio meciendose. Brillan mas de noche.
@@ -342,43 +272,6 @@ mod tests {
 
     fn system() -> System {
         System::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("assets")).unwrap()
-    }
-
-    #[test]
-    fn the_stream_goes_from_pira_to_the_star() {
-        let sys = system();
-        let (star, pira) = (&sys.bodies[0], &sys.bodies[1]);
-        let t = 12.0;
-        let mut out = vec![
-            Particle {
-                pos: Vec3::ZERO,
-                radius: 0.0,
-                color: Vec3::ZERO,
-            };
-            STREAM_COUNT
-        ];
-        pira_stream(&mut out, pira, star, star.radius, t, DVec3::ZERO);
-        let (p, s) = (pira.position(t).as_vec3(), star.position(t).as_vec3());
-        let span = (p - s).length();
-        let near_pira = out
-            .iter()
-            .filter(|q| (q.pos - p).length() < pira.radius as f32 * 1.5)
-            .count();
-        let near_star = out
-            .iter()
-            .filter(|q| (q.pos - s).length() < star.radius as f32 * 1.3)
-            .count();
-        assert!(near_pira > 0 && near_star > 0);
-        // Ninguna se va lejos del tramo entre los dos.
-        assert!(
-            out.iter()
-                .all(|q| (q.pos - p).length() < span * 1.2 && (q.pos - s).length() < span * 1.2)
-        );
-        // Las que nacen junto a Pira son mas frias (mas rojas) que las que caen.
-        let born = out
-            .iter()
-            .filter(|q| (q.pos - p).length() < pira.radius as f32 * 1.5 && q.color.x > 0.0);
-        assert!(born.clone().all(|q| q.color.z / q.color.x < 0.6));
     }
 
     #[test]

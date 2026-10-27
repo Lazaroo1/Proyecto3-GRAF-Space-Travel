@@ -16,7 +16,7 @@ use crate::render::shadow::ShadowMap;
 use crate::render::{Draw, Particle, Renderer, Ripple, Stats, View};
 use crate::scene::camera::{Camera, CameraMode};
 use crate::scene::cycle::{self, CycleState, Timeline};
-use crate::scene::effects::{self, EXHAUST_COUNT, SPORE_COUNT, STREAM_COUNT};
+use crate::scene::effects::{self, EXHAUST_COUNT, SPORE_COUNT};
 use crate::scene::props::{self, Instance, PropKind, PropStats, PropView};
 use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
 use crate::scene::trajectory::{self, Prediction};
@@ -93,7 +93,7 @@ pub enum Shot {
         distance: f64,
         speed: f64,
     },
-    /// El chorro de brasas que Pira pierde hacia la estrella, de lejos.
+    /// Pira y la cola de polvo que pierde, de lejos.
     Stream,
     /// Detras del planeta `body`, mirando hacia la estrella (o hacia
     /// Gargantua): el planeta de perfil adelante y el centro del sistema al
@@ -259,7 +259,7 @@ pub const PRESETS: [Preset; 26] = [
         act: None,
     },
     Preset {
-        name: "14_chorro",
+        name: "14_cola",
         shot: Shot::Stream,
         time: 40.0,
         act: None,
@@ -875,9 +875,8 @@ impl App {
         let light_radius = star_radius
             .max(state.disk_outer as f64 * state.rs * 0.5)
             .max(1.0);
-        let sink = star_radius.max(state.disk_outer as f64 * state.rs * 0.8);
         self.build_path(t, &camera, pixel_angle);
-        self.emit_particles(t, &camera, ship_pos, ship_rot, show_ship, sink);
+        self.emit_particles(t, &camera, ship_pos, ship_rot, show_ship);
         let mut draws = build_draws(
             &self.system,
             t,
@@ -1062,6 +1061,7 @@ impl App {
             heart,
             star_glow: state.star_glow,
             flares: state.flares,
+            tail: pira_tail(&self.system, t, camera.pos, sun_light),
             nebula: shaders::Nebula::at(
                 state.shell_age,
                 (star_pos - camera.pos).as_vec3(),
@@ -1208,7 +1208,6 @@ impl App {
         ship_pos: DVec3,
         ship_rot: DQuat,
         show_ship: bool,
-        sink: f64,
     ) {
         let blank = Particle {
             pos: Vec3::ZERO,
@@ -1219,10 +1218,6 @@ impl App {
         out.clear();
         let system = &self.system;
         let star = &system.bodies[0];
-        if let Some(i) = system.find("Pira") {
-            out.resize(STREAM_COUNT, blank);
-            effects::pira_stream(&mut out, &system.bodies[i], star, sink, t, camera.pos);
-        }
         if self.cycle.star_glow > 0.001 && star.radius > 1.0 {
             let start = out.len();
             out.resize(start + effects::PROMINENCE_COUNT, blank);
@@ -1447,7 +1442,7 @@ impl App {
                 (pos, target - pos, up, 1.0, (0.0, 0.0))
             }
             Shot::Stream => {
-                // Por encima del plano de la orbita, viendo de Pira a la estrella.
+                // Por encima del plano de la orbita: Pira, su cola y la estrella.
                 let i = index("Pira");
                 let (center, to_star, side, up) = frame(i);
                 let star = center + to_star * (center.length());
@@ -1667,6 +1662,30 @@ fn markers(
             })
         })
         .collect()
+}
+
+/// La cola de polvo de Pira: sale del lado de noche, lejos de la estrella,
+/// y se curva hacia atras en la orbita.
+fn pira_tail(system: &System, t: f64, camera: DVec3, light: Vec3) -> Option<shaders::Tail> {
+    let i = system.find("Pira")?;
+    let pira = &system.bodies[i];
+    let center = pira.position(t);
+    let star = system.bodies[0].position(t);
+    let away = (center - star).normalize();
+    let lag = -pira.velocity(t).normalize();
+    // La parte de atras en la orbita que es perpendicular a `away`.
+    let lag = (lag - away * lag.dot(away)).normalize();
+    Some(shaders::Tail {
+        origin: (center - camera).as_vec3(),
+        away: away.as_vec3(),
+        lag: lag.as_vec3(),
+        length: (pira.radius * 9.0) as f32,
+        drift: (pira.radius * 4.0) as f32,
+        planet_radius: pira.radius as f32,
+        star: (star - camera).as_vec3(),
+        light,
+        time: t as f32,
+    })
 }
 
 /// La lampara de la baliza de Cementerio en el mundo y la vertical ahi.

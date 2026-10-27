@@ -18,6 +18,7 @@ pub mod gargantua;
 mod images;
 mod jardin;
 mod nebula;
+mod tail;
 mod pbr;
 mod pira;
 mod props;
@@ -34,6 +35,7 @@ use crate::math::{Perlin, Vec2, Vec3, Vec4};
 pub use atmosphere::{AtmosphereFrame, AtmosphereModel, AtmosphereParams, SkyView};
 pub use gargantua::BlackHole;
 pub use nebula::Nebula;
+pub use tail::Tail;
 pub use pbr::PointLight;
 pub use props::{BEACON_PERIOD, PropStyle};
 pub use rings::RingInfo;
@@ -115,6 +117,8 @@ pub struct Uniforms<'a> {
     pub flares: f32,
     /// La capa de gas que solto la estrella, mientras se ve.
     pub nebula: Option<Nebula>,
+    /// La cola de polvo de Pira.
+    pub tail: Option<Tail>,
     /// Gargantua, cuando ya existe.
     pub black_hole: Option<&'a BlackHole<'a>>,
     /// Centro de la estrella, relativo a la camara.
@@ -275,7 +279,7 @@ pub fn limb_haze(f: &Fragment, color: Vec3, strength: f32, ndl: f32) -> Vec3 {
 /// Si hay algun volumen que componer este frame.
 #[inline]
 pub fn has_volumes(u: &Uniforms) -> bool {
-    u.ring.is_some() || !u.atmospheres.is_empty() || u.nebula.is_some()
+    u.ring.is_some() || !u.atmospheres.is_empty() || u.nebula.is_some() || u.tail.is_some()
 }
 
 /// Pasos de la atmosfera por pixel de cielo: ahi esta el detalle fino del
@@ -292,6 +296,9 @@ pub fn volumes(color: Vec3, dir: Vec3, depth: f32, sky: bool, u: &Uniforms) -> V
     let mut color = color;
     if let Some(nebula) = &u.nebula {
         color += nebula.light(dir, depth, u.noise);
+    }
+    if let Some(tail) = &u.tail {
+        color += tail.light(dir, depth, u.noise);
     }
     if let Some(ring) = &u.ring {
         color = rings::composite(color, dir, depth, ring, u);
