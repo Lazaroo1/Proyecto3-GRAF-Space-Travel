@@ -187,10 +187,17 @@ pub fn pira_stream(
             let pos = center + (side_a * angle.cos() + side_b * angle.sin()) * radius;
             let fade = smoothstep(0.0, 0.06, s) * smoothstep(1.0, 0.9, s);
             let temperature = 1500.0 + 2600.0 * s + 300.0 * unit(h2 >> 3);
+            // Tres de cada cuatro son el vapor de roca: manchas grandes y
+            // tenues que juntas forman un penacho continuo. El resto, brasas.
+            let (size, light) = if i % 4 != 0 {
+                (7.0 + 9.0 * unit(h >> 5) * (1.0 - 0.6 * s), 0.035)
+            } else {
+                (0.3 + 0.55 * unit(h >> 5), 4.0)
+            };
             *particle = Particle {
                 pos,
-                radius: 0.3 + 0.55 * unit(h >> 5),
-                color: colors.get(temperature) * (5.0 * fade),
+                radius: size,
+                color: colors.get(temperature) * (light * fade),
             };
         }
     });
