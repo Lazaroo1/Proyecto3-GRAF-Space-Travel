@@ -4,25 +4,28 @@ Gráficas por Computadora · Proyecto 3 · Lázaro Díaz, 24713
 
 Un sistema solar explorable en nave, dibujado con un renderer por software
 propio en CPU. **Ocaso**, una supergigante roja, agoniza y late como un
-corazón. Durante quince minutos se puede volar entre sus cinco planetas;
-después su latido se acelera, colapsa en una supernova fallida y en su lugar
-queda **Gargantúa**, un agujero negro con su disco de acreción, que curva la
-luz de todo el cielo. Luego el ciclo vuelve a empezar.
+corazón, y se puede volar entre sus cinco planetas todo el tiempo que se
+quiera. Con **J** empieza el final: el latido se acelera, la estrella suelta
+una capa de gas, colapsa en una supernova fallida y en su lugar nace
+**Gargantúa**, un agujero negro con su disco de acreción que curva la luz de
+todo el cielo. Otra J la hace renacer.
 
-![Gargantua en la revision visual](media/24_el_ojo.png)
+![Gargantúa: el ojo se abre](media/24_el_ojo.png)
 
 | | |
 | --- | --- |
-| ![El sistema](media/22_agonia.png) | ![El chorro de brasas de Pira](media/14_chorro.png) |
-| ![Monolitos de Réquiem](media/10_monolito.png) | ![Bosque de hongos de Jardín de noche](media/11_hongos.png) |
-| ![Superficie de Jardín](media/23_jardin_biopunk.png) | ![Jardín durante Gargantúa](media/20_jardin_noche_eterna.png) |
+| ![Agonía: la estrella late y Pira se le deshace encima](media/22_agonia.png) | ![Estertor: la estrella suelta su capa de gas](media/25_estertor.png) |
+| ![Vigía y su ojo-tormenta](media/06_vigia.png) | ![Pira: corteza en placas y lava](media/02_pira.png) |
+| ![Agujas góticas de Réquiem](media/10_agujas.png) | ![Cementerio: naves en los anillos y la baliza](media/08_cementerio.png) |
+| ![Superficie de Jardín](media/23_jardin_biopunk.png) | ![Silencio: solo queda la bioluminiscencia](media/17_colapso.png) |
 
 ## Video
 
-El repositorio incluye [el recorrido continuo](media/recorrido-continuo.mp4): vuelo, acercamiento, una vuelta
-completa a Jardin y alejamiento, sin cambiar de escena. El piloto usa la misma
-fisica del vuelo manual. Se exporta a 24 fps con la simulacion acelerada x3;
-no es una medicion de FPS en tiempo real. El colapso se puede mostrar con J.
+El repositorio incluye [un recorrido continuo](media/recorrido-continuo.mp4)
+(vuelo, acercamiento, una vuelta completa a Jardín y alejamiento) grabado
+antes del rediseño de los planetas: hay que regrabarlo con `--recorrido`. El
+piloto usa la misma física del vuelo manual; se exporta a 24 fps con la
+simulación acelerada x3, así que no es una medición de FPS en tiempo real.
 
 Recorrido sugerido para grabarlo (F9 oculta el HUD):
 
@@ -31,8 +34,8 @@ Recorrido sugerido para grabarlo (F9 oculta el HUD):
 2. Volar a Jardín y bajar hasta la superficie: el modo local se activa solo.
 3. Con O (crucero), dar la vuelta al planeta sobre el bosque de hongos.
 4. Subir y alejarse con Shift.
-5. J para ir a 20 s antes del colapso: la arritmia, el destello, la onda
-   gravitacional y Gargantúa formando su disco.
+5. J: el estertor (la nebulosa y las llamaradas), el silencio, la onda
+   gravitacional y Gargantúa formando su disco, todo en medio minuto.
 
 ## Ejecutar
 
@@ -46,7 +49,7 @@ Opciones:
 
 ```sh
 cargo run --release -- --res 1920x1080        # resolución del render (por defecto 1280x720)
-cargo run --release -- --captura capturas     # las 25 vistas fijas como PNG, sin abrir ventana
+cargo run --release -- --captura capturas     # las 27 vistas fijas como PNG, sin abrir ventana
 cargo run --release -- --bench 30             # mide cada vista fija y da medianas por etapa
 cargo run --release -- --wire --lod           # empieza con wireframe y colores de LOD
 cargo test --release                          # pruebas de vuelo, raster, sombras y gas volumétrico
@@ -71,8 +74,8 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | **Crucero**: rodea el planeta solo | O |
 | Trayectoria predicha (auto / siempre / nunca) | V |
 | Rebobinar el tiempo | R sostenido |
-| Saltar 30 s atrás / adelante en el ciclo | [ / ] |
-| Ir a 20 s antes del colapso | J |
+| Saltar 30 s atrás / adelante en el tiempo | [ / ] |
+| **Desatar el final** de la estrella / hacerla renacer | **J** |
 | Recorrer las vistas fijas (las mismas de `--captura`) | AvPág / RePág |
 | **Ajustes en vivo** (radio, órbita, semilla, shaders...) | T, flechas y Shift |
 | Wireframe / colores de LOD / LOD encendido | F3 / F4 / F5 |
@@ -127,13 +130,13 @@ Las vistas fijas se generan con `--captura` (nombres entre paréntesis).
 
 | Característica del menú | Cómo está hecho | Dónde verlo |
 | --- | --- | --- |
-| **5 planetas** que orbitan, rotan y se ven de cerca (50) | Pira (mundo de lava con acoplamiento de marea, la estrella se la come), Jardín (mundo vivo que respira, con venas que laten), Vigía (gigante gaseoso con una tormenta-ojo que sigue a la nave), Réquiem (necrópolis helada) y Cementerio (cráteres y zanjas de naves estrelladas, con anillos). Órbitas y giros son funciones del tiempo. | (02) a (08); volar a cualquiera |
-| **6 tipos de modelos** propios en la superficie (20) | Monolito con un ojo tallado, obelisco, hongo bioluminiscente, coral, espinas de obsidiana y nave náufraga, armados con código en `scene/props.rs`, cada uno en tres niveles de detalle. | (10) a (13), (20) |
+| **5 planetas** que orbitan, rotan y se ven de cerca (50) | Pira (corteza negra en placas con lava que late, acoplada por marea; la estrella se la come y le arranca un penacho de roca vaporizada), Jardín (mundo vivo que respira, con arterias y capilares que laten), Vigía (gigante gaseoso morado con un ojo-tormenta que gira, sigue a la nave y dilata la pupila con el latido), Réquiem (mundo helado con agujas góticas y grietas de luz fría) y Cementerio (anillos llenos de naves del éxodo y una baliza que sigue transmitiendo). Órbitas y giros son funciones del tiempo. | (02) a (08); volar a cualquiera |
+| **8 tipos de modelos** propios en la superficie (20) | Aguja gótica y aguja en ruinas (Réquiem), hongo y coral (Jardín), espinas de obsidiana (Pira), nave náufraga y baliza de celosía (Cementerio) y rocas, armados con código en `scene/props.rs`, cada uno en tres niveles de detalle. | (10) a (13), (26) |
 | **Distribución procedural** reproducible con ruido (10) | Una grilla por cara del cubo-esfera; cada celda propone un punto y lo acepta con una probabilidad de ruido fBm (grupos y claros) por las reglas del terreno (pendiente, hielo, lava, valles). Misma semilla, mismas ubicaciones. | F6 o T → semilla |
 | **Posición y orientación** sobre la superficie curva que gira (5) | Cada objeto vive en el espacio de su planeta, parado sobre la normal radial y hundido en el suelo; gira con el planeta y sube y baja con la respiración de Jardín. | Cualquier superficie |
-| **Shaders propios** distintos (24) | Estrella (convección y latido), lava de cuerpo negro de Pira, venas y poros de Jardín, bandas y ojo de Vigía, hielo de Réquiem, chatarra de Cementerio, anillos con sombras, objetos, Gargantúa. | Todas las vistas |
-| **Shader animado** (8) | El latido de la estrella (que se acelera en el ciclo), la lava que fluye, Jardín que respira, el ojo de Vigía, el gas del disco. | (02), (04), (06), (18) |
-| **Mapeo de normales** (8) | Mapas generados al arrancar (el glifo del ojo y las placas del casco) con mipmaps; tangentes por vértice y base TBN por pixel. | (10), (13) |
+| **Shaders propios** distintos (24) | Estrella (granulación de plasma, onda del latido, llamaradas), Pira (placas de Voronoi y lava de cuerpo negro), Jardín (arterias y capilares con antialiasing), Vigía (paleta propia, vórtice de Rodrigues, iris y relámpagos; del mapa del Hubble solo se toma el detalle de las nubes), Réquiem (hielo con grietas de luz fría), Cementerio, anillos de naves, agujas, baliza, nebulosa del estertor y Gargantúa. | Todas las vistas |
+| **Shader animado** (8) | La estrella late y cada latido cruza su superficie; la lava y las arterias laten con retraso; Jardín respira; el vórtice de Vigía gira y su pupila se dilata; la luz sube por las agujas; los anillos orbitan con luces que parpadean; la nebulosa se expande; el gas del disco fluye. | (02), (04), (06), (10), (18), (25) |
+| **Mapeo de normales** (8) | Las placas del casco de los naufragios (generadas al arrancar), la roca y el tejido orgánico en triplanar, con mipmaps; tangentes por vértice y base TBN por pixel. | (13), (05) |
 | **Deformación de la geometría** con ruido (10) | Las funciones de altura de cada planeta desplazan los vértices del cubo-esfera (cráteres, crestas, mares de lava, zanjas); Jardín además respira en el vertex shader. | Todas; `--wire` |
 | **Generación de geometría** propia antes de rasterizar (10) | Quadtree de chunks del cubo-esfera generados en paralelo con faldones, icosfera por subdivisión, modelos con `MeshBuilder`, cintas para líneas, recorte de Sutherland-Hodgman. | F3, F4 |
 | **Modo de control local** (8) | Cerca de un planeta (L) el vuelo se mide contra su superficie que gira: la mira se nivela con la vertical del planeta y se transporta con la curvatura, la nave sostiene sola su altura sobre el terreno y el crucero (O) rodea el planeta. | L, O |
@@ -142,14 +145,15 @@ Las vistas fijas se generan con `--captura` (nombres entre paréntesis).
 | **Colisión** con el planeta (4) | Contra la misma función de altura que se dibuja; la cámara tampoco entra al terreno. | Bajar a la superficie |
 | **Descarte** antes de rasterizar (7) | Esferas contra el frustum por objeto, chunks detrás del horizonte o fuera del frustum, objetos demasiado chicos, caras traseras. Contadores en el HUD (F2) y frustum congelado (F7). | F2, F7, (21) |
 | **Niveles de detalle** (8) | Terreno por distancia (quadtree) y objetos por tamaño en pantalla (3 niveles, se encogen al desaparecer). F4 colorea los niveles; F5 apaga el LOD y el HUD muestra cuántos triángulos más cuesta. | F4, F5 |
-| **Presentación** (10) | Dirección de arte deliberada (el ciclo de OCASO), HUD con nombres de los cuerpos, ayuda (F1) y controles explicados. | — |
+| **Presentación** (10) | Dirección de arte deliberada (el final de OCASO, a pedido con J), HUD con nombres de los cuerpos, ayuda (F1) y controles explicados. | — |
 
 Además, fuera del menú:
 
-- **Gargantúa** ([src/shaders/gargantua.rs](src/shaders/gargantua.rs)): la física de mi Proyecto 2 (geodésicas de Schwarzschild, Doppler y corrimiento gravitacional, disco delgado) usada de otra forma: se integra una tabla de mil rayos con RK4 (se rehace cuando cambia la distancia de la cámara al agujero) y cada pixel la consulta en vez de integrar su propio rayo. Se ven la sombra, el disco de atrás doblado por encima y por debajo, los anillos de fotones y las estrellas curvadas.
-- **El ciclo** ([src/scene/cycle.rs](src/scene/cycle.rs)): una función pura del tiempo, por eso se puede rebobinar.
+- **Gargantúa** ([src/shaders/gargantua.rs](src/shaders/gargantua.rs)): el gas volumétrico de mi Proyecto 2 (RK4 de las geodésicas de Schwarzschild, Doppler, corrimiento gravitacional) atravesado por cada rayo, más una tabla de mil rayos que resuelve la lente del cielo sin integrar. El gas se calcula cada dos pixeles y se interpola donde no hay bordes; en la sombra, la orilla del disco y el anillo de fotones se traza completo.
+- **El ciclo** ([src/scene/cycle.rs](src/scene/cycle.rs)): una función pura del tiempo y del instante en que se presionó J, por eso se puede rebobinar.
+- **Nebulosa del estertor** ([src/shaders/nebula.rs](src/shaders/nebula.rs)): una cáscara que se expande; cada rayo la corta en a lo más dos puntos, ahí se evalúan filamentos de ruido, y el borde brilla más porque se ve de canto.
 - **Atmósferas** con dispersión de Rayleigh y Mie, perspectiva aérea por vértice y una tabla del cielo cuando la cámara está adentro.
-- **Partículas** aditivas con profundidad: el chorro de brasas que Pira pierde, esporas que brillan de noche, el fuego de los motores.
+- **Partículas** aditivas con profundidad: el penacho de roca que Pira pierde, los arcos de plasma de la estrella, las ondas de la baliza, esporas que brillan de noche y el fuego de los motores.
 - **Sonido sintetizado**: el latido sincronizado con el que se ve, motor, viento y un tono por planeta.
 - **Bloom** y tonemap HDR que conserva el tono.
 
@@ -169,11 +173,12 @@ dibujos (malla + matriz + material)
  -> vértices: deformación, objeto -> mundo relativo a la cámara -> clip,
     atmósfera por vértice                                           (paralelo)
  -> triángulos: descarte, recorte, setup y reparto en tiles        (paralelo)
- -> mapa de sombras ortográfico 1024x1024                         (CPU)
+ -> mapa de sombras ortográfico 1024x1024, por franjas            (paralelo)
  -> raster por tiles de 64x64 al visibility buffer                (paralelo)
  -> barrera: se completa toda la profundidad antes de leer vecinos
  -> shading diferido: PBR, PCF, oclusión ambiental de pantalla      (paralelo)
- -> Gargantúa volumétrico, anillos, atmósferas y partículas         (paralelo)
+ -> gas de Gargantúa cada 2 pixeles                                 (paralelo)
+ -> Gargantúa, nebulosa, anillos, atmósferas y partículas           (paralelo)
  -> reflejos de pantalla en superficies mojadas cercanas           (paralelo)
  -> bloom y tonemap HDR -> RGBA8 -> textura de raylib               (paralelo)
 ```
@@ -182,9 +187,13 @@ dibujos (malla + matriz + material)
   mundo se guarda en `f64` y se dibuja relativo a la cámara.
 - Un pool de hilos propio con reparto dinámico (el i5-12500H tiene núcleos
   de dos tamaños).
-- Esta revision prioriza detalle visual. El costo depende mucho de la vista:
-  medir con `--bench 10`. El paquete incluye `rendimiento.txt` con mediciones
-  del i5-12500H a 1280x720. Los primeros frames de carga no se miden.
+- El costo depende mucho de la vista (`--bench 10`). En un i5-12500H a
+  1280x720, casi todas las vistas tardan entre 25 y 75 ms por frame; el
+  bosque de Jardín de cerca y Gargantúa, entre 120 y 150 ms; la vista de
+  cine del ojo (24), unos 300 ms.
+- Todos los hilos redondean a cero los floats desnormalizados (FTZ/DAZ): un
+  `exp` muy negativo deja valores tan chicos que cada operación con ellos
+  cuesta cientos de ciclos.
 - FXAA en CPU suaviza las diagonales despues del tonemap; F3/F4 lo omiten
   para mantener legibles las aristas y los colores de depuracion.
 
@@ -238,9 +247,7 @@ desde sRGB; normal, rugosidad y AO permanecen lineales.
 
 ## Integrantes y contribuciones
 
-Trabajo individual: Lázaro Díaz (24713). Se utilizo asistencia de IA para
-modelado, implementacion, mejoras visuales y depuracion. El estudiante debe
-revisar y poder explicar el codigo y las decisiones de la entrega.
+Trabajo individual: Lázaro Díaz (24713).
 
 ## Dependencias, recursos y asistencia
 

@@ -1,7 +1,42 @@
-# Cambios de la revision visual
+# Cambios de la segunda revisión
 
-El resto de este documento describe la arquitectura original. Esta revision
-agrega los siguientes puntos para explicar en la demostracion:
+- **El final a pedido** (`scene/cycle.rs`): ya no hay un ciclo fijo de 15
+  minutos. La estrella agoniza hasta que se presiona J; desde ahí, 20 s de
+  estertor, 6 s de colapso, 4 s de silencio y el ojo se abre. Todo sigue
+  siendo función pura del tiempo y de los instantes de J (`Timeline`), así
+  que rebobinar funciona igual. Otra J hace renacer a la estrella con un
+  fundido a blanco.
+- **Estrella** (`shaders/sun.rs`): granulación en tres escalas (gotas de
+  plasma separadas por canales fríos, nunca negros), limbo oscuro y rojo, la
+  onda de cada latido que cruza la superficie y llamaradas en el estertor. El
+  color es de cuerpo negro entre 1700 y 2700 K: a 3400 K el sRGB lo vería
+  color durazno.
+- **Arcos de plasma** (`scene/effects.rs`): cuerdas de cinco hebras torcidas,
+  amarillas en los pies y rojas arriba, con nudos que bajan; en el estertor
+  crecen y uno de cada tres se desprende.
+- **Nebulosa** (`shaders/nebula.rs`): la capa de gas del estertor. Ver la
+  sección 10.
+- **Pira**: corteza en placas de Voronoi con lava entre ellas, más del lado
+  que mira a la estrella; las grietas laten con retraso. El chorro es un
+  penacho continuo (manchas grandes y tenues) con brasas.
+- **Vigía**: paleta morada propia sobre el detalle del Hubble, vórtice que
+  gira, iris con fibras, pupila que se dilata con el latido y relámpagos.
+- **Réquiem**: agujas góticas en vez de monolitos (pisos octogonales,
+  cornisas con escarcha, ventanas de luz fría que sube con cada latido) y un
+  mundo de hielo bajo una luz desaturada (la estrella queda lejos).
+- **Cementerio**: los anillos están llenos de naves (siluetas por distancia
+  con signo en celdas de Voronoi polares, con luces de navegación que
+  parpadean) y una baliza de celosía emite una onda con cada destello.
+- **Jardín**: vuelven las arterias y capilares con antialiasing que laten.
+- **Rendimiento**: mapa de sombras en paralelo por franjas sin caras de
+  espaldas a la luz, mapas de roca empaquetados en un texel de 8 bytes, gas
+  de Gargantúa cada dos pixeles con tabla radial, y FTZ/DAZ en todos los
+  hilos. Las vistas que no son de Gargantúa salieron idénticas bit a bit.
+
+# Cambios de la primera revisión visual
+
+El resto de este documento describe la arquitectura original. Esa revisión
+agregó los siguientes puntos para explicar en la demostración:
 
 - **Frenado** (`scene/ship.rs`): antes la aceleracion maxima dependia solo de la
   altitud. El piloto podia llegar con mucha velocidad y quedarse sin fuerza
@@ -144,38 +179,43 @@ cara a la estrella.
 ### Las identidades
 | Planeta | Rasgo central |
 | --- | --- |
-| Pira | Lava de cuerpo negro (la temperatura da el color), grietas brillantes, acoplamiento de marea, y un chorro de brasas que cae a la estrella. |
+| Pira | Corteza negra en placas con lava de cuerpo negro entre ellas, grietas que laten, acoplamiento de marea, y un penacho de roca vaporizada que cae a la estrella. |
 | Jardín | Arterias que laten con la estrella, poros, capilares; la superficie respira (desplazamiento en el vertex shader). |
-| Vigía | Gigante gaseoso con bandas deformadas por ruido y una tormenta en forma de ojo cuya pupila sigue a la nave. |
-| Réquiem | Mares congelados, nieve en lo plano, monolitos con un ojo tallado que laten. |
-| Cementerio | Cráteres y zanjas de naves estrelladas, chatarra que destella, anillos que le hacen sombra. |
+| Vigía | Gigante gaseoso morado con un vórtice que gira y una tormenta en forma de ojo que sigue a la nave; la pupila late. |
+| Réquiem | Hielo y escarcha bajo una luz fría, grietas que respiran luz y agujas góticas cuya luz sube con cada latido. |
+| Cementerio | Cráteres y zanjas de naves estrelladas, anillos llenos de naves del éxodo y una baliza que sigue transmitiendo. |
 
 ## 4. Shaders ([shaders/](src/shaders))
 
 Cada material es una función que recibe los atributos del pixel y devuelve
 su color HDR. Algunos ejemplos de técnica:
-- **Estrella** ([sun.rs](src/shaders/sun.rs)): celdas de convección con ruido
-  deformado por otro ruido (*domain warping*), oscurecimiento del limbo y el
-  latido (dos golpes por periodo).
-- **Lava** ([pira.rs](src/shaders/pira.rs)): el color sale de la ley de Planck
-  (temperatura → color de cuerpo negro); el ruido mueve la temperatura en el
-  tiempo y forma placas de costra.
+- **Estrella** ([sun.rs](src/shaders/sun.rs)): granulación de plasma con ruido
+  deformado por otro ruido (*domain warping*), oscurecimiento del limbo, la
+  onda del latido que cruza la superficie y las llamaradas.
+- **Lava** ([pira.rs](src/shaders/pira.rs)): placas de Voronoi; el color de la
+  lava sale de la ley de Planck (temperatura → color de cuerpo negro). Las
+  grietas más delgadas que un pixel se ensanchan y bajan su brillo en la
+  misma proporción.
 - **Jardín** ([jardin.rs](src/shaders/jardin.rs)): las arterias son las
   líneas donde un ruido cruza un valor; cuando un pixel cubre más que la
   línea, se dibuja su brillo promedio en vez de parpadear.
 - **Vigía** ([vigia.rs](src/shaders/vigia.rs)): coordenadas giradas con la
-  fórmula de Rodrigues para el remolino del ojo.
+  fórmula de Rodrigues para el vórtice; el iris en coordenadas polares
+  alrededor del eje del ojo.
 - **Anillos** ([rings.rs](src/shaders/rings.rs)): analíticos (intersección
   rayo-plano), con la sombra del planeta sobre ellos y la de ellos sobre el
-  planeta.
+  planeta. Las naves son celdas de Voronoi en coordenadas polares (un número
+  entero por vuelta, para que no haya costura) con una silueta de nave por
+  distancia con signo; giran en bloque (con la velocidad de Kepler de cada
+  radio, en un minuto se estirarían en rayas).
 
 **Animados**: todos los que usan `u.time` o el latido: estrella, lava, venas,
-ojo, gas del disco, glifos de los monolitos.
+vórtice y pupila de Vigía, agujas, anillos, nebulosa y gas del disco.
 
 ## 5. Mapeo de normales ([shaders/textures.rs](src/shaders/textures.rs))
 
 - Los mapas se generan al arrancar a partir de un **mapa de alturas** dibujado
-  con funciones de distancia (el ojo tallado, las placas del casco). La
+  con funciones de distancia (las placas del casco). La
   normal de cada texel sale de la pendiente:
   `n = normalize(-dh/du, -dh/dv, 1)`.
 - Cada vértice lleva una **tangente** (hacia donde crece `u`) y un signo.
@@ -188,7 +228,7 @@ ojo, gas del disco, glifos de los monolitos.
 
 ## 6. Objetos de la superficie ([scene/props.rs](src/scene/props.rs))
 
-- **Modelos**: seis tipos armados con código con `MeshBuilder`
+- **Modelos**: ocho tipos armados con código con `MeshBuilder`
   ([scene/builder.rs](src/scene/builder.rs)): cajas, conos truncados,
   elipsoides y tubos con transporte paralelo. Cada uno en tres niveles de
   detalle.
@@ -196,7 +236,7 @@ ojo, gas del disco, glifos de los monolitos.
   cada celda propone un candidato en un punto pseudoaleatorio (un hash de la
   semilla, la cara y la celda). Se acepta con una probabilidad que sale de
   **ruido fBm** (grupos y claros) por las reglas del terreno (no hay hongos en
-  la lava ni monolitos en el hielo). La misma semilla da las mismas
+  la lava ni agujas en el hielo). La misma semilla da las mismas
   posiciones; F6 la cambia.
 - **Posición y orientación**: cada objeto se guarda en el espacio de su
   planeta, con +Y sobre la normal radial y un giro al azar alrededor de ella;
@@ -208,7 +248,7 @@ ojo, gas del disco, glifos de los monolitos.
   suelo en vez de desaparecer de golpe.
 - **Sombra del planeta por pixel**: el rayo hacia la estrella pasa a una
   distancia `d` del centro; si `d` es menor que el radio, el planeta lo tapa.
-  La punta de un monolito sigue iluminada cuando su base ya está de noche.
+  La punta de una aguja sigue iluminada cuando su base ya está de noche.
 
 ## 7. Navegación ([scene/ship.rs](src/scene/ship.rs))
 
@@ -260,11 +300,20 @@ de la atmósfera.
 ## 10. El ciclo y Gargantúa
 
 ### El ciclo ([scene/cycle.rs](src/scene/cycle.rs))
-Quince minutos: agonía, arritmia (el latido acelera de 1.9 a 0.7 s), colapso
-en caída libre (`R ∝ (1 - u²)^(2/3)`), destello, ignición del disco, Gargantúa
-y renacer. Todo es función pura del tiempo. Como el latido acelera, su fase
-no puede ser `t / periodo` (saltaría al cambiar el periodo): es la integral
-cerrada de la frecuencia.
+La agonía dura lo que el piloto quiera; con J: estertor (el latido acelera de
+1.9 a 0.7 s, la estrella se hincha y suelta su capa de gas), colapso en caída
+libre (`R ∝ (1 - u²)^(2/3)`) mientras la luz se drena, silencio, el ojo se
+abre (onda gravitacional y destello) y el disco se enciende. Todo es función
+pura del tiempo y de los instantes en que se presionó J. Como el latido
+acelera, su fase no puede ser `t / periodo` (saltaría al cambiar el
+periodo): es la integral cerrada de la frecuencia.
+
+### La nebulosa ([shaders/nebula.rs](src/shaders/nebula.rs))
+No se marcha un volumen: cada rayo corta la esfera de la capa en a lo más
+dos puntos y ahí se evalúan los filamentos (donde un ruido cruza por cero,
+deformado por otro ruido) y unos grumos que dejan regiones vacías. La luz es
+la del tramo que el rayo pasa dentro de la cáscara: su grosor entre el
+coseno con la normal, así el borde brilla más, como en las nebulosas reales.
 
 ### Gargantúa (`shaders/gargantua.rs`, `gargantua_p2/`)
 
@@ -285,6 +334,12 @@ cerrada de la frecuencia.
 - Gas 3D de 384×192×9, dos campos que se relevan continuamente, rotación
   de Kepler y cizalla con altura. No se sustituye por anillos de seno.
 - La tabla angular sigue acelerando el cielo que no atraviesa gas.
+- El gas se traza cada dos pixeles; un pixel entre cuatro muestras
+  parecidas las interpola, y si no se parecen (la sombra, la orilla del
+  disco, el anillo de fotones) traza su propio rayo. Un rayo que sale de la
+  envoltura ya no vuelve a cruzar gas y se corta. Lo que depende solo del
+  radio (temperatura, Kepler, opacidad) y el color de cuerpo negro van en
+  tablas; `gargantua_p2/disk.rs::prepare` sigue intacto como referencia.
   Superficies delanteras conservan su visibilidad; la sombra del agujero
   aporta profundidad para tapar anillos y atmósferas posteriores.
 
@@ -293,8 +348,9 @@ cerrada de la frecuencia.
 Cook–Torrance con distribución GGX, geometría Smith y Fresnel Schlick.
 Rugosidad y metalicidad provienen del Blender en la nave; fotografías y
 mapas triplanares aportan detalle a los planetas. Un mapa de sombras
-ortográfico 1024² rasterizado en CPU resuelve sombras cercanas con PCF
-de nueve muestras. El raster completo termina antes del shading para
+ortográfico 1024² resuelve sombras cercanas con PCF de nueve muestras: se
+rasteriza en paralelo por franjas de 16 filas y sin las caras de espaldas a
+la luz (en una superficie cerrada nunca son lo más cercano a ella). El raster completo termina antes del shading para
 poder leer vecinos del z-buffer en la oclusión ambiental. Un segundo
 buffer evita leer y escribir simultáneamente los reflejos de pantalla.
 Estos reflejos solo alcanzan superficies cercanas visibles en pantalla.
@@ -317,6 +373,6 @@ Las bioluminiscencias emiten y aportan luces puntuales de alcance finito.
 | El radio de un planeta | Se crea un terreno nuevo con ese radio (los chunks se regeneran alrededor de la cámara), se recalcula la tabla de su atmósfera y se vuelven a repartir sus objetos. La gravedad en la superficie se conserva: `μ = g r²`. |
 | Su periodo orbital | Cambia la velocidad en la órbita sin que salte: la fase se corrige para que en este instante siga en el mismo ángulo. Si estaba acoplado por marea (Pira), su giro cambia con él. |
 | Su periodo de giro | Igual, con la fase del giro. |
-| La intensidad de su shader | Escala su efecto propio (la lava, la bioluminiscencia, el ojo, el hielo y los glifos, la chatarra). |
+| La intensidad de su shader | Escala su efecto propio (la lava, la bioluminiscencia, el ojo, el hielo y las agujas, la baliza y las luces de las naves). |
 | La semilla | Otras posiciones para todos los objetos, siempre las mismas para esa semilla. |
 | El factor de LOD | Más o menos chunks (se ve en el contador de triángulos). |
