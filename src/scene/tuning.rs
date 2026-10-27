@@ -34,6 +34,7 @@ impl System {
                 "Pira" => props::vent_field,
                 "Requiem" => props::cathedral,
                 "Cementerio" => props::beacon_site,
+                "Parpado" => props::mirror_shore,
                 _ => |_: &mut Vec<_>, _: f64, _: &dyn HeightField, _: u32, _: (DVec3, DVec3, DVec3)| {},
             };
             place(&mut instances, body.radius, &**field, planet_seed, frame);
@@ -89,6 +90,12 @@ impl System {
             body.spin_period = period;
             body.spin_phase = body.orbit_phase;
         }
+        let host = super::system::Host::of(index, &self.bodies[index]);
+        for moon in &mut self.bodies {
+            if moon.host.is_some_and(|h| h.index == index) {
+                moon.host = Some(host);
+            }
+        }
     }
 
     /// Cambia el periodo de giro sin que la superficie salte.
@@ -115,14 +122,35 @@ mod tests {
     }
 
     #[test]
+    fn the_moon_follows_vigia_and_always_shows_it_the_same_face() {
+        let mut sys = system();
+        let (moon, vigia) = (sys.find("Parpado").unwrap(), sys.find("Vigia").unwrap());
+        let site = sys.sites.iter().find(|s| s.body == moon).unwrap().normal;
+        let facing = |sys: &System, t: f64| {
+            let (m, v) = (&sys.bodies[moon], &sys.bodies[vigia]);
+            let offset = v.position(t) - m.position(t);
+            assert!((offset.length() - m.orbit_radius).abs() < 1e-6);
+            m.rotation(t).rotate(site).dot(offset.normalize())
+        };
+        let first = facing(&sys, 10.0);
+        for t in [100.0, 777.0, 5_000.0] {
+            assert!((facing(&sys, t) - first).abs() < 1e-9);
+        }
+        // Si Vigia cambia de periodo, su luna la sigue.
+        sys.set_orbit_period(vigia, 900.0, 300.0);
+        assert!((facing(&sys, 2_000.0) - first).abs() < 1e-9);
+    }
+
+    #[test]
     fn every_site_has_its_landmarks_and_vents_wake_up_near_the_ship() {
         use crate::scene::props::PropKind;
         let sys = system();
-        assert_eq!(sys.sites.len(), 4);
+        assert_eq!(sys.sites.len(), 5);
         for (body, kind, count) in [
             ("Pira", PropKind::Vent, 12),
             ("Requiem", PropKind::Spire, 10),
             ("Cementerio", PropKind::Beacon, 1),
+            ("Parpado", PropKind::Crystal, 14),
         ] {
             let i = sys.find(body).unwrap();
             let site = sys.sites.iter().find(|s| s.body == i).unwrap();

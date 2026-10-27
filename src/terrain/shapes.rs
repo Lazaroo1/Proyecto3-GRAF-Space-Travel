@@ -402,3 +402,62 @@ mod tests {
         }
     }
 }
+
+/// Parpado, la luna de Vigia: cordilleras de cristal y lagos quietos. Le da
+/// siempre la misma cara a Vigia (la -X); de ese lado hay un lago grande
+/// (`MIRROR_LAKE`) donde se refleja el ojo.
+///
+/// Atributos: `x` lago (1 en el agua), `y` cristal (en las crestas altas),
+/// `z` orilla.
+pub struct ParpadoField {
+    noise: Perlin,
+}
+
+/// Donde se para quien llega a ver el ojo en el lago (la orilla) y el
+/// centro del lago, en el espacio de la luna: desde la orilla Vigia queda a
+/// unos 13 grados sobre el horizonte, del otro lado del agua, y su reflejo
+/// cabe abajo.
+pub const MIRROR_SHORE: Vec3 = Vec3::new(-0.3306, 0.9167, 0.2244);
+pub const MIRROR_LAKE: Vec3 = Vec3::new(-0.4679, 0.8584, 0.2102);
+/// Radio angular del lago grande.
+const MIRROR_RADIUS: f32 = 0.14;
+
+impl ParpadoField {
+    pub fn new(seed: u32) -> Self {
+        Self {
+            noise: Perlin::new(seed),
+        }
+    }
+}
+
+impl HeightField for ParpadoField {
+    fn sample(&self, dir: Vec3) -> TerrainSample {
+        let n = &self.noise;
+        let hills = n.fbm(dir * 3.0 + Vec3::new(2.1, -1.7, 4.4), 4);
+        // Cordilleras de cristal: crestas afiladas (a la cuarta) donde una
+        // mascara grande las deja crecer.
+        let ridges = n.ridged(dir * 2.4 + Vec3::new(-3.3, 5.1, 0.7), 4);
+        let ranges = smoothstep(-0.05, 0.3, n.fbm(dir * 1.2 + Vec3::new(7.7, 1.1, -2.3), 3));
+        let peaks = ridges.powi(4) * ranges;
+        // El lago grande y otros chicos donde el ruido baja. El agua llena
+        // todo lo que queda bajo cero: un espejo plano.
+        let lake = MIRROR_LAKE.normalize();
+        let angle = dir.dot(lake).clamp(-1.0, 1.0).acos();
+        let mirror = smoothstep(MIRROR_RADIUS + 0.12, MIRROR_RADIUS - 0.03, angle);
+        let pools = smoothstep(-0.22, -0.38, n.fbm(dir * 2.0 + Vec3::new(-6.2, 3.3, 8.8), 3));
+        let basin = mirror.max(pools);
+        let ground = 1.6 + 1.5 * hills + 26.0 * peaks * (1.0 - basin) - 5.0 * basin;
+        TerrainSample {
+            height: ground.max(0.0),
+            attrs: Vec3::new(
+                smoothstep(0.02, -0.3, ground),
+                smoothstep(0.2, 0.55, peaks),
+                smoothstep(1.6, 0.1, ground),
+            ),
+        }
+    }
+
+    fn height_range(&self) -> (f32, f32) {
+        (0.0, 1.6 + 1.5 + 26.0 + 0.5)
+    }
+}

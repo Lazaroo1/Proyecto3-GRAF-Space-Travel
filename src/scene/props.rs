@@ -49,10 +49,11 @@ pub enum PropKind {
     Boulder,
     Beacon,
     Vent,
+    Crystal,
 }
 
 impl PropKind {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Spire,
         Self::Ruin,
         Self::Mushroom,
@@ -62,6 +63,7 @@ impl PropKind {
         Self::Boulder,
         Self::Beacon,
         Self::Vent,
+        Self::Crystal,
     ];
 
     /// Posicion en `ALL` (y en la lista de modelos).
@@ -78,7 +80,7 @@ impl PropKind {
         match self {
             Self::Wreck | Self::Boulder | Self::Beacon => 1.0,
             Self::Spire | Self::Ruin => 0.75,
-            Self::Mushroom | Self::Coral | Self::Spike | Self::Vent => 0.5,
+            Self::Mushroom | Self::Coral | Self::Spike | Self::Vent | Self::Crystal => 0.5,
         }
     }
 }
@@ -451,6 +453,74 @@ pub fn beacon_site(
     }
 }
 
+/// Altura del cristal mas alto de un racimo, en unidades del modelo.
+pub const CRYSTAL_TOP: f32 = 9.0;
+
+/// Racimo de cristales de Parpado: prismas hexagonales con punta que salen
+/// del mismo punto, de varios tamanos y algo abiertos.
+fn crystal(detail: usize) -> Mesh {
+    let mut b = MeshBuilder::new();
+    b.color(STONE);
+    let count = [3, 6, 9][detail];
+    for k in 0..count {
+        let h = hash_u32(0xC4A5 ^ (k as u32).wrapping_mul(0x9E37_79B9));
+        let unit = |shift: u32| ((h >> shift) & 0xFF) as f32 / 255.0;
+        let angle = unit(0) * TAU;
+        let spread = if k == 0 { 0.0 } else { 0.35 + 0.9 * unit(8) };
+        let out = Vec3::new(angle.cos(), 0.0, angle.sin());
+        let base = out * spread - Vec3::Y * 0.6;
+        let lean = if k == 0 { 0.06 } else { 0.25 + 0.5 * unit(16) };
+        let axis = (Vec3::Y + out * lean).normalize();
+        let length = if k == 0 { CRYSTAL_TOP } else { 2.8 + 5.2 * unit(24) };
+        let radius = if k == 0 { 0.95 } else { 0.32 + 0.38 * unit(4) };
+        let shaft = length * 0.8;
+        b.frustum(base, axis, shaft, radius, radius * 0.9, 6, false, (false, false));
+        b.frustum(base + axis * shaft, axis, length - shaft, radius * 0.9, 0.0, 6, false, (false, false));
+    }
+    b.build()
+}
+
+/// El espejo de Parpado: racimos de cristal grandes en la orilla del lago,
+/// que enmarcan a Vigia del otro lado del agua. El lago esta adelante del
+/// lugar (`z` positivo), a `LAKE_AHEAD` unidades.
+pub fn mirror_shore(
+    instances: &mut Vec<Instance>,
+    radius: f64,
+    field: &dyn HeightField,
+    seed: u32,
+    frame: (DVec3, DVec3, DVec3),
+) {
+    const LAKE_AHEAD: f64 = 30.0;
+    const SHORE: f64 = 31.0;
+    clear_site(instances, radius, frame.0, 30.0);
+    for k in 0..14u32 {
+        let h = hash_u32(seed ^ k.wrapping_mul(0x2C1B) ^ 0xE5BE);
+        // Alrededor del lago, menos en la orilla de enfrente (la del lugar).
+        let angle = (0.16 + 0.68 * (k as f64 + unit(h) as f64 * 0.7) / 14.0) * std::f64::consts::TAU;
+        let distance = SHORE + 6.0 * unit(hash_u32(h)) as f64;
+        let x = angle.sin() * distance;
+        let z = LAKE_AHEAD - angle.cos() * distance;
+        // Los de los costados del fondo, los mas grandes.
+        let side = angle.sin().abs();
+        let scale = 1.1 + 1.6 * side * unit(hash_u32(h ^ 3)) as f64 + 0.6 * side;
+        instances.push(at_site(
+            radius,
+            field,
+            frame,
+            PropKind::Crystal,
+            x,
+            z,
+            scale as f32,
+            unit(hash_u32(h ^ 5)) as f64 * std::f64::consts::TAU,
+            0.6,
+        ));
+    }
+    // Dos al lado del lugar, cerca: enmarcan la vista.
+    for (x, z, scale) in [(-15.0, -4.0, 1.3), (17.0, 2.0, 1.0)] {
+        instances.push(at_site(radius, field, frame, PropKind::Crystal, x, z, scale, x * 0.1, 0.6));
+    }
+}
+
 fn mushroom(detail: usize) -> Mesh {
     let mut b = MeshBuilder::new();
     let sides = [10, 24, 48][detail];
@@ -757,6 +827,7 @@ pub fn build_models() -> Vec<PropModel> {
                 PropKind::Boulder => boulder(detail),
                 PropKind::Beacon => beacon(detail),
                 PropKind::Vent => vent(detail),
+                PropKind::Crystal => crystal(detail),
             };
             let mut lods = [make(2), make(1), make(0)];
             if matches!(kind, PropKind::Mushroom | PropKind::Coral) {
@@ -1170,6 +1241,21 @@ pub fn rules_for(planet: &str) -> Vec<Scatter> {
             upright: true,
             accept: |density, s, _| {
                 (1.0 - s.attrs.x) * (1.0 - 0.6 * s.attrs.y) * smoothstep(0.45, 0.68, density) * 0.6
+            },
+        }],
+        // Cristales en las crestas y junto al agua, nunca en ella.
+        "Parpado" => vec![Scatter {
+            kind: PropKind::Crystal,
+            cells: 28,
+            scale: (0.6, 1.7),
+            sink: 0.6,
+            upright: true,
+            accept: |density, s, slope| {
+                (1.0 - s.attrs.x)
+                    * (0.2 + 0.8 * s.attrs.y.max(s.attrs.z * 0.7))
+                    * smoothstep(0.9, 0.35, slope)
+                    * smoothstep(0.5, 0.7, density)
+                    * 0.6
             },
         }],
         // Naves estrelladas en las zanjas y junto a los crateres.

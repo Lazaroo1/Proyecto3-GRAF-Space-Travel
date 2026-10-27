@@ -107,6 +107,8 @@ pub enum Motes {
     Dust,
     /// Jirones de nube que pasan rozando a Vigia.
     Mist,
+    /// Polvo de cristal que flota sobre Parpado y destella.
+    Glints,
 }
 
 pub const MOTE_COUNT: usize = 520;
@@ -128,6 +130,7 @@ pub fn motes(out: &mut [Particle], body: &Body, t: f64, camera: DVec3, kind: Mot
         Motes::Snow => (70.0, -14.0, 6.0, 0.06),
         Motes::Dust => (90.0, 2.0, 2.5, 0.12),
         Motes::Mist => (240.0, 0.0, 45.0, 9.0),
+        Motes::Glints => (60.0, 3.0, 0.8, 0.03),
     };
     let half = size * 0.5;
     let time = t as f32;
@@ -162,6 +165,8 @@ pub fn motes(out: &mut [Particle], body: &Body, t: f64, camera: DVec3, kind: Mot
                 Motes::Snow => Vec3::new(0.75, 0.86, 1.0) * (1.2 + 1.2 * flicker),
                 Motes::Dust => Vec3::new(0.55, 0.42, 0.32) * 0.35,
                 Motes::Mist => Vec3::new(0.40, 0.28, 0.70) * 0.012,
+                // Destellos cortos: casi siempre apagados.
+                Motes::Glints => Vec3::new(0.8, 0.45, 1.0) * (6.0 * smoothstep(0.85, 1.0, flicker)),
             };
             *particle = Particle {
                 pos: to_world((cam + wrapped).as_dvec3()),

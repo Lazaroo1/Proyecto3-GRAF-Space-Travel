@@ -18,6 +18,7 @@ pub mod gargantua;
 mod images;
 mod jardin;
 mod nebula;
+pub(crate) mod parpado;
 mod tail;
 mod vapor;
 mod pbr;
@@ -40,7 +41,7 @@ pub use tail::Tail;
 pub use vapor::Vapor;
 pub use pbr::PointLight;
 pub use props::{BEACON_PERIOD, PropStyle, beacon_flash, vent_activity};
-pub use rings::RingInfo;
+pub use rings::{RingInfo, RingStyle};
 pub use ship::ShipStyle;
 pub use sky::{SkyCube, shade as sky};
 pub use sun::{SunStyle, heartbeat, heartbeat_phase};
@@ -91,7 +92,7 @@ impl Gains {
             Material::Sun(_) => Some(&mut self.sun),
             Material::Pira => Some(&mut self.pira),
             Material::Jardin => Some(&mut self.jardin),
-            Material::Vigia => Some(&mut self.vigia),
+            Material::Vigia | Material::Parpado => Some(&mut self.vigia),
             Material::Requiem => Some(&mut self.requiem),
             Material::Cementerio => Some(&mut self.cementerio),
             _ => None,
@@ -142,13 +143,16 @@ pub struct Uniforms<'a> {
     /// Que tan cerca esta la nave de Vigia (0 lejos, 1 rozando sus nubes):
     /// el ojo reacciona.
     pub eye_near: f32,
+    /// Vigia vista desde afuera de su dibujo: los lagos de Parpado la
+    /// reflejan.
+    pub giant: Option<Giant>,
     /// Posicion de la nave, relativa a la camara: lo que hay en los lugares
     /// de cada planeta despierta cuando se acerca.
     pub ship: Vec3,
     /// Cuanto se ha fundido Pira mientras Gargantua se la come (0 a 1).
     pub melt: f32,
     /// Anillos de Cementerio, si existen.
-    pub ring: Option<RingInfo>,
+    pub rings: &'a [RingInfo],
     /// Atmosferas visibles, de la mas lejana a la mas cercana.
     pub atmospheres: &'a [AtmosphereFrame<'a>],
     /// Cielo precalculado de la atmosfera en la que esta la camara, si esta
@@ -218,6 +222,17 @@ impl Fragment {
     }
 }
 
+/// Un planeta para sombrearlo desde otro lado (un reflejo): centro relativo
+/// a la camara, radio y sus ejes.
+#[derive(Clone, Copy, Debug)]
+pub struct Giant {
+    pub center: Vec3,
+    pub radius: f32,
+    /// De su espacio al mundo y al reves.
+    pub to_world: crate::math::Mat3,
+    pub to_local: crate::math::Mat3,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum Material {
     Sun(SunStyle),
@@ -226,6 +241,8 @@ pub enum Material {
     Vigia,
     Requiem,
     Cementerio,
+    /// La luna de Vigia: cristal y lagos espejo.
+    Parpado,
     Ship(ShipStyle),
     /// Un objeto de la superficie, con los datos de su instancia.
     Prop(PropStyle),
@@ -249,6 +266,7 @@ pub fn shade(material: &Material, f: &Fragment, u: &Uniforms) -> Vec3 {
         Material::Vigia => vigia::shade(f, u),
         Material::Requiem => requiem::shade(f, u),
         Material::Cementerio => cementerio::shade(f, u),
+        Material::Parpado => parpado::shade(f, u),
         Material::Ship(style) => ship::shade(f, u, style),
         Material::Prop(style) => props::shade(style, f, u),
         Material::Line(color) => line(f, *color),
@@ -291,7 +309,7 @@ pub fn limb_haze(f: &Fragment, color: Vec3, strength: f32, ndl: f32) -> Vec3 {
 /// Si hay algun volumen que componer este frame.
 #[inline]
 pub fn has_volumes(u: &Uniforms) -> bool {
-    u.ring.is_some()
+    !u.rings.is_empty()
         || !u.atmospheres.is_empty()
         || u.nebula.is_some()
         || u.tail.is_some()
@@ -319,8 +337,23 @@ pub fn volumes(color: Vec3, dir: Vec3, depth: f32, sky: bool, u: &Uniforms) -> V
     if let Some(tail) = &u.tail {
         color += tail.light(dir, depth, u.noise);
     }
-    if let Some(ring) = &u.ring {
-        color = rings::composite(color, dir, depth, ring, u);
+    // Del anillo mas lejano al mas cercano.
+    match u.rings {
+        [] => {}
+        [ring] => color = rings::composite(color, dir, depth, ring, u),
+        many => {
+            let mut order = [(0.0f32, 0usize); 4];
+            let count = many.len().min(order.len());
+            for (k, ring) in many.iter().take(count).enumerate() {
+                order[k] = (rings::distance(ring, dir), k);
+            }
+            order[..count].sort_by(|a, b| b.0.total_cmp(&a.0));
+            for &(t, k) in &order[..count] {
+                if t.is_finite() {
+                    color = rings::composite(color, dir, depth, &many[k], u);
+                }
+            }
+        }
     }
     if sky {
         // De la mas lejana a la mas cercana; la que rodea a la camara sale
