@@ -64,11 +64,12 @@ pub struct DemoTour {
 pub enum Shot {
     Garden,
     /// Sobre el lugar de un planeta, a `altitude` del suelo y `back` antes
-    /// del centro, mirando hacia el.
+    /// del centro, mirando hacia el (y `lift` mas arriba).
     Site {
         body: &'static str,
         altitude: f64,
         back: f64,
+        lift: f64,
     },
     BlackHole,
     Star,
@@ -131,7 +132,7 @@ pub struct Preset {
     pub act: Option<f64>,
 }
 
-pub const PRESETS: [Preset; 31] = [
+pub const PRESETS: [Preset; 32] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
@@ -351,6 +352,7 @@ pub const PRESETS: [Preset; 31] = [
             body: "Cementerio",
             altitude: 18.0,
             back: 70.0,
+            lift: 0.0,
         },
         time: 40.0,
         act: None,
@@ -361,6 +363,7 @@ pub const PRESETS: [Preset; 31] = [
             body: "Pira",
             altitude: 16.0,
             back: 30.0,
+            lift: 0.0,
         },
         time: 40.0,
         act: None,
@@ -371,6 +374,18 @@ pub const PRESETS: [Preset; 31] = [
             body: "Requiem",
             altitude: 14.0,
             back: 40.0,
+            lift: 0.0,
+        },
+        time: 40.0,
+        act: None,
+    },
+    Preset {
+        name: "32_espejo",
+        shot: Shot::Site {
+            body: "Parpado",
+            altitude: 3.0,
+            back: 6.0,
+            lift: 6.0,
         },
         time: 40.0,
         act: None,
@@ -675,12 +690,14 @@ impl App {
         self.next_site = (self.next_site + 1) % self.system.sites.len();
         let site = self.system.sites[self.next_site];
         let time = self.time();
+        let (altitude, back, lift) = site.view;
         self.apply_preset(&Preset {
             name: "lugar",
             shot: Shot::Site {
                 body: self.system.bodies[site.body].name,
-                altitude: 22.0,
-                back: 90.0,
+                altitude,
+                back,
+                lift,
             },
             time,
             act: self.timeline.since(time),
@@ -769,6 +786,7 @@ impl App {
             "Vigia" => 41.2,
             "Requiem" => 49.0,
             "Cementerio" => 61.7,
+            "Parpado" => 46.2,
             _ => 36.7,
         };
         let state = cycle::at(t, &self.timeline, self.system.star_base);
@@ -1135,6 +1153,16 @@ impl App {
                 });
             }
         }
+        for (base, up, _, scale) in props_near(&self.system, "Parpado", PropKind::Crystal, 6.0, t, camera.pos, 200.0) {
+            let awake = smoothstep(150.0, 20.0, (base - ship_rel).length());
+            if awake > 0.02 {
+                points.push(crate::shaders::PointLight {
+                    pos: base + up * 2.0,
+                    color: Vec3::new(0.8, 0.3, 1.4) * (40.0 * awake * scale * scale),
+                    radius: 40.0 * scale,
+                });
+            }
+        }
         if let Some((top, _)) = beacon_lamp(&self.system, t) {
             let near = smoothstep(300.0, 60.0, (top - ship_pos).length() as f32);
             let flash = shaders::beacon_flash(t as f32, near);
@@ -1251,6 +1279,7 @@ impl App {
                 });
             }
         }
+        let rings = ring_info(&self.system, t, camera.pos);
         let uniforms = Uniforms {
             shadow,
             points: &points,
@@ -1297,9 +1326,19 @@ impl App {
                 let distance = (self.ship.world_pos - vigia.position(t)).length() / vigia.radius;
                 smoothstep(4.0, 1.25, distance as f32)
             },
+            giant: {
+                let vigia = &self.system.bodies[self.system.eye_body];
+                let rotation = vigia.rotation(t).to_mat3();
+                Some(shaders::Giant {
+                    center: (vigia.position(t) - camera.pos).as_vec3(),
+                    radius: vigia.radius as f32,
+                    to_world: rotation.to_f32(),
+                    to_local: rotation.transpose().to_f32(),
+                })
+            },
             ship: (ship_pos - camera.pos).as_vec3(),
             melt: state.swallow,
-            ring: ring_info(&self.system, t, camera.pos),
+            rings: &rings,
             atmospheres: &atmospheres,
             sky_view: sky_view.as_ref(),
             biolum: self.gains.jardin * state.biolum,
@@ -1473,6 +1512,7 @@ impl App {
             ("Requiem", effects::Motes::Snow, 120.0),
             ("Cementerio", effects::Motes::Dust, 100.0),
             ("Vigia", effects::Motes::Mist, 260.0),
+            ("Parpado", effects::Motes::Glints, 90.0),
         ] {
             let Some(i) = system.find(name) else { continue };
             let body = &system.bodies[i];
@@ -1638,6 +1678,7 @@ impl App {
                 body,
                 altitude,
                 back,
+                lift,
             } => {
                 let i = index(body);
                 let b = &bodies[i];
@@ -1648,7 +1689,7 @@ impl App {
                 let forward = rotation.rotate(f);
                 let center = b.position(t) + normal * (b.radius + b.surface_height(normal, t));
                 let pos = center + normal * altitude - forward * back;
-                let target = center + forward * 45.0 + normal * (altitude * 0.25);
+                let target = center + forward * 45.0 + normal * (altitude * 0.25 + lift);
                 (pos, target - pos, normal, 1.0, (0.0, 0.0))
             }
             Shot::Overview => {
@@ -2127,22 +2168,30 @@ fn atmosphere_frames<'a>(
     frames.into_iter().map(|(_, frame)| frame).collect()
 }
 
-/// Anillos del cuerpo que los tiene, relativos a la camara.
-fn ring_info(system: &System, t: f64, camera: DVec3) -> Option<RingInfo> {
-    let body = &system.bodies[system.ring_body];
-    let (inner, outer) = body.rings?;
-    let normal = body.rotation(t).rotate(DVec3::Y);
-    // Ejes del plano que no giran con el planeta: los restos orbitan solos.
-    let axis_a = normal.cross(DVec3::Z).normalize();
-    Some(RingInfo {
-        center: (body.position(t) - camera).as_vec3(),
-        normal: normal.as_vec3(),
-        axis_a: axis_a.as_vec3(),
-        axis_b: normal.cross(axis_a).as_vec3(),
-        inner: (inner * body.radius) as f32,
-        outer: (outer * body.radius) as f32,
-        planet_radius: body.radius as f32,
-    })
+/// Anillos de los cuerpos que los tienen, relativos a la camara.
+fn ring_info(system: &System, t: f64, camera: DVec3) -> Vec<RingInfo> {
+    system
+        .bodies
+        .iter()
+        .filter(|body| !body.hidden)
+        .filter_map(|body| {
+            let rings = body.rings?;
+            let normal = body.rotation(t).rotate(DVec3::Y);
+            // Ejes del plano que no giran con el planeta: los restos orbitan
+            // solos.
+            let axis_a = normal.cross(DVec3::Z).normalize();
+            Some(RingInfo {
+                style: rings.style,
+                center: (body.position(t) - camera).as_vec3(),
+                normal: normal.as_vec3(),
+                axis_a: axis_a.as_vec3(),
+                axis_b: normal.cross(axis_a).as_vec3(),
+                inner: (rings.inner * body.radius) as f32,
+                outer: (rings.outer * body.radius) as f32,
+                planet_radius: body.radius as f32,
+            })
+        })
+        .collect()
 }
 
 /// Un dibujo por objeto de la superficie visible. Cada objeto vive en el

@@ -1,5 +1,7 @@
-//! Anillos de Cementerio: un disco analitico, no una malla, lleno de los
-//! restos de las naves del exodo que nunca escapo.
+//! Anillos: un disco analitico, no una malla. Los de Cementerio estan
+//! llenos de los restos de las naves del exodo que nunca escapo; los de
+//! Vigia son polvo fino en anillos delgados que brilla a contraluz; los de
+//! Requiem, bloques y puentes de sus ruinas.
 //!
 //! Por cada pixel se intersecta el rayo de la camara con el plano de los
 //! anillos y se compara con la profundidad del visibility buffer: si el
@@ -21,8 +23,20 @@
 use super::Uniforms;
 use crate::math::{Perlin, Vec3, hash_u32, smoothstep};
 
+/// De que esta hecho un anillo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RingStyle {
+    /// Cementerio: los restos de las naves del exodo.
+    Wrecks,
+    /// Vigia: polvo fino en anillos delgados.
+    Dust,
+    /// Requiem: bloques y puentes de las ruinas.
+    Ruins,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct RingInfo {
+    pub style: RingStyle,
     /// Centro del planeta, relativo a la camara.
     pub center: Vec3,
     /// Normal del plano de los anillos.
@@ -39,6 +53,10 @@ pub struct RingInfo {
 const DUST: Vec3 = Vec3::new(0.62, 0.55, 0.48);
 const DARK_DUST: Vec3 = Vec3::new(0.30, 0.26, 0.24);
 const STEEL: Vec3 = Vec3::new(0.22, 0.24, 0.27);
+const LILAC: Vec3 = Vec3::new(0.62, 0.5, 0.78);
+const DARK_LILAC: Vec3 = Vec3::new(0.24, 0.17, 0.32);
+const STONE: Vec3 = Vec3::new(0.26, 0.28, 0.32);
+const FROST: Vec3 = Vec3::new(0.7, 0.76, 0.86);
 const RUST: Vec3 = Vec3::new(0.26, 0.13, 0.07);
 /// Tamano de un pedazo de casco, en unidades del mundo.
 const PIECE: f32 = 14.0;
@@ -98,9 +116,9 @@ fn scrap(x: f32, y: f32, period: i32, chance: f32) -> f32 {
     smoothstep(0.35, 0.45, f2 - f1) * smoothstep(0.42, 0.3, f1)
 }
 
-/// Lo que hay en un punto del anillo: cuanto tapa, su color y la luz que
-/// emite. `footprint` es lo que mide un pixel en el plano.
-fn debris(ring: &RingInfo, hit: Vec3, footprint: f32, time: f32, noise: &Perlin) -> (f32, Vec3, Vec3) {
+/// Coordenadas de los pedazos de un punto del anillo: radio y avance en la
+/// vuelta (en celdas) y cuantas celdas tiene una vuelta.
+fn polar(ring: &RingInfo, hit: Vec3, time: f32) -> (f32, f32, i32) {
     // Gira en bloque a la velocidad de Kepler del radio medio: con la de
     // cada radio, en un minuto los pedazos vecinos ya se habrian estirado
     // en rayas.
@@ -112,9 +130,13 @@ fn debris(ring: &RingInfo, hit: Vec3, footprint: f32, time: f32, noise: &Perlin)
     // Polar, estirado a lo largo de la orbita: un numero entero de celdas
     // por vuelta.
     let per_turn = (std::f32::consts::TAU * middle / (PIECE * 2.4)).round();
-    let x = r / PIECE;
-    let y = theta / std::f32::consts::TAU * per_turn;
-    let period = per_turn as i32;
+    (r / PIECE, theta / std::f32::consts::TAU * per_turn, per_turn as i32)
+}
+
+/// Lo que hay en un punto del anillo: cuanto tapa, su color y la luz que
+/// emite. `footprint` es lo que mide un pixel en el plano.
+fn debris(ring: &RingInfo, hit: Vec3, footprint: f32, time: f32, noise: &Perlin) -> (f32, Vec3, Vec3) {
+    let (x, y, period) = polar(ring, hit, time);
     // Cumulos de restos con claros entre ellos, a la escala de una flota.
     let clumps = smoothstep(-0.4, 0.25, noise.noise(Vec3::new(x * 0.25, (y * 0.3).sin() * 3.0, (y * 0.3).cos() * 3.0)));
     let resolved = smoothstep(0.5, 0.15, footprint / PIECE);
@@ -158,17 +180,76 @@ fn debris(ring: &RingInfo, hit: Vec3, footprint: f32, time: f32, noise: &Perlin)
     )
 }
 
+/// Las ruinas de Requiem en un punto del anillo: cuanto tapan y su color.
+/// Cada celda puede tener un bloque (una caja girada) o, a veces, un
+/// puente: una viga larga y delgada; entre ellos, cascajo.
+fn ruins(ring: &RingInfo, hit: Vec3, footprint: f32, time: f32, noise: &Perlin) -> (f32, Vec3) {
+    let (x, y, period) = polar(ring, hit, time);
+    let clumps = smoothstep(
+        -0.35,
+        0.3,
+        noise.noise(Vec3::new(x * 0.3, (y * 0.25).sin() * 3.0, (y * 0.25).cos() * 3.0)),
+    );
+    let resolved = smoothstep(0.5, 0.15, footprint / PIECE);
+    let average = (0.12 + 0.25 * clumps, STONE * 0.8);
+    if resolved <= 0.0 {
+        return average;
+    }
+    let (_, _, id, center) = pieces(x, y, period, 0x5A1E);
+    let unit = |k: u32| (hash_u32(id ^ k) >> 8) as f32 / 16_777_216.0;
+    let (ox, oy) = ((x - center.0) * PIECE, (y - center.1) * PIECE * 2.4);
+    let (s, c) = ((unit(12) - 0.5) * 1.6).sin_cos();
+    let (bx, by) = (ox * c - oy * s, ox * s + oy * c);
+    let bridge = unit(11) < 0.12;
+    let (half_x, half_y) = if bridge {
+        (0.9 + 0.6 * unit(13), 8.0 + 6.0 * unit(14))
+    } else {
+        (1.8 + 3.2 * unit(13), 1.8 + 3.6 * unit(14))
+    };
+    let d = (bx.abs() - half_x).max(by.abs() - half_y);
+    let present = unit(15) < 0.45 * clumps + 0.15;
+    let block = if present { smoothstep(0.5 + footprint, -0.5, d) } else { 0.0 };
+    // Una cara de cada bloque tiene escarcha.
+    let frost = smoothstep(-half_x, half_x, bx) * 0.6 * unit(3);
+    let stone = STONE.lerp(FROST, frost) * (0.55 + 0.6 * unit(4));
+    let chips = scrap(x * 3.0, y * 3.0, period * 3, 0.45 * clumps);
+    let cover = block.max(chips * 0.7);
+    let color = if block >= chips { stone } else { STONE * 0.7 };
+    (
+        average.0 + (cover - average.0) * resolved,
+        average.1.lerp(color, resolved),
+    )
+}
+
 /// Densidad de los anillos (0 a ~0.9) a la distancia `r` del centro.
 pub fn density(ring: &RingInfo, r: f32, noise: &Perlin) -> f32 {
     let s = (r - ring.inner) / (ring.outer - ring.inner);
     if !(0.0..=1.0).contains(&s) {
         return 0.0;
     }
-    let edges = smoothstep(0.0, 0.04, s) * smoothstep(1.0, 0.9, s);
-    let division = 1.0 - 0.9 * smoothstep(0.02, 0.0, (s - 0.58).abs());
-    let bands = noise.noise(Vec3::new(s * 37.0, 0.5, 0.5)) * 0.5 + 0.5;
-    let fine = noise.noise(Vec3::new(s * 160.0, 1.5, 0.5)) * 0.5 + 0.5;
-    (edges * division * (0.25 + 0.55 * bands + 0.2 * fine)).min(0.92)
+    match ring.style {
+        RingStyle::Wrecks => {
+            let edges = smoothstep(0.0, 0.04, s) * smoothstep(1.0, 0.9, s);
+            let division = 1.0 - 0.9 * smoothstep(0.02, 0.0, (s - 0.58).abs());
+            let bands = noise.noise(Vec3::new(s * 37.0, 0.5, 0.5)) * 0.5 + 0.5;
+            let fine = noise.noise(Vec3::new(s * 160.0, 1.5, 0.5)) * 0.5 + 0.5;
+            (edges * division * (0.25 + 0.55 * bands + 0.2 * fine)).min(0.92)
+        }
+        // Delgados: tres bandas con divisiones nitidas y muchos anillitos.
+        RingStyle::Dust => {
+            let edges = smoothstep(0.0, 0.02, s) * smoothstep(1.0, 0.97, s);
+            let gaps = (1.0 - 0.97 * smoothstep(0.03, 0.0, (s - 0.3).abs()))
+                * (1.0 - 0.9 * smoothstep(0.015, 0.0, (s - 0.71).abs()));
+            let ringlets = noise.noise(Vec3::new(s * 80.0, 0.5, 2.5)) * 0.5 + 0.5;
+            let fine = noise.noise(Vec3::new(s * 260.0, 1.5, 2.5)) * 0.5 + 0.5;
+            (edges * gaps * (0.015 + 0.3 * ringlets * ringlets * ringlets + 0.06 * fine)).min(0.38)
+        }
+        RingStyle::Ruins => {
+            let edges = smoothstep(0.0, 0.08, s) * smoothstep(1.0, 0.85, s);
+            let bands = noise.noise(Vec3::new(s * 14.0, 4.5, 0.5)) * 0.5 + 0.5;
+            (edges * (0.15 + 0.5 * bands)).min(0.75)
+        }
+    }
 }
 
 /// Fraccion de luz que pasa a traves de los anillos desde `point` en la
@@ -210,16 +291,52 @@ pub fn composite(color: Vec3, dir: Vec3, depth: f32, ring: &RingInfo, u: &Unifor
     let c = oc.length_squared() - ring.planet_radius * ring.planet_radius;
     let shadowed = b < 0.0 && b * b - c > 0.0;
     let s = (r - ring.inner) / (ring.outer - ring.inner);
-    let dust = DARK_DUST.lerp(DUST, smoothstep(0.1, 0.9, alpha) * (0.7 + 0.3 * s));
     // Lo que mide un pixel en el plano, visto de lado crece.
     let footprint = t * u.pixel_angle / denom.abs().max(0.05);
-    let (cover, metal, beacon) = debris(ring, hit - ring.center, footprint, u.time, u.noise);
-    let albedo = dust.lerp(metal, 0.75);
-    let alpha = (alpha * (0.15 + 1.1 * cover)).min(0.97);
-    // El polvo dispersa hacia adelante: brilla mas a contraluz; el metal
-    // devuelve destellos.
-    let forward = dir.dot(to_sun).max(0.0).powi(6) * 1.5;
+    let local = hit - ring.center;
+    // El polvo dispersa hacia adelante: brilla mas a contraluz (el fino de
+    // Vigia mucho mas); el metal y la piedra devuelven destellos.
+    let (albedo, alpha, glow, scatter) = match ring.style {
+        RingStyle::Wrecks => {
+            let dust = DARK_DUST.lerp(DUST, smoothstep(0.1, 0.9, alpha) * (0.7 + 0.3 * s));
+            let (cover, metal, beacon) = debris(ring, local, footprint, u.time, u.noise);
+            (
+                dust.lerp(metal, 0.75),
+                (alpha * (0.15 + 1.1 * cover)).min(0.97),
+                beacon * u.gains.cementerio,
+                1.5,
+            )
+        }
+        RingStyle::Dust => (
+            DARK_LILAC.lerp(LILAC, smoothstep(0.05, 0.4, alpha)),
+            alpha,
+            Vec3::ZERO,
+            5.0,
+        ),
+        RingStyle::Ruins => {
+            let dust = DARK_DUST.lerp(FROST * 0.6, smoothstep(0.1, 0.9, alpha));
+            let (cover, stone) = ruins(ring, local, footprint, u.time, u.noise);
+            (dust.lerp(stone, 0.8), (alpha * (0.2 + 1.1 * cover)).min(0.97), Vec3::ZERO, 1.0)
+        }
+    };
+    let forward = dir.dot(to_sun).max(0.0).powi(6) * scatter;
     let glint = (-dir).dot(ring.normal).abs() * 0.2;
     let light = if shadowed { 0.02 } else { 0.35 + forward + glint };
-    color.lerp(albedo * u.sun_light * light, alpha) + beacon * u.gains.cementerio
+    // El polvo de Vigia, como sus nubes, guarda su color con la luz roja.
+    let sun = match ring.style {
+        RingStyle::Dust => Vec3::splat(u.sun_light.luminance() * 1.3),
+        _ => u.sun_light,
+    };
+    color.lerp(albedo * sun * light, alpha) + glow
+}
+
+/// Distancia por el rayo `dir` (unitario) al plano del anillo, si lo cruza
+/// adelante: para mezclar varios anillos del mas lejano al mas cercano.
+pub fn distance(ring: &RingInfo, dir: Vec3) -> f32 {
+    let denom = dir.dot(ring.normal);
+    if denom.abs() < 1e-6 {
+        return f32::INFINITY;
+    }
+    let t = ring.center.dot(ring.normal) / denom;
+    if t > 0.0 { t } else { f32::INFINITY }
 }

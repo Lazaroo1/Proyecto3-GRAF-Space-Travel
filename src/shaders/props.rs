@@ -8,7 +8,9 @@
 use super::{Fragment, Uniforms, detail, pbr, rings};
 use crate::math::blackbody::planckian_rgb;
 use crate::math::{Vec2, Vec3, smoothstep};
-use crate::scene::props::{CORAL_TOP, PropKind, SPIRE_TIERS, SPIRE_TIP, VENT_TOP, WRECK_UV_SIZE};
+use crate::scene::props::{
+    CORAL_TOP, CRYSTAL_TOP, PropKind, SPIRE_TIERS, SPIRE_TIP, VENT_TOP, WRECK_UV_SIZE,
+};
 use std::f32::consts::TAU;
 
 /// Datos de una instancia para su shader.
@@ -61,10 +63,11 @@ struct Ctx<'a> {
 pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
     let l = f.light_dir(u);
     // Sombra de los anillos, igual que en el terreno de Cementerio.
-    let rings = u
-        .ring
-        .as_ref()
-        .map_or(1.0, |ring| rings::transmittance(ring, f.pos, l, u.noise));
+    let rings: f32 = u
+        .rings
+        .iter()
+        .map(|ring| rings::transmittance(ring, f.pos, l, u.noise))
+        .product();
     let c = Ctx {
         f,
         u,
@@ -80,6 +83,7 @@ pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
         PropKind::Boulder => boulder(&c),
         PropKind::Beacon => beacon(&c, style),
         PropKind::Vent => vent(&c, style),
+        PropKind::Crystal => crystal(&c, style),
     }
 }
 
@@ -336,6 +340,35 @@ fn wreck(c: &Ctx) -> Vec3 {
         glow = tint * (window * on * awake * 1.6 * u.gains.cementerio);
     }
     lit(c, albedo, n, 0.6 * (1.0 - rust), 60.0, 0.0) + glow
+}
+
+/// Racimo de cristal de Parpado: liso y violeta, con brillos de la estrella
+/// en las caras y el borde encendido (Fresnel). Adentro tiene una luz que
+/// late despacio, mas hacia las puntas, y que se aviva con la nave cerca.
+fn crystal(c: &Ctx, style: &PropStyle) -> Vec3 {
+    let (f, u) = (c.f, c.u);
+    let v = f.view_dir();
+    let n = f.normal;
+    let ndv = n.dot(v).abs();
+    // Cristal oscuro y pulido: casi todo lo que se ve es lo que refleja
+    // (Vigia y el cielo, con Fresnel) y los brillos de la estrella en sus
+    // caras, cada una con su inclinacion.
+    let fresnel = 0.06 + 0.94 * (1.0 - ndv).powi(4);
+    let r = n * (2.0 * n.dot(v)) - v;
+    let mirror = super::parpado::environment(f, r, u) * (fresnel * 0.9);
+    let height = smoothstep(0.0, CRYSTAL_TOP, f.local.y);
+    let base = pbr::shade_light(f, u, Vec3::new(0.05, 0.02, 0.1), 0.08, 0.0, n, 1.0, c.sun);
+    // Adentro, vetas de luz que laten despacio y suben hacia las puntas; se
+    // ven mas por los bordes (la luz corre por dentro del cristal y sale de
+    // lado). Con la nave cerca se encienden.
+    let near = near_ship(u, f.pos, 150.0, 20.0);
+    let pulse = 0.5 + 0.5 * (u.time * 1.3 + style.seed * TAU + f.local.y * 0.35).sin();
+    let veins = smoothstep(0.88, 0.98, 1.0 - u.noise.noise(f.local * 2.6 + Vec3::new(0.0, u.time * 0.25, style.seed * 9.0)).abs());
+    let edge = 0.3 + 0.7 * (1.0 - ndv) * (1.0 - ndv);
+    let inner = Vec3::new(0.5, 0.12, 1.0).lerp(Vec3::new(1.0, 0.3, 0.75), height)
+        * (height * height * (0.04 + 0.06 * pulse) + near * (0.15 + 0.55 * pulse) * height * veins)
+        * edge;
+    base + mirror + inner * u.gains.vigia
 }
 
 fn boulder(c: &Ctx) -> Vec3 {

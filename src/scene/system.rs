@@ -1,4 +1,5 @@
-//! El sistema de OCASO: la estrella moribunda y sus cinco planetas.
+//! El sistema de OCASO: la estrella moribunda, sus cinco planetas y sus
+//! lunas.
 //!
 //! Todo movimiento es una funcion del tiempo de simulacion `t`: la posicion
 //! en la orbita, el giro sobre el eje y el latido de la estrella. Nada se
@@ -14,9 +15,12 @@ use super::{Mesh, icosphere, load_obj};
 use crate::config;
 use crate::math::{DQuat, DVec3, Perlin, Vec3};
 use crate::shaders::{
-    AtmosphereModel, AtmosphereParams, Material, ShipStyle, SkyCube, SunStyle, Textures, heartbeat,
+    AtmosphereModel, AtmosphereParams, Material, RingStyle, ShipStyle, SkyCube, SunStyle, Textures,
+    heartbeat,
 };
-use crate::terrain::shapes::{CementerioField, JardinField, PiraField, RequiemField};
+use crate::terrain::shapes::{
+    CementerioField, JardinField, MIRROR_SHORE, ParpadoField, PiraField, RequiemField,
+};
 use crate::terrain::{HeightField, Smooth, Terrain};
 
 pub struct Body {
@@ -46,36 +50,101 @@ pub struct Body {
     pub material: Material,
     /// Forma del terreno; `None` es una esfera lisa del radio base.
     pub surface: Option<Arc<dyn HeightField>>,
-    /// Anillos: radios interior y exterior, en radios del planeta.
-    pub rings: Option<(f64, f64)>,
+    /// Anillos, si tiene.
+    pub rings: Option<Rings>,
     /// Ya no existe (Gargantua se la comio): no se choca con ella.
     pub hidden: bool,
+    /// Si es una luna, el planeta alrededor del que gira: su orbita (la de
+    /// arriba) es alrededor de el.
+    pub host: Option<Host>,
+}
+
+/// Anillos de un cuerpo: radios interior y exterior (en radios del cuerpo)
+/// y de que estan hechos.
+#[derive(Clone, Copy, Debug)]
+pub struct Rings {
+    pub inner: f64,
+    pub outer: f64,
+    pub style: RingStyle,
+}
+
+/// El planeta de una luna: su indice y una copia de su orbita, para que la
+/// posicion de la luna siga siendo funcion solo del tiempo. Si la orbita del
+/// planeta cambia, `System::set_orbit_period` actualiza la copia.
+#[derive(Clone, Copy, Debug)]
+pub struct Host {
+    pub index: usize,
+    pub radius: f64,
+    pub period: f64,
+    pub phase: f64,
+    pub inclination: f64,
+}
+
+impl Host {
+    pub fn of(index: usize, body: &Body) -> Self {
+        Self {
+            index,
+            radius: body.orbit_radius,
+            period: body.orbit_period,
+            phase: body.orbit_phase,
+            inclination: body.orbit_inclination,
+        }
+    }
+}
+
+/// Punto de una orbita circular inclinada en el instante `t` (cero si el
+/// radio es cero: el cuerpo esta fijo).
+fn orbit_point(radius: f64, period: f64, phase: f64, inclination: f64, t: f64) -> DVec3 {
+    if radius == 0.0 {
+        return DVec3::ZERO;
+    }
+    let (s, c) = (phase + TAU * t / period).sin_cos();
+    incline(DVec3::new(c, 0.0, -s) * radius, inclination)
+}
+
+/// Derivada exacta de `orbit_point`.
+fn orbit_velocity(radius: f64, period: f64, phase: f64, inclination: f64, t: f64) -> DVec3 {
+    if radius == 0.0 {
+        return DVec3::ZERO;
+    }
+    let rate = TAU / period;
+    let (s, c) = (phase + rate * t).sin_cos();
+    incline(DVec3::new(-s, 0.0, -c) * (radius * rate), inclination)
+}
+
+fn incline(v: DVec3, inclination: f64) -> DVec3 {
+    let (s, c) = inclination.sin_cos();
+    DVec3::new(v.x, v.y * c - v.z * s, v.y * s + v.z * c)
 }
 
 impl Body {
     pub fn position(&self, t: f64) -> DVec3 {
-        if self.orbit_radius == 0.0 {
-            return DVec3::ZERO;
-        }
-        let angle = self.orbit_phase + TAU * t / self.orbit_period;
-        let (s, c) = angle.sin_cos();
-        self.incline(DVec3::new(c, 0.0, -s) * self.orbit_radius)
+        let around = self.host.map_or(DVec3::ZERO, |h| {
+            orbit_point(h.radius, h.period, h.phase, h.inclination, t)
+        });
+        around
+            + orbit_point(
+                self.orbit_radius,
+                self.orbit_period,
+                self.orbit_phase,
+                self.orbit_inclination,
+                t,
+            )
     }
 
     /// Derivada exacta de `position`.
     pub fn velocity(&self, t: f64) -> DVec3 {
-        if self.orbit_radius == 0.0 {
-            return DVec3::ZERO;
-        }
-        let rate = TAU / self.orbit_period;
-        let angle = self.orbit_phase + rate * t;
-        let (s, c) = angle.sin_cos();
-        self.incline(DVec3::new(-s, 0.0, -c) * (self.orbit_radius * rate))
-    }
-
-    fn incline(&self, v: DVec3) -> DVec3 {
-        let (s, c) = self.orbit_inclination.sin_cos();
-        DVec3::new(v.x, v.y * c - v.z * s, v.y * s + v.z * c)
+        let around = self.host.map_or(DVec3::ZERO, |h| {
+            orbit_velocity(h.radius, h.period, h.phase, h.inclination, t)
+        });
+        around
+            + orbit_velocity(
+                self.orbit_radius,
+                self.orbit_period,
+                self.orbit_phase,
+                self.orbit_inclination,
+                t,
+            )
     }
 
     /// Inclinacion del eje y giro sobre el. La orbita avanza girando sobre
@@ -150,6 +219,7 @@ impl PlanetSpec {
             surface: Some(self.surface),
             rings: None,
             hidden: false,
+            host: None,
         };
         (body, terrain, atmosphere)
     }
@@ -180,8 +250,6 @@ pub struct System {
     pub star_base: f64,
     /// Cuerpo con la tormenta-ojo (Vigia).
     pub eye_body: usize,
-    /// Cuerpo con anillos (Cementerio).
-    pub ring_body: usize,
     /// Un lugar para visitar en cada planeta con superficie.
     pub sites: Vec<Site>,
 }
@@ -194,6 +262,9 @@ pub struct Site {
     pub name: &'static str,
     pub normal: DVec3,
     pub forward: DVec3,
+    /// Como llegar a verlo: altura sobre el suelo, distancia antes del
+    /// lugar y cuanto mas arriba mirar.
+    pub view: (f64, f64, f64),
 }
 
 impl Site {
@@ -235,6 +306,7 @@ impl System {
             surface: None,
             rings: None,
             hidden: false,
+            host: None,
         };
 
         let (mut pira, pira_terrain, pira_air) = PlanetSpec {
@@ -355,10 +427,51 @@ impl System {
             atmosphere: None,
         }
         .build();
-        cementerio.rings = Some((1.7, 3.1));
+        cementerio.rings = Some(Rings {
+            inner: 1.7,
+            outer: 3.1,
+            style: RingStyle::Wrecks,
+        });
+        // Anillos delgados de polvo, por dentro de la orbita de su luna.
+        vigia.rings = Some(Rings {
+            inner: 1.45,
+            outer: 2.15,
+            style: RingStyle::Dust,
+        });
+
+        // Parpado, la luna de Vigia: cristales y lagos. Le da siempre la
+        // misma cara (-X) a Vigia, asi que desde sus lagos el ojo esta
+        // siempre en el mismo lugar del cielo.
+        let (mut parpado, parpado_terrain, parpado_air) = PlanetSpec {
+            name: "Parpado",
+            radius: 200.0,
+            orbit: 1700.0,
+            period: 520.0,
+            phase: 2.2,
+            inclination: 0.0,
+            spin: 520.0,
+            tilt: 0.0,
+            gravity: 2.5,
+            material: Material::Parpado,
+            surface: Arc::new(ParpadoField::new(seed ^ 0x9A4D)),
+            // Bruma fina y violeta.
+            atmosphere: Some(AtmosphereParams {
+                thickness: 6.0,
+                scale_height: 2.0,
+                rayleigh: Vec3::new(0.006, 0.0025, 0.014),
+                mie: 0.002,
+                mie_g: 0.7,
+                intensity: 1.6,
+            }),
+        }
+        .build();
+        parpado.spin_phase = parpado.orbit_phase;
+        parpado.host = Some(Host::of(3, &vigia));
+        // Su region no llega hasta Vigia.
+        parpado.soi = parpado.radius * 2.5;
 
         let mut system = Self {
-            bodies: vec![star, pira, jardin, vigia, requiem, cementerio],
+            bodies: vec![star, pira, jardin, vigia, requiem, cementerio, parpado],
             terrains: vec![
                 None,
                 Some(pira_terrain),
@@ -366,8 +479,17 @@ impl System {
                 Some(vigia_terrain),
                 Some(requiem_terrain),
                 Some(cementerio_terrain),
+                Some(parpado_terrain),
             ],
-            atmospheres: vec![None, pira_air, jardin_air, vigia_air, requiem_air, None],
+            atmospheres: vec![
+                None,
+                pira_air,
+                jardin_air,
+                vigia_air,
+                requiem_air,
+                None,
+                parpado_air,
+            ],
             meshes,
             ship_mesh: [1, 2, 3],
             // OCASO-1 se exporta con frente -Z y arriba +Y.
@@ -385,7 +507,6 @@ impl System {
             star_base: 320.0,
             eye_body: 3,
             sites: Vec::new(),
-            ring_body: 5,
         };
         system.sites = system.build_sites();
         system.scatter_props(config::PROP_SEED);
@@ -426,27 +547,44 @@ impl System {
         let mut sites = Vec::new();
         if let Some(i) = self.find("Jardin") {
             let (normal, forward, _) = self.garden_grove_frame();
-            sites.push(Site { body: i, name: "El claro", normal, forward });
+            sites.push(Site { body: i, name: "El claro", normal, forward, view: Self::SITE_VIEW });
         }
         if let Some(i) = self.find("Pira") {
             let (to_star, side, up) = axes(i);
             let (normal, forward) = local(i, (to_star * 0.42 + side * 0.9 + up * 0.1).normalize(), to_star);
-            sites.push(Site { body: i, name: "Los geiseres", normal, forward });
+            sites.push(Site { body: i, name: "Los geiseres", normal, forward, view: Self::SITE_VIEW });
         }
         if let Some(i) = self.find("Requiem") {
             let (to_star, side, up) = axes(i);
             let (normal, forward) = local(i, (to_star * 0.35 - side * 0.85 + up * 0.4).normalize(), to_star);
-            sites.push(Site { body: i, name: "La catedral", normal, forward });
+            sites.push(Site { body: i, name: "La catedral", normal, forward, view: Self::SITE_VIEW });
         }
         if let Some(i) = self.find("Cementerio") {
             let normal = DVec3::new(0.32, 0.22, 0.92).normalize();
             let forward = normal.cross(DVec3::Y).normalize();
-            sites.push(Site { body: i, name: "La baliza", normal, forward });
+            sites.push(Site { body: i, name: "La baliza", normal, forward, view: Self::SITE_VIEW });
+        }
+        // En la luna de Vigia, a la orilla del lago: Vigia del otro lado del
+        // agua, con su ojo mirando y reflejado.
+        if let Some(i) = self.find("Parpado") {
+            let normal = MIRROR_SHORE.as_dvec3().normalize();
+            let toward = DVec3::new(-1.0, 0.0, 0.0);
+            let forward = (toward - normal * toward.dot(normal)).normalize();
+            sites.push(Site {
+                body: i,
+                name: "El espejo",
+                normal,
+                forward,
+                view: (3.0, 6.0, 6.0),
+            });
         }
         sites
     }
 
-    /// Bioma de llegada, fijo en el espacio local de Jardín. El claro y sus
+    /// Como se llega a los lugares de los planetas: desde arriba y atras.
+const SITE_VIEW: (f64, f64, f64) = (22.0, 90.0, 0.0);
+
+/// Bioma de llegada, fijo en el espacio local de Jardín. El claro y sus
     /// grandes colonias forman parte del planeta y giran con él.
     pub fn garden_grove_frame(&self) -> (DVec3, DVec3, DVec3) {
         let i = self.find("Jardin").unwrap();
