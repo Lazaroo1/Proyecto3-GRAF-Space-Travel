@@ -275,6 +275,8 @@ mod tests {
             beat_rate: 0.5,
             heart: 1.0,
             star_glow: 1.0,
+            flares: 0.0,
+            nebula: None,
             black_hole: None,
             sun_pos: Vec3::new(1000.0, 200.0, -3000.0),
             sun_radius: 300.0,

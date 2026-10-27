@@ -26,18 +26,33 @@ const SPORE_BOX: f32 = 90.0;
 const SPORE_RISE: f32 = 8.0;
 /// Particulas del escape de la nave.
 pub const EXHAUST_COUNT: usize = 100;
-pub const PROMINENCE_COUNT: usize = 24 * 96 * 3;
+/// Protuberancias: arcos de plasma de varias hebras torcidas.
+const PROMINENCE_ARCS: usize = 14;
+const PROMINENCE_STRANDS: usize = 5;
+const PROMINENCE_SEGMENTS: usize = 72;
+pub const PROMINENCE_COUNT: usize = PROMINENCE_ARCS * PROMINENCE_STRANDS * PROMINENCE_SEGMENTS;
 
-/// Filamentos tridimensionales anclados a la fotosfera. La profundidad de
-/// cada segmento oculta los arcos de atrás contra la propia estrella.
-pub fn prominences(out: &mut [Particle], star: &Body, t: f64, camera: DVec3, strength: f32) {
+/// Arcos de plasma anclados a la fotosfera: cada uno es una cuerda de
+/// hebras torcidas, mas caliente (amarilla) en los pies y roja arriba, con
+/// nudos de material que bajan por el arco. Con las llamaradas del
+/// estertor (`flares`) crecen, y uno de cada tres se desprende.
+pub fn prominences(
+    out: &mut [Particle],
+    star: &Body,
+    t: f64,
+    camera: DVec3,
+    strength: f32,
+    flares: f32,
+) {
     let center = (star.position(t) - camera).as_vec3();
     let rotation = star.rotation(t).to_mat3().to_f32();
     let r = star.radius as f32;
+    let time = t as f32;
+    let per_arc = PROMINENCE_STRANDS * PROMINENCE_SEGMENTS;
     for (i, p) in out.iter_mut().enumerate() {
-        let arc = i / (96 * 3);
-        let strand = (i / 96) % 3;
-        let s = (i % 96) as f32 / 95.0;
+        let arc = i / per_arc;
+        let strand = (i / PROMINENCE_SEGMENTS) % PROMINENCE_STRANDS;
+        let s = (i % PROMINENCE_SEGMENTS) as f32 / (PROMINENCE_SEGMENTS - 1) as f32;
         let h = hash_u32(arc as u32 ^ 0xAC1D_72A1);
         let y = unit(h) * 2.0 - 1.0;
         let phi = unit(hash_u32(h)) * std::f32::consts::TAU;
@@ -49,22 +64,38 @@ pub fn prominences(out: &mut [Particle], star: &Body, t: f64, camera: DVec3, str
         let (a, b) = basis(n);
         let spin = unit(hash_u32(h ^ 93)) * std::f32::consts::TAU;
         let tangent = a * spin.cos() + b * spin.sin();
-        let width = 0.08 + 0.15 * unit(hash_u32(h ^ 7));
+        let side = n.cross(tangent);
+        let width = 0.07 + 0.11 * unit(hash_u32(h ^ 7));
         let angle = (s - 0.5) * width * 2.0;
         let wave = (std::f32::consts::PI * s).sin().max(0.0);
-        let height = (0.07 + 0.18 * unit(hash_u32(h ^ 13)))
-            * (0.85 + 0.15 * (t as f32 * 0.12 + arc as f32).sin());
+        // Uno de cada tres se desprende cuando las llamaradas arrecian.
+        let erupt = if arc % 3 == 0 {
+            smoothstep(0.35, 1.0, flares)
+        } else {
+            0.0
+        };
+        let height = (0.06 + 0.16 * unit(hash_u32(h ^ 13)))
+            * (0.85 + 0.15 * (time * 0.12 + arc as f32).sin())
+            * (1.0 + 1.6 * flares + 5.0 * erupt);
         let radial = n * angle.cos() + tangent * angle.sin();
-        let filament = (strand as f32 - 1.0) * 0.004
-            + (s * 12.0 + t as f32 * 0.2 + strand as f32).sin() * 0.002 * wave;
-        let position = radial * (r * (1.002 + height * wave.powf(1.2))) + b * (r * filament);
+        let lift = r * (1.0 + height * wave.powf(0.9) + 0.5 * erupt * erupt);
+        // Las hebras se enroscan alrededor del eje del arco.
+        let twist = strand as f32 / PROMINENCE_STRANDS as f32 * std::f32::consts::TAU
+            + s * 7.0
+            + time * 0.6;
+        let rope = r * (0.006 + 0.009 * wave) * (1.0 + erupt);
+        let jitter = unit(hash_u32(i as u32 ^ 0x5EED)) - 0.5;
+        let offset = (side * twist.cos() + radial * twist.sin()) * rope
+            + tangent * (jitter * r * 0.003);
+        // Nudos de material que caen por el arco hacia los pies.
+        let knots = 0.5 + 0.5 * (s * 22.0 - time * 1.6 + arc as f32 * 1.7).sin();
+        let foot = Vec3::new(1.9, 0.7, 0.16);
+        let crown = Vec3::new(1.15, 0.16, 0.035);
+        let brightness = strength * (0.35 + 0.65 * knots) * (0.55 + 0.45 * (1.0 - erupt));
         *p = Particle {
-            pos: center + rotation.mul_vec(position),
-            radius: r * (0.0014 + 0.0008 * wave),
-            color: Vec3::new(1.4, 0.085, 0.012)
-                * (strength
-                    * (0.18 + 0.82 * wave)
-                    * (0.7 + 0.3 * (s * 18.0 - t as f32 * 1.2).sin())),
+            pos: center + rotation.mul_vec(radial * lift + offset),
+            radius: r * (0.005 + 0.004 * wave) * (1.0 + 0.6 * erupt),
+            color: foot.lerp(crown, wave) * (0.5 * brightness),
         };
     }
 }

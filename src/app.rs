@@ -124,7 +124,7 @@ pub struct Preset {
     pub act: Option<f64>,
 }
 
-pub const PRESETS: [Preset; 24] = [
+pub const PRESETS: [Preset; 25] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
@@ -331,6 +331,12 @@ pub const PRESETS: [Preset; 24] = [
         shot: Shot::Garden,
         time: 40.0,
         act: None,
+    },
+    Preset {
+        name: "25_estertor",
+        shot: Shot::Star,
+        time: 40.0,
+        act: Some(17.0),
     },
     Preset {
         name: "24_el_ojo",
@@ -1044,6 +1050,12 @@ impl App {
             beat_rate: state.beat_rate as f32,
             heart,
             star_glow: state.star_glow,
+            flares: state.flares,
+            nebula: shaders::Nebula::at(
+                state.shell_age,
+                (star_pos - camera.pos).as_vec3(),
+                self.system.star_base as f32,
+            ),
             black_hole: hole.as_ref(),
             sun_pos: (star_pos - camera.pos).as_vec3(),
             sun_radius: light_radius as f32,
@@ -1203,8 +1215,16 @@ impl App {
         if self.cycle.star_glow > 0.001 && star.radius > 1.0 {
             let start = out.len();
             out.resize(start + effects::PROMINENCE_COUNT, blank);
-            effects::prominences(&mut out[start..], star, t, camera.pos, self.cycle.star_glow);
+            effects::prominences(
+                &mut out[start..],
+                star,
+                t,
+                camera.pos,
+                self.cycle.star_glow,
+                self.cycle.flares,
+            );
         }
+
         if let Some(i) = system.find("Jardin") {
             let jardin = &system.bodies[i];
             let altitude = (camera.pos - jardin.position(t)).length() - jardin.radius;
