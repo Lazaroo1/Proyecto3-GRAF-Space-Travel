@@ -24,7 +24,7 @@ mod vapor;
 mod pbr;
 mod pira;
 mod props;
-mod requiem;
+pub(crate) mod requiem;
 pub mod rings;
 mod ship;
 mod sky;

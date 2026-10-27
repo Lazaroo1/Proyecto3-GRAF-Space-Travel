@@ -461,3 +461,44 @@ impl HeightField for ParpadoField {
         (0.0, 1.6 + 1.5 + 26.0 + 0.5)
     }
 }
+
+/// Epitafio, la luna de Requiem: hielo viejo lleno de crateres. Usa el
+/// mismo shader que Requiem (atributos: `x` hielo, que no tiene; `y` nieve
+/// en lo alto; `z` borde de crater).
+pub struct EpitafioField {
+    noise: Perlin,
+    craters: Craters,
+}
+
+impl EpitafioField {
+    pub fn new(seed: u32) -> Self {
+        Self {
+            noise: Perlin::new(seed),
+            craters: Craters {
+                frequency: 9.0,
+                chance: 0.45,
+                min_radius: 0.15,
+                max_radius: 0.6,
+                depth: 3.0,
+                seed: seed ^ 0xE91A,
+            },
+        }
+    }
+}
+
+impl HeightField for EpitafioField {
+    fn sample(&self, dir: Vec3) -> TerrainSample {
+        let relief = self.noise.fbm(dir * 3.5 + Vec3::new(1.9, -4.1, 2.7), 4);
+        let (craters, rim) = self.craters.sample(dir);
+        let height = 1.5 + 1.5 * relief + craters;
+        TerrainSample {
+            height,
+            attrs: Vec3::new(0.0, smoothstep(2.0, 3.5, height), rim),
+        }
+    }
+
+    fn height_range(&self) -> (f32, f32) {
+        let (lo, hi) = self.craters.range();
+        (lo, 3.0 + hi + 0.2)
+    }
+}

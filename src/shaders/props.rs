@@ -9,7 +9,7 @@ use super::{Fragment, Uniforms, detail, pbr, rings};
 use crate::math::blackbody::planckian_rgb;
 use crate::math::{Vec2, Vec3, smoothstep};
 use crate::scene::props::{
-    CORAL_TOP, CRYSTAL_TOP, PropKind, SPIRE_TIERS, SPIRE_TIP, VENT_TOP, WRECK_UV_SIZE,
+    CORAL_TOP, CRYSTAL_TOP, GLYPH_HEIGHT, MONOLITH, PropKind, VENT_TOP, WRECK_UV_SIZE,
 };
 use std::f32::consts::TAU;
 
@@ -75,7 +75,10 @@ pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
         sun: u.sun_light * (planet_shadow(style, f.pos, l) * rings),
     };
     match style.kind {
-        PropKind::Spire | PropKind::Ruin => spire(&c),
+        PropKind::Monolith => monolith(&c, GLYPH_HEIGHT),
+        // En las ruinas el glifo quedo abajo de la rotura.
+        PropKind::Ruin => monolith(&c, GLYPH_HEIGHT * 0.55),
+        PropKind::Crag => crag(&c),
         PropKind::Mushroom => mushroom(&c),
         PropKind::Coral => coral(&c),
         PropKind::Spike => spike(&c),
@@ -124,52 +127,81 @@ fn pixel_footprint(c: &Ctx) -> f32 {
     c.f.pos.length() * c.u.pixel_angle / (ndv * c.scale)
 }
 
-/// Aguja gotica: piedra oscura azulada, escarcha en lo que mira hacia
-/// arriba (cornisas y remates) y en cada cara del fuste una ventana de luz
-/// fria. La luz sube por la aguja con cada latido, del pie a la punta, como
-/// una senal hacia donde va a nacer Gargantua; despues del colapso se queda
-/// encendida.
-fn spire(c: &Ctx) -> Vec3 {
+/// Una direccion del mundo en ejes del modelo (la inversa de su giro).
+#[inline]
+fn to_model(f: &Fragment, v: Vec3) -> Vec3 {
+    let m = &f.object_to_world.m;
+    Vec3::new(
+        m[0][0] * v.x + m[1][0] * v.y + m[2][0] * v.z,
+        m[0][1] * v.x + m[1][1] * v.y + m[2][1] * v.z,
+        m[0][2] * v.x + m[1][2] * v.y + m[2][2] * v.z,
+    )
+}
+
+/// Monolito de Requiem: piedra oscura gastada por el viento (vetas
+/// verticales), con grietas y escarcha en lo que mira arriba y al pie. En
+/// sus caras anchas, el glifo: un circulo cruzado por una linea, tallado y
+/// con una luz blanca y fria muy tenue que late con la estrella. Despierta
+/// con la nave cerca y despues del colapso se queda encendido: los
+/// monolitos apuntan a donde nacio Gargantua.
+fn monolith(c: &Ctx, glyph_height: f32) -> Vec3 {
     let (f, u) = (c.f, c.u);
     let p = f.local;
     let up = f.object_to_world.mul_vec(Vec3::Y);
     let facing_up = f.normal.dot(up);
-    let grain = u.noise.fbm(Vec3::new(p.x * 1.5, p.y * 0.35, p.z * 1.5), 3) * 0.5 + 0.5;
-    let frost = smoothstep(0.35, 0.8, facing_up + 0.25 * (grain - 0.5))
-        + 0.25 * smoothstep(2.5, 0.0, p.y);
-    let stone = Vec3::new(0.030, 0.036, 0.048) * (0.65 + 0.7 * grain);
-    let ice = Vec3::new(0.50, 0.62, 0.78);
-    let albedo = stone.lerp(ice, frost.min(1.0));
-
-    // Ventanas: una ranura vertical en el centro de cada cara del fuste.
-    let mut window = 0.0;
-    let radius = p.x.hypot(p.z);
-    for &(bottom, top, r0, r1) in &SPIRE_TIERS {
-        if p.y > bottom && p.y < top {
-            let along = (p.y - bottom) / (top - bottom);
-            let wall = r0 + (r1 - r0) * along;
-            if (radius - wall * 0.92).abs() < 0.25 {
-                let face = (p.z.atan2(p.x) / (TAU / 8.0)).rem_euclid(1.0);
-                let slit = smoothstep(0.09, 0.04, (face - 0.5).abs());
-                window = slit * smoothstep(0.0, 0.12, along) * smoothstep(1.0, 0.8, along);
-            }
-        }
-    }
-    // La punta brilla como un faro.
-    let tip = smoothstep(SPIRE_TIP - 3.0, SPIRE_TIP, p.y);
-    let pulse = u.beat_at(p.y * 0.045);
+    let grain = u.noise.fbm(Vec3::new(p.x * 1.2, p.y * 0.22, p.z * 1.2), 3) * 0.5 + 0.5;
+    let aa = (pixel_footprint(c) * 0.5).max(0.004);
+    let cells = u.noise.cells(Vec3::new(p.x * 0.5, p.y * 0.28, p.z * 0.5));
+    let crack = smoothstep(0.035 + aa, 0.0, cells.1 - cells.0);
+    // Escarcha arriba, al pie y en chorreaduras que bajan por las caras.
+    let streaks = smoothstep(0.55, 0.8, u.noise.noise(Vec3::new(p.x * 2.6, p.y * 0.15, p.z * 2.6)) * 0.5 + 0.5);
+    let frost = (smoothstep(0.4, 0.85, facing_up + 0.3 * (grain - 0.5))
+        + 0.35 * smoothstep(2.0, 0.0, p.y)
+        + 0.3 * streaks)
+        .min(1.0);
+    let stone = Vec3::new(0.05, 0.058, 0.074) * (0.6 + 0.8 * grain) * (1.0 - 0.65 * crack);
+    let albedo = stone.lerp(Vec3::new(0.55, 0.64, 0.78), frost * 0.85);
+    // El glifo, en las dos caras anchas.
+    let on_face = smoothstep(0.7, 0.9, to_model(f, f.normal).z.abs());
+    let (gx, gy) = (p.x, p.y - glyph_height);
+    let ring_radius = MONOLITH.0 * 0.62;
+    let width = 0.07 + aa;
+    let ring = smoothstep(width, width * 0.4, (gx.hypot(gy) - ring_radius).abs());
+    let line = smoothstep(width, width * 0.4, gx.abs())
+        * smoothstep(ring_radius * 1.45, ring_radius * 1.3, gy.abs());
+    let glyph = ring.max(line) * on_face;
+    let pulse = u.beat_at(0.3);
     let after = (u.biolum - 1.0).max(0.0) * 0.5;
-    // Despierta cuando la nave se acerca: la luz se enciende primero en lo
-    // que le queda mas cerca y sube por la aguja.
-    let awake = near_ship(u, f.pos, 260.0, 40.0);
-    let light = (0.12 + 1.5 * pulse + after + awake * (2.5 + 1.5 * pulse)) * u.gains.requiem;
-    let cold = Vec3::new(0.30, 0.62, 1.0);
-    let emission = cold * ((window * 1.4 + tip * 0.8) * light);
+    let awake = near_ship(u, f.pos, 220.0, 30.0);
+    let light = (0.06 + 0.1 * pulse + after + awake * (0.55 + 0.35 * pulse)) * u.gains.requiem;
+    let emission = Vec3::new(0.78, 0.88, 1.0) * (glyph * light);
     let cold = Ctx {
         sun: super::requiem::cold_light(c.sun),
         ..*c
     };
-    lit(&cold, albedo, f.normal, 0.3 + 0.5 * frost.min(1.0), 60.0, 0.0) + emission
+    lit(&cold, albedo * (1.0 - 0.6 * glyph), f.normal, 0.55 + 0.3 * frost, 40.0, 0.0) + emission
+}
+
+/// Pico de roca de Requiem: piedra oscura y angulosa, con escarcha en lo
+/// que mira arriba, bajo la misma luz fria.
+fn crag(c: &Ctx) -> Vec3 {
+    let (f, u) = (c.f, c.u);
+    let tex = detail::rock(f, u, 0.3, pixel_footprint(c), 0.85);
+    let up = f.object_to_world.mul_vec(Vec3::Y);
+    let grain = u.noise.fbm(f.local * 0.8, 2) * 0.5 + 0.5;
+    let frost = smoothstep(0.45, 0.85, tex.normal.dot(up) + 0.25 * (grain - 0.5));
+    let rock = Vec3::new(0.03, 0.035, 0.046) * (0.6 + tex.color.luminance());
+    let albedo = rock.lerp(Vec3::new(0.6, 0.68, 0.8), frost * 0.8);
+    pbr::shade_light(
+        f,
+        u,
+        albedo,
+        0.75 - 0.3 * frost,
+        0.0,
+        tex.normal,
+        tex.ao,
+        super::requiem::cold_light(c.sun),
+    )
 }
 
 /// La baliza: metal oscuro y una lampara roja que destella cada 2.4 s,

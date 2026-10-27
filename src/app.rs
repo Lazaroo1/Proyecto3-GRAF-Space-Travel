@@ -223,10 +223,10 @@ pub const PRESETS: [Preset; 32] = [
         act: None,
     },
     Preset {
-        name: "10_agujas",
+        name: "10_monolitos",
         shot: Shot::Landmark {
             body: "Requiem",
-            kind: PropKind::Spire,
+            kind: PropKind::Monolith,
             distance: 16.0,
             sun: 0.42,
         },
@@ -787,6 +787,7 @@ impl App {
             "Requiem" => 49.0,
             "Cementerio" => 61.7,
             "Parpado" => 46.2,
+            "Epitafio" => 43.7,
             _ => 36.7,
         };
         let state = cycle::at(t, &self.timeline, self.system.star_base);
@@ -1143,13 +1144,13 @@ impl App {
                 radius: 60.0,
             });
         }
-        for (base, up, _, scale) in props_near(&self.system, "Requiem", PropKind::Spire, 9.0, t, camera.pos, 260.0) {
-            let awake = smoothstep(260.0, 40.0, (base - ship_rel).length());
+        for (glyph, up, _, scale) in props_near(&self.system, "Requiem", PropKind::Monolith, props::GLYPH_HEIGHT, t, camera.pos, 220.0) {
+            let awake = smoothstep(220.0, 30.0, (glyph - ship_rel).length());
             if awake > 0.02 {
                 points.push(crate::shaders::PointLight {
-                    pos: base + up * 2.0,
-                    color: Vec3::new(0.25, 0.6, 1.4) * (70.0 * awake * scale * scale),
-                    radius: 55.0 * scale,
+                    pos: glyph + up * 1.0,
+                    color: Vec3::new(0.6, 0.75, 1.2) * (22.0 * awake * scale * scale),
+                    radius: 40.0 * scale,
                 });
             }
         }

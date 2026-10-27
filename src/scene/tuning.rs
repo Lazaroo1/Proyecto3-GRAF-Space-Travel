@@ -32,7 +32,7 @@ impl System {
             let place = match body.name {
                 "Jardin" => props::garden_grove,
                 "Pira" => props::vent_field,
-                "Requiem" => props::cathedral,
+                "Requiem" => props::monolith_field,
                 "Cementerio" => props::beacon_site,
                 "Parpado" => props::mirror_shore,
                 _ => |_: &mut Vec<_>, _: f64, _: &dyn HeightField, _: u32, _: (DVec3, DVec3, DVec3)| {},
@@ -148,7 +148,7 @@ mod tests {
         assert_eq!(sys.sites.len(), 5);
         for (body, kind, count) in [
             ("Pira", PropKind::Vent, 12),
-            ("Requiem", PropKind::Spire, 10),
+            ("Requiem", PropKind::Monolith, 8),
             ("Cementerio", PropKind::Beacon, 1),
             ("Parpado", PropKind::Crystal, 14),
         ] {

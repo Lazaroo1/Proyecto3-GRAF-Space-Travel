@@ -19,7 +19,8 @@ use crate::shaders::{
     heartbeat,
 };
 use crate::terrain::shapes::{
-    CementerioField, JardinField, MIRROR_SHORE, ParpadoField, PiraField, RequiemField,
+    CementerioField, EpitafioField, JardinField, MIRROR_SHORE, ParpadoField, PiraField,
+    RequiemField,
 };
 use crate::terrain::{HeightField, Smooth, Terrain};
 
@@ -385,7 +386,7 @@ impl System {
         .build();
         vigia.soi = vigia.radius * 4.0;
 
-        let (requiem, requiem_terrain, requiem_air) = PlanetSpec {
+        let (mut requiem, requiem_terrain, requiem_air) = PlanetSpec {
             name: "Requiem",
             radius: 160.0,
             orbit: 4000.0,
@@ -432,6 +433,12 @@ impl System {
             outer: 3.1,
             style: RingStyle::Wrecks,
         });
+        // Un anillo de escombros: lo que quedo de su civilizacion.
+        requiem.rings = Some(Rings {
+            inner: 1.8,
+            outer: 2.75,
+            style: RingStyle::Ruins,
+        });
         // Anillos delgados de polvo, por dentro de la orbita de su luna.
         vigia.rings = Some(Rings {
             inner: 1.45,
@@ -470,8 +477,27 @@ impl System {
         // Su region no llega hasta Vigia.
         parpado.soi = parpado.radius * 2.5;
 
+        // Epitafio, la luna de Requiem: grande en su cielo.
+        let (mut epitafio, epitafio_terrain, _) = PlanetSpec {
+            name: "Epitafio",
+            radius: 55.0,
+            orbit: 620.0,
+            period: 300.0,
+            phase: 0.4,
+            inclination: 0.35,
+            spin: 300.0,
+            tilt: 0.0,
+            gravity: 2.0,
+            material: Material::Requiem,
+            surface: Arc::new(EpitafioField::new(seed ^ 0xE91)),
+            atmosphere: None,
+        }
+        .build();
+        epitafio.host = Some(Host::of(4, &requiem));
+        epitafio.soi = epitafio.radius * 2.5;
+
         let mut system = Self {
-            bodies: vec![star, pira, jardin, vigia, requiem, cementerio, parpado],
+            bodies: vec![star, pira, jardin, vigia, requiem, cementerio, parpado, epitafio],
             terrains: vec![
                 None,
                 Some(pira_terrain),
@@ -480,6 +506,7 @@ impl System {
                 Some(requiem_terrain),
                 Some(cementerio_terrain),
                 Some(parpado_terrain),
+                Some(epitafio_terrain),
             ],
             atmospheres: vec![
                 None,
@@ -489,6 +516,7 @@ impl System {
                 requiem_air,
                 None,
                 parpado_air,
+                None,
             ],
             meshes,
             ship_mesh: [1, 2, 3],
@@ -557,7 +585,7 @@ impl System {
         if let Some(i) = self.find("Requiem") {
             let (to_star, side, up) = axes(i);
             let (normal, forward) = local(i, (to_star * 0.35 - side * 0.85 + up * 0.4).normalize(), to_star);
-            sites.push(Site { body: i, name: "La catedral", normal, forward, view: Self::SITE_VIEW });
+            sites.push(Site { body: i, name: "Los monolitos", normal, forward, view: Self::SITE_VIEW });
         }
         if let Some(i) = self.find("Cementerio") {
             let normal = DVec3::new(0.32, 0.22, 0.92).normalize();
