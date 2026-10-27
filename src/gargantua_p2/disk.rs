@@ -319,8 +319,14 @@ impl GasTexture {
     /// del disco se repite la ultima fila.
     pub fn turbulence(&self, hit: Vec3) -> f32 {
         let radius = Vec2::new(hit.x, hit.z).length().max(1e-3);
-        let angle = crate::math::fast_atan2(hit.z, hit.x);
-        let outer_z = hit.y / (radius * config::OUTER_GAS_HEIGHT_RATIO);
+        self.turbulence_at(radius, crate::math::fast_atan2(hit.z, hit.x), hit.y)
+    }
+
+    /// `turbulence` con el radio y el angulo ya calculados.
+    #[inline]
+    pub fn turbulence_at(&self, radius: f32, angle: f32, height: f32) -> f32 {
+        let radius = radius.max(1e-3);
+        let outer_z = height / (radius * config::OUTER_GAS_HEIGHT_RATIO);
         let tex_x = angle.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU
             * config::PREVIEW_GAS_TEXTURE_WIDTH as f32;
         let tex_y = ((radius - config::DISK_INNER_RADIUS)

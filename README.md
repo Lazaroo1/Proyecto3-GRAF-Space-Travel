@@ -8,8 +8,8 @@ corazón, y se puede volar entre sus cinco planetas todo el tiempo que se
 quiera. Con **J** empieza el final: el latido se acelera, la estrella suelta
 una capa de gas que arde, colapsa en una supernova fallida y en su lugar nace
 **Gargantúa**, un agujero negro con su disco de acreción que curva la luz de
-todo el cielo. Gargantúa estira a Pira, la deshace y su gas entra al disco en
-espiral hasta mezclarse con él. Se puede volar al disco; quien cruza el
+todo el cielo. Gargantúa hace hervir a Pira hasta deshacerla y su gas entra
+al disco en espiral hasta mezclarse con él. Se puede volar al disco; quien cruza el
 horizonte muere y el tiempo se rebobina. Otra J hace renacer a la estrella.
 
 ![Gargantúa: el ojo se abre](media/24_el_ojo.png)

@@ -9,7 +9,7 @@
 //! | 20 - 26 s | Silencio | Cae sobre si misma; su luz y la de la nebulosa se drenan. |
 //! | 26 - 30 s | Silencio | Oscuridad: los ojos se acostumbran y solo queda el cielo y la bioluminiscencia. |
 //! | 30 s | El ojo se abre | Una onda gravitacional barre el sistema y nace Gargantua, con un disco blanco azulado. |
-//! | 36 - 52 s | La comida | Gargantua estira a Pira hacia el agujero y la deshace; su gas entra al disco en espiral. |
+//! | 36 - 52 s | La comida | La marea de Gargantua hace hervir a Pira: se funde y se encoge mientras su gas sale por el lado del agujero y entra al disco en espiral. |
 //! | 52 s - | Despues | El brazo de Pira se diluye en el disco, que se enfria a naranja fuego. Cruzar el horizonte mata y rebobina 15 s. |
 //! | J otra vez | Renacer | Fundido a blanco de 3 s y vuelve la agonia. |
 //!

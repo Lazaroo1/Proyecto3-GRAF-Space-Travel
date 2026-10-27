@@ -278,6 +278,7 @@ mod tests {
             flares: 0.0,
             nebula: None,
             tail: None,
+            vapor: None,
             black_hole: None,
             sun_pos: Vec3::new(1000.0, 200.0, -3000.0),
             sun_radius: 300.0,
