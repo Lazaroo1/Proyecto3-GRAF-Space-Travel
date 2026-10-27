@@ -15,7 +15,7 @@ use crate::math::{DMat3, DMat4, DQuat, DVec3, Vec3, smoothing};
 use crate::render::shadow::ShadowMap;
 use crate::render::{Draw, Particle, Renderer, Ripple, Stats, View};
 use crate::scene::camera::{Camera, CameraMode};
-use crate::scene::cycle::{self, CycleState};
+use crate::scene::cycle::{self, CycleState, Timeline};
 use crate::scene::effects::{self, EXHAUST_COUNT, SPORE_COUNT, STREAM_COUNT};
 use crate::scene::props::{self, Instance, PropKind, PropStats, PropView};
 use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
@@ -120,6 +120,8 @@ pub struct Preset {
     pub name: &'static str,
     pub shot: Shot,
     pub time: f64,
+    /// Segundos desde la J del final (`None`: la estrella sigue en agonia).
+    pub act: Option<f64>,
 }
 
 pub const PRESETS: [Preset; 24] = [
@@ -127,6 +129,7 @@ pub const PRESETS: [Preset; 24] = [
         name: "01_sistema",
         shot: Shot::Overview,
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "02_pira",
@@ -137,6 +140,7 @@ pub const PRESETS: [Preset; 24] = [
             elevation: 0.2,
         },
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "03_pira_noche",
@@ -147,6 +151,7 @@ pub const PRESETS: [Preset; 24] = [
             elevation: 0.15,
         },
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "04_jardin",
@@ -157,6 +162,7 @@ pub const PRESETS: [Preset; 24] = [
             elevation: 0.25,
         },
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "05_jardin_superficie",
@@ -167,6 +173,7 @@ pub const PRESETS: [Preset; 24] = [
             altitude: 6.0,
         },
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "06_vigia",
@@ -177,6 +184,7 @@ pub const PRESETS: [Preset; 24] = [
             elevation: 0.1,
         },
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "07_requiem",
@@ -187,6 +195,7 @@ pub const PRESETS: [Preset; 24] = [
             altitude: 6.0,
         },
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "08_cementerio",
@@ -197,11 +206,13 @@ pub const PRESETS: [Preset; 24] = [
             elevation: 0.35,
         },
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "09_nave",
         shot: Shot::Ship { body: "Requiem" },
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "10_monolito",
@@ -212,6 +223,7 @@ pub const PRESETS: [Preset; 24] = [
             sun: 0.42,
         },
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "11_hongos",
@@ -222,6 +234,7 @@ pub const PRESETS: [Preset; 24] = [
             sun: -0.38,
         },
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "12_espinas",
@@ -232,6 +245,7 @@ pub const PRESETS: [Preset; 24] = [
             sun: 0.3,
         },
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "13_naufragio",
@@ -242,11 +256,13 @@ pub const PRESETS: [Preset; 24] = [
             sun: 0.35,
         },
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "14_chorro",
         shot: Shot::Stream,
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "15_trayectoria",
@@ -256,6 +272,7 @@ pub const PRESETS: [Preset; 24] = [
             speed: 0.85,
         },
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "16_arritmia",
@@ -266,26 +283,31 @@ pub const PRESETS: [Preset; 24] = [
             elevation: 0.25,
         },
         time: 700.0,
+        act: Some(16.0),
     },
     Preset {
         name: "17_colapso",
         shot: Shot::Gaze { body: "Jardin" },
         time: 725.2,
+        act: Some(25.2),
     },
     Preset {
         name: "17_onda_gravitacional",
         shot: Shot::Gaze { body: "Jardin" },
         time: 726.6,
+        act: Some(30.6),
     },
     Preset {
         name: "18_gargantua",
         shot: Shot::Gaze { body: "Pira" },
         time: 830.0,
+        act: Some(134.0),
     },
     Preset {
         name: "19_gargantua_jardin",
         shot: Shot::Gaze { body: "Jardin" },
         time: 830.0,
+        act: Some(134.0),
     },
     Preset {
         name: "20_jardin_noche_eterna",
@@ -296,21 +318,25 @@ pub const PRESETS: [Preset; 24] = [
             sun: 0.3,
         },
         time: 850.0,
+        act: Some(154.0),
     },
     Preset {
         name: "22_agonia",
         shot: Shot::Star,
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "23_jardin_biopunk",
         shot: Shot::Garden,
         time: 40.0,
+        act: None,
     },
     Preset {
         name: "24_el_ojo",
         shot: Shot::BlackHole,
         time: 835.0,
+        act: Some(139.0),
     },
 ];
 
@@ -331,6 +357,8 @@ pub struct App {
     pub exposure: f32,
     /// El ciclo en el ultimo frame dibujado.
     pub cycle: CycleState,
+    /// Cuando se desataron el final y el renacer (tecla J).
+    pub timeline: Timeline,
     /// Tabla de geodesicas de Gargantua: se rehace al cambiar la distancia.
     lens: Option<LensTable>,
     /// Camara congelada (F7): el culling y el LOD se calculan desde ella
@@ -396,6 +424,7 @@ impl App {
                 elevation: 0.2,
             },
             time: 40.0,
+            act: None,
         });
         self.settings.local = false;
         DemoTour::default()
@@ -494,7 +523,8 @@ impl App {
             prop_stats: PropStats::default(),
             gains: Gains::default(),
             exposure: config::EXPOSURE,
-            cycle: cycle::at(t, system_star_radius),
+            cycle: cycle::at(t, &Timeline::default(), system_star_radius),
+            timeline: Timeline::default(),
             lens: None,
             freeze: None,
             markers: Vec::new(),
@@ -533,7 +563,8 @@ impl App {
     /// posicion y su velocidad respecto a su cuerpo, asi que viaja con el.
     pub fn skip(&mut self, seconds: f64) {
         let t = (self.sim_time + seconds).max(0.0);
-        self.system.bodies[0].radius = cycle::at(t, self.system.star_base).collision_radius;
+        self.system.bodies[0].radius =
+            cycle::at(t, &self.timeline, self.system.star_base).collision_radius;
         let body = &self.system.bodies[self.ship.frame];
         // Junto a un planeta la nave gira con el: sigue sobre el mismo suelo.
         if self.ship.frame != 0 {
@@ -557,10 +588,9 @@ impl App {
         self.local_up = None;
     }
 
-    /// Salta al instante `t` del ciclo actual.
-    pub fn jump_to_cycle(&mut self, tau: f64) {
-        let start = (self.sim_time / cycle::CYCLE).floor() * cycle::CYCLE;
-        self.skip(start + tau - self.sim_time);
+    /// J: desata el final de la estrella o, si ya empezo, su renacer.
+    pub fn press_ending(&mut self) {
+        self.timeline.press(self.sim_time);
     }
 
     /// Lo que el sintetizador necesita saber: el latido se oye mas cerca de
@@ -593,11 +623,11 @@ impl App {
             "Cementerio" => 61.7,
             _ => 36.7,
         };
-        let state = cycle::at(t, self.system.star_base);
+        let state = cycle::at(t, &self.timeline, self.system.star_base);
         let heart = if state.star_radius > 0.0 { 1.0 } else { 0.0 };
         AudioParams {
             beat_phase: state.beat_phase,
-            beat_rate: beat_rate(&state),
+            beat_rate: state.beat_rate,
             beat: (beat * heart) as f32,
             throttle: self.throttle,
             wind: wind as f32,
@@ -644,6 +674,7 @@ impl App {
                 elevation: 0.2,
             },
             time,
+            act: self.timeline.since(time),
         });
         self.settings.assist = true;
         self.settings.cruise = false;
@@ -675,7 +706,7 @@ impl App {
             // La estrella del ciclo cambia de tamano: la nave choca con ella
             // (o con la zona de exclusion del agujero) a su radio de ahora.
             self.system.bodies[0].radius =
-                cycle::at(self.sim_time, self.system.star_base).collision_radius;
+                cycle::at(self.sim_time, &self.timeline, self.system.star_base).collision_radius;
             self.ship_prev = self.ship;
             self.flight = ship::step(
                 &mut self.ship,
@@ -688,6 +719,7 @@ impl App {
             self.sim_time += config::PHYSICS_DT;
             self.accumulator -= config::PHYSICS_DT;
         }
+        self.timeline.advance(self.sim_time);
         // El fuego de los motores sigue al empuje (y al crucero).
         let cruise = if self.flight.local && self.settings.cruise {
             config::CRUISE_THRUST
@@ -790,6 +822,7 @@ impl App {
         self.build_frustum(&camera, pixel_angle_of(&camera, self.renderer.height()));
         self.markers = markers(
             &self.system,
+            &self.timeline,
             t,
             &camera,
             &view,
@@ -799,7 +832,7 @@ impl App {
 
         let show_ship = self.camera_mode == CameraMode::Chase;
         let pixel_angle = 2.0 * (camera.fov_y * 0.5).tan() / self.renderer.height() as f64;
-        let state = cycle::at(t, self.system.star_base);
+        let state = cycle::at(t, &self.timeline, self.system.star_base);
         self.system.bodies[0].radius = state.collision_radius;
         let star = &self.system.bodies[0];
         self.cycle = state;
@@ -982,9 +1015,9 @@ impl App {
                 along < distance || along / p.pos.length() < cos_shadow
             });
         }
-        // La onda gravitacional sale del agujero justo despues del destello
-        // y cruza la pantalla en unos tres segundos.
-        let wave = state.tau - cycle::phase_start(cycle::Phase::Gargantua);
+        // La onda gravitacional sale del agujero cuando se abre el ojo y
+        // cruza la pantalla en unos tres segundos.
+        let wave = state.since_eye;
         self.renderer.ripple = None;
         if (0.0..3.0).contains(&wave) {
             let clip = view
@@ -1008,7 +1041,7 @@ impl App {
             time: t as f32,
             beat,
             beat_phase: state.beat_phase as f32,
-            beat_rate: beat_rate(&state) as f32,
+            beat_rate: state.beat_rate as f32,
             heart,
             star_glow: state.star_glow,
             black_hole: hole.as_ref(),
@@ -1256,6 +1289,7 @@ impl App {
     /// Coloca la nave y la camara en una vista fija.
     pub fn apply_preset(&mut self, preset: &Preset) {
         let t = preset.time;
+        self.timeline = Timeline::at(t, preset.act);
         self.cinematic_fov = if matches!(preset.shot, Shot::BlackHole) {
             Some(34.0)
         } else {
@@ -1566,6 +1600,7 @@ fn pixel_angle_of(camera: &Camera, height: usize) -> f64 {
 /// Gargantua.
 fn markers(
     system: &System,
+    timeline: &Timeline,
     t: f64,
     camera: &Camera,
     view: &View,
@@ -1573,7 +1608,7 @@ fn markers(
     height: usize,
 ) -> Vec<Marker> {
     let pixel = pixel_angle_of(camera, height);
-    let state = cycle::at(t, system.star_base);
+    let state = cycle::at(t, timeline, system.star_base);
     system
         .bodies
         .iter()
@@ -1605,12 +1640,6 @@ fn markers(
             })
         })
         .collect()
-}
-
-/// Latidos por segundo en este momento del ciclo (la derivada de la fase).
-fn beat_rate(state: &CycleState) -> f64 {
-    let later = cycle::at(state.tau + 0.01, 1.0).beat_phase;
-    ((later - state.beat_phase) / 0.01).max(0.0)
 }
 
 /// Direccion de la nave vista desde el centro de Vigia, en su propio espacio:
@@ -1892,6 +1921,7 @@ mod tests {
                 altitude: 20.0,
             },
             time: 40.0,
+            act: None,
         };
         app.apply_preset(&preset);
         let jardin = app.system.find("Jardin").unwrap();
@@ -1939,6 +1969,7 @@ mod tests {
                 altitude: 30.0,
             },
             time: 40.0,
+            act: None,
         };
         app.apply_preset(&preset);
         let jardin = app.system.find("Jardin").unwrap();

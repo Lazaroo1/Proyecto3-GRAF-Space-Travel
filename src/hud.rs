@@ -158,12 +158,14 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
         )
     };
     let lines = [
-        format!(
-            "ciclo {} / {}   {}",
-            clock(c.tau),
-            clock(crate::scene::cycle::CYCLE),
-            c.phase.name().to_uppercase()
-        ),
+        match c.phase {
+            crate::scene::cycle::Phase::Agony => "AGONIA   J: desatar el final".to_string(),
+            phase => format!(
+                "{}   {}   J: renacer",
+                phase.name().to_uppercase(),
+                clock(c.tau)
+            ),
+        },
         format!("velocidad {:.1} u/s   (max {:.0})", f.speed, f.max_speed),
         if f.braking {
             "FRENO ACTIVO [X]".to_string()
@@ -236,7 +238,7 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
             "X: freno de emergencia   Inicio: volver a Pira sin reiniciar el ciclo".to_string(),
             "L: modo local   O: crucero (rodea el planeta)   V: trayectoria".to_string(),
             "T: ajustes en vivo   M: sonido".to_string(),
-            "R: rebobinar   [ ]: -30/+30 s   J: al colapso   RePag/AvPag: vistas fijas".to_string(),
+            "R: rebobinar   [ ]: -30/+30 s   J: final / renacer   RePag/AvPag: vistas fijas".to_string(),
             "F3: wireframe   F4: colores de LOD   F5: LOD on/off   F6: otra semilla   F7: congelar frustum".to_string(),
             "F1: ayuda   F2: estadisticas   F9: ocultar todo   Esc: salir".to_string(),
         ];
