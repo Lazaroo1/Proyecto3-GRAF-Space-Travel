@@ -1,8 +1,8 @@
 //! Objetos de la superficie: modelos procedurales, distribucion y detalle.
 //!
 //! # Modelos
-//! Seis tipos, todos generados con codigo (`MeshBuilder`), cada uno en tres
-//! niveles de detalle: monolitos y obeliscos (Requiem), hongos y corales
+//! Todos generados con codigo (`MeshBuilder`), cada uno en tres niveles de
+//! detalle: agujas goticas y sus ruinas (Requiem), hongos y corales
 //! (Jardin), espinas de obsidiana (Pira) y naves naufragas (Cementerio).
 //!
 //! # Distribucion
@@ -11,7 +11,7 @@
 //! cara y la celda). El candidato se acepta con una probabilidad que sale de
 //! **ruido fractal** (asi los objetos forman grupos y claros, no una lluvia
 //! pareja) multiplicado por lo que dice el terreno en ese punto: altura,
-//! pendiente y mascaras (no hay hongos en la lava ni monolitos en el hielo).
+//! pendiente y mascaras (no hay hongos en la lava ni agujas en el hielo).
 //! Todo depende solo de la semilla: la misma semilla, las mismas ubicaciones.
 //!
 //! # Orientacion
@@ -22,7 +22,7 @@
 //!
 //! # Nivel de detalle
 //! Cada frame se elige el nivel por el **tamano en pantalla** (el radio de la
-//! esfera envolvente en pixeles), no por la distancia: un monolito grande
+//! esfera envolvente en pixeles), no por la distancia: una aguja grande
 //! conserva su detalle mas lejos que un hongo, y todo se adapta solo a la
 //! resolucion. Se descartan los que se verian de menos de un par de pixeles,
 //! los que quedan detras del horizonte del planeta y los que caen fuera del
@@ -40,8 +40,8 @@ use crate::terrain::{HeightField, TerrainSample, cube_to_sphere};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PropKind {
-    Monolith,
-    Obelisk,
+    Spire,
+    Ruin,
     Mushroom,
     Coral,
     Spike,
@@ -51,8 +51,8 @@ pub enum PropKind {
 
 impl PropKind {
     pub const ALL: [Self; 7] = [
-        Self::Monolith,
-        Self::Obelisk,
+        Self::Spire,
+        Self::Ruin,
         Self::Mushroom,
         Self::Coral,
         Self::Spike,
@@ -73,7 +73,7 @@ impl PropKind {
     pub fn visibility(self) -> f32 {
         match self {
             Self::Wreck | Self::Boulder => 1.0,
-            Self::Monolith | Self::Obelisk => 0.75,
+            Self::Spire | Self::Ruin => 0.75,
             Self::Mushroom | Self::Coral | Self::Spike => 0.5,
         }
     }
@@ -102,9 +102,17 @@ pub const CORAL_TOP: f32 = 12.9;
 /// apoyado en `y = 0`.
 const HULL: f32 = 3.2;
 
+/// Pisos de las agujas de Requiem: altura de abajo y de arriba y radios
+/// (el shader abre ventanas de luz en cada piso), y altura de la punta.
+pub const SPIRE_TIERS: [(f32, f32, f32, f32); 3] = [
+    (1.6, 9.1, 1.6, 1.3),
+    (9.1, 15.1, 1.15, 0.9),
+    (15.1, 20.1, 0.82, 0.6),
+];
+pub const SPIRE_TIP: f32 = 29.5;
+
 // Colores de vertice: algunos shaders los usan como marcas.
 const STONE: Vec3 = Vec3::new(0.0, 0.0, 0.0);
-const GLYPH_FACE: Vec3 = Vec3::new(0.0, 0.0, 1.0);
 const STEM: Vec3 = Vec3::new(0.72, 0.66, 0.6);
 const CAP: Vec3 = Vec3::new(0.36, 0.05, 0.3);
 /// Bulbos del coral (el verde en 0 marca la punta que brilla).
@@ -118,76 +126,105 @@ fn tilted(angle: f32) -> [Vec3; 3] {
     [Vec3::new(c, s, 0.0), Vec3::new(-s, c, 0.0), Vec3::Z]
 }
 
-fn monolith(detail: usize) -> Mesh {
+/// Aguja gotica de Requiem: pisos octogonales que se afinan, con cornisas,
+/// pinaculos alrededor de la base y una punta larga. `broken`: la de una
+/// ruina, partida a media altura y con los pedazos al pie.
+fn spire(detail: usize, broken: bool) -> Mesh {
     let mut b = MeshBuilder::new();
     b.color(STONE);
-    // Losa principal: el frente y la espalda (las caras anchas, sus primeros
-    // ocho vertices) llevan el glifo del ojo.
-    let slab = b.cuboid(
-        Vec3::new(0.0, 7.5, 0.0),
-        [Vec3::X, Vec3::Y, Vec3::Z],
-        Vec3::new(1.2, 7.5, 0.45),
+    let sides = [4, 8, 8][detail];
+    // Zocalo, hundido en el suelo.
+    b.frustum(
+        Vec3::new(0.0, -1.0, 0.0),
+        Vec3::Y,
+        2.6,
+        2.5,
+        2.1,
+        sides,
+        false,
+        (false, true),
     );
-    b.paint(slab..slab + 8, GLYPH_FACE);
-    if detail >= 1 {
-        // Remate roto e inclinado.
-        b.cuboid(
-            Vec3::new(0.15, 15.65, 0.0),
-            tilted(0.22),
-            Vec3::new(1.0, 0.8, 0.38),
+    let mut y = SPIRE_TIERS[0].0;
+    let count = if broken { 2 } else { 3 };
+    for &(bottom, top, r0, r1) in &SPIRE_TIERS[..count] {
+        let h = top - bottom;
+        b.frustum(Vec3::new(0.0, bottom, 0.0), Vec3::Y, h, r0, r1, sides, false, (false, true));
+        if detail >= 1 {
+            // Cornisa: un anillo un poco mas ancho que remata el piso.
+            b.frustum(
+                Vec3::new(0.0, top - 0.3, 0.0),
+                Vec3::Y,
+                0.42,
+                r1 + 0.32,
+                r1 + 0.12,
+                sides,
+                false,
+                (true, true),
+            );
+        }
+        y = top;
+    }
+    if broken {
+        // Remate quebrado e inclinado, y la punta caida al pie.
+        b.frustum(
+            Vec3::new(0.15, y, 0.0),
+            Vec3::new(0.2, 1.0, 0.06).normalize(),
+            2.0,
+            0.85,
+            0.4,
+            sides,
+            false,
+            (false, true),
         );
+        if detail >= 1 {
+            b.frustum(
+                Vec3::new(2.0, 0.4, 1.0),
+                Vec3::new(1.0, 0.12, 0.35).normalize(),
+                7.5,
+                0.55,
+                0.0,
+                sides,
+                false,
+                (true, false),
+            );
+            b.cuboid(Vec3::new(-2.3, 0.5, -1.6), tilted(-1.1), Vec3::new(0.55, 0.9, 0.5));
+        }
+    } else {
+        b.frustum(
+            Vec3::new(0.0, y, 0.0),
+            Vec3::Y,
+            SPIRE_TIP - y,
+            0.55,
+            0.0,
+            sides,
+            false,
+            (false, false),
+        );
+    }
+    if detail >= 1 {
+        // Pinaculos alrededor de la base.
+        for k in 0..4 {
+            let a = (k as f32 + 0.5) * TAU / 4.0;
+            let at = Vec3::new(a.cos() * 2.4, 1.3, a.sin() * 2.4);
+            b.frustum(at, Vec3::Y, 2.4, 0.36, 0.3, sides.min(6), false, (false, true));
+            b.frustum(at + Vec3::Y * 2.4, Vec3::Y, 3.4, 0.34, 0.0, sides.min(6), false, (false, false));
+        }
     }
     if detail >= 2 {
-        // Escombros al pie.
-        // El suelo queda en y = 0.8 (el monolito se hunde eso).
-        b.cuboid(
-            Vec3::new(1.9, 1.0, 0.9),
-            tilted(0.5),
-            Vec3::new(0.5, 0.35, 0.35),
-        );
-        b.cuboid(
-            Vec3::new(-1.7, 0.95, -0.7),
-            tilted(-0.4),
-            Vec3::new(0.35, 0.3, 0.5),
-        );
+        // Arbotantes: lajas inclinadas del suelo contra el primer piso.
+        for k in 0..4 {
+            let a = k as f32 * TAU / 4.0;
+            let radial = Vec3::new(a.cos(), 0.0, a.sin());
+            let long = (Vec3::Y * 5.6 - radial * 1.9).normalize();
+            let side = Vec3::Y.cross(radial).normalize();
+            let normal = long.cross(side);
+            b.cuboid(
+                radial * 2.45 + Vec3::Y * 2.9,
+                [normal, long, side],
+                Vec3::new(0.45, 3.0, 0.13),
+            );
+        }
     }
-    b.build()
-}
-
-fn obelisk(detail: usize) -> Mesh {
-    let mut b = MeshBuilder::new();
-    b.color(STONE);
-    let base = if detail >= 1 {
-        b.cuboid(
-            Vec3::new(0.0, 0.6, 0.0),
-            [Vec3::X, Vec3::Y, Vec3::Z],
-            Vec3::new(1.6, 0.6, 1.6),
-        );
-        1.2
-    } else {
-        0.0
-    };
-    // Fuste de seccion cuadrada (cuatro lados) y piramidion.
-    b.frustum(
-        Vec3::new(0.0, base, 0.0),
-        Vec3::Y,
-        16.0,
-        1.25,
-        0.85,
-        4,
-        false,
-        (false, false),
-    );
-    b.frustum(
-        Vec3::new(0.0, base + 16.0, 0.0),
-        Vec3::Y,
-        2.2,
-        0.85,
-        0.0,
-        4,
-        false,
-        (false, false),
-    );
     b.build()
 }
 
@@ -488,8 +525,8 @@ pub fn build_models() -> Vec<PropModel> {
         .iter()
         .map(|&kind| {
             let make = |detail: usize| match kind {
-                PropKind::Monolith => monolith(detail),
-                PropKind::Obelisk => obelisk(detail),
+                PropKind::Spire => spire(detail, false),
+                PropKind::Ruin => spire(detail, true),
                 PropKind::Mushroom => mushroom(detail),
                 PropKind::Coral => coral(detail),
                 PropKind::Spike => spikes(detail),
@@ -834,7 +871,7 @@ pub fn rules_for(planet: &str) -> Vec<Scatter> {
         // Las ruinas: en tierra firme y plana, nunca en las llanuras de hielo.
         "Requiem" => vec![
             Scatter {
-                kind: PropKind::Monolith,
+                kind: PropKind::Spire,
                 cells: 22,
                 scale: (0.8, 1.3),
                 sink: 0.8,
@@ -847,7 +884,7 @@ pub fn rules_for(planet: &str) -> Vec<Scatter> {
                 },
             },
             Scatter {
-                kind: PropKind::Obelisk,
+                kind: PropKind::Ruin,
                 cells: 14,
                 scale: (0.8, 1.2),
                 sink: 0.5,

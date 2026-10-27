@@ -215,10 +215,10 @@ pub const PRESETS: [Preset; 25] = [
         act: None,
     },
     Preset {
-        name: "10_monolito",
+        name: "10_agujas",
         shot: Shot::Landmark {
             body: "Requiem",
-            kind: PropKind::Monolith,
+            kind: PropKind::Spire,
             distance: 16.0,
             sun: 0.42,
         },
@@ -1497,23 +1497,13 @@ impl App {
         let center = body.position(t);
         let rotation = body.rotation(t);
         let to_star = (self.system.bodies[0].position(t) - center).normalize();
-        // Vertical, direccion horizontal del sol y frente del objeto.
+        // Vertical y direccion horizontal del sol.
         let axes = |p: &Instance| {
             let up = rotation.rotate(p.position.normalize());
             let sun = (to_star - up * to_star.dot(up)).normalize();
-            let front = rotation.rotate(p.rotation.rotate(DVec3::Z));
-            (up, sun, front)
+            (up, sun)
         };
-        let score = |p: &Instance| {
-            let (up, sun, front) = axes(p);
-            let elevation = (up.dot(to_star) - sun_height).abs();
-            let facing = if kind == PropKind::Monolith {
-                (front.dot(sun).abs() - 0.6).abs()
-            } else {
-                0.0
-            };
-            elevation + facing
-        };
+        let score = |p: &Instance| (axes(p).0.dot(to_star) - sun_height).abs();
         let Some(best) = self.system.props[index]
             .instances
             .iter()
@@ -1524,21 +1514,16 @@ impl App {
             let pos = center + to_star * (body.radius * 3.0);
             return (pos, center, DVec3::Y);
         };
-        let (up, sun, front) = axes(best);
+        let (up, sun) = axes(best);
         let base = center + rotation.rotate(best.position);
         let model = &self.system.prop_models[kind.index()].lods[0];
         let scale = best.scale as f64;
         let side = up.cross(sun);
-        let (target, directions) = if kind == PropKind::Monolith {
-            // Frente al glifo (a 10.2 unidades del suelo), primero la cara
-            // iluminada.
-            let face = if front.dot(sun) >= 0.0 { front } else { -front };
-            (base + up * (10.2 * scale), vec![face, -face])
-        } else {
+        let (target, directions) = {
             let around = [
                 60.0f64, -60.0, 100.0, -100.0, 30.0, -30.0, 140.0, -140.0, 0.0, 180.0,
             ];
-            let dirs = around
+            let dirs: Vec<DVec3> = around
                 .iter()
                 .map(|a| sun * a.to_radians().cos() + side * a.to_radians().sin())
                 .collect();

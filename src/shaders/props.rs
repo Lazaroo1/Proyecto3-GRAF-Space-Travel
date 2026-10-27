@@ -1,15 +1,15 @@
 //! Shaders de los objetos de la superficie.
 //!
-//! Dos llevan **mapeo de normales**: los monolitos (un ojo tallado en la
-//! piedra) y los naufragios (las placas del casco). La normal del mapa vive
+//! Los naufragios llevan **mapeo de normales** (las placas del casco). La normal del mapa vive
 //! en el espacio tangente de la cara; `Fragment::perturb` la lleva al mundo
 //! con la base TBN interpolada. El nivel de mipmap sale de cuanto mide un
 //! pixel sobre la superficie: de lejos se lee el promedio, que no parpadea.
 
 use super::{Fragment, Uniforms, detail, pbr, rings};
 use crate::math::blackbody::planckian_rgb;
-use crate::math::{Vec2, Vec3, smoothstep};
-use crate::scene::props::{CORAL_TOP, PropKind, WRECK_UV_SIZE};
+use crate::math::{Vec3, smoothstep};
+use crate::scene::props::{CORAL_TOP, PropKind, SPIRE_TIERS, SPIRE_TIP, WRECK_UV_SIZE};
+use std::f32::consts::TAU;
 
 /// Datos de una instancia para su shader.
 #[derive(Clone, Copy, Debug)]
@@ -25,11 +25,6 @@ pub struct PropStyle {
     pub disc: f32,
 }
 
-/// Lado del glifo en las caras anchas del monolito (que miden 2.4 x 15), en
-/// unidades del modelo, y altura de la cara (en v) donde empieza.
-const GLYPH_SIZE: f32 = 2.4;
-const GLYPH_BOTTOM: f32 = 0.6;
-const GLYPH_ASPECT: f32 = 15.0 / GLYPH_SIZE;
 /// Centro del sombrero de los hongos (en el modelo) y altura del anillo que
 /// brilla en el tallo.
 const CAP_CENTER: Vec3 = Vec3::new(0.69, 8.6, 0.0);
@@ -58,8 +53,7 @@ pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
         sun: u.sun_light * (planet_shadow(style, f.pos, l) * rings),
     };
     match style.kind {
-        PropKind::Monolith => monolith(&c),
-        PropKind::Obelisk => obelisk(&c),
+        PropKind::Spire | PropKind::Ruin => spire(&c),
         PropKind::Mushroom => mushroom(&c),
         PropKind::Coral => coral(&c),
         PropKind::Spike => spike(&c),
@@ -82,7 +76,7 @@ fn lit(c: &Ctx, albedo: Vec3, n: Vec3, specular: f32, shininess: f32, wrap: f32)
 /// tape. El rayo hacia la estrella pasa a una distancia `d` del centro: si es
 /// menor que el radio, el planeta lo corta. El borde se suaviza con el tamano
 /// del disco de la estrella proyectado a esa distancia (la penumbra). Cada
-/// pixel lo calcula: la punta de un monolito sigue al sol cuando su base ya
+/// pixel lo calcula: la punta de una aguja sigue al sol cuando su base ya
 /// esta de noche.
 #[inline]
 fn planet_shadow(style: &PropStyle, pos: Vec3, to_light: Vec3) -> f32 {
@@ -105,48 +99,49 @@ fn pixel_footprint(c: &Ctx) -> f32 {
     c.f.pos.length() * c.u.pixel_angle / (ndv * c.scale)
 }
 
-/// Monolito de obsidiana. En las caras anchas de la losa (marcadas con el
-/// color de vertice azul) hay un ojo tallado que late con la estrella.
-fn monolith(c: &Ctx) -> Vec3 {
+/// Aguja gotica: piedra oscura azulada, escarcha en lo que mira hacia
+/// arriba (cornisas y remates) y en cada cara del fuste una ventana de luz
+/// fria. La luz sube por la aguja con cada latido, del pie a la punta, como
+/// una senal hacia donde va a nacer Gargantua; despues del colapso se queda
+/// encendida.
+fn spire(c: &Ctx) -> Vec3 {
     let (f, u) = (c.f, c.u);
-    let mut n = f.normal;
-    let mut glow = 0.0;
-    // Lo tallado recibe menos luz del cielo y de los rebotes: mas oscuro.
-    let mut cavity = 1.0;
-    if f.color.z > 0.5 {
-        let gv = (f.uv.y - GLYPH_BOTTOM) * GLYPH_ASPECT;
-        if (0.0..1.0).contains(&gv) {
-            let footprint = pixel_footprint(c) / GLYPH_SIZE;
-            let texel = u
-                .textures
-                .eye_glyph
-                .sample(Vec2::new(f.uv.x, gv), footprint);
-            n = f.perturb(texel.normal, 1.0);
-            glow = texel.glow;
-            cavity = texel.height.clamp(0.4, 1.0);
+    let p = f.local;
+    let up = f.object_to_world.mul_vec(Vec3::Y);
+    let facing_up = f.normal.dot(up);
+    let grain = u.noise.fbm(Vec3::new(p.x * 1.5, p.y * 0.35, p.z * 1.5), 3) * 0.5 + 0.5;
+    let frost = smoothstep(0.35, 0.8, facing_up + 0.25 * (grain - 0.5))
+        + 0.25 * smoothstep(2.5, 0.0, p.y);
+    let stone = Vec3::new(0.030, 0.036, 0.048) * (0.65 + 0.7 * grain);
+    let ice = Vec3::new(0.50, 0.62, 0.78);
+    let albedo = stone.lerp(ice, frost.min(1.0));
+
+    // Ventanas: una ranura vertical en el centro de cada cara del fuste.
+    let mut window = 0.0;
+    let radius = p.x.hypot(p.z);
+    for &(bottom, top, r0, r1) in &SPIRE_TIERS {
+        if p.y > bottom && p.y < top {
+            let along = (p.y - bottom) / (top - bottom);
+            let wall = r0 + (r1 - r0) * along;
+            if (radius - wall * 0.92).abs() < 0.25 {
+                let face = (p.z.atan2(p.x) / (TAU / 8.0)).rem_euclid(1.0);
+                let slit = smoothstep(0.09, 0.04, (face - 0.5).abs());
+                window = slit * smoothstep(0.0, 0.12, along) * smoothstep(1.0, 0.8, along);
+            }
         }
     }
-    // Vetas de la piedra: un poco mas clara en bandas verticales irregulares.
-    let veins = u.noise.fbm(
-        Vec3::new(f.local.x * 2.0, f.local.y * 0.25, f.local.z * 2.0),
-        3,
-    ) * 0.5
-        + 0.5;
-    let albedo = Vec3::new(0.012, 0.010, 0.016) * ((0.7 + 0.8 * veins) * cavity);
-    let emission = Vec3::new(1.0, 0.07, 0.12) * (glow * (0.5 + 1.6 * u.beat) * u.gains.requiem);
-    lit(c, albedo, n, 0.6, 120.0, 0.0) + emission
-}
-
-/// Obelisco de piedra gastada con bandas grabadas cada dos unidades.
-fn obelisk(c: &Ctx) -> Vec3 {
-    let (f, u) = (c.f, c.u);
-    let wear = u.noise.fbm(f.local * 0.8, 3) * 0.5 + 0.5;
-    // Bandas de 0.3 unidades cada 2: de lejos se ve su promedio (8%).
-    let phase = (f.local.y * 0.5).fract();
-    let sharp = smoothstep(0.08, 0.0, phase.min(1.0 - phase));
-    let band = 0.08 + (sharp - 0.08) * smoothstep(0.5, 0.15, pixel_footprint(c));
-    let albedo = Vec3::new(0.16, 0.15, 0.17) * (0.7 + 0.4 * wear) * (1.0 - 0.5 * band);
-    lit(c, albedo, f.normal, 0.08, 16.0, 0.0)
+    // La punta brilla como un faro.
+    let tip = smoothstep(SPIRE_TIP - 3.0, SPIRE_TIP, p.y);
+    let pulse = u.beat_at(p.y * 0.045);
+    let after = (u.biolum - 1.0).max(0.0) * 0.5;
+    let light = (0.12 + 1.5 * pulse + after) * u.gains.requiem;
+    let cold = Vec3::new(0.30, 0.62, 1.0);
+    let emission = cold * ((window * 1.4 + tip * 0.8) * light);
+    let cold = Ctx {
+        sun: super::requiem::cold_light(c.sun),
+        ..*c
+    };
+    lit(&cold, albedo, f.normal, 0.3 + 0.5 * frost.min(1.0), 60.0, 0.0) + emission
 }
 
 /// Hongo bioluminiscente: tallo palido y translucido con un anillo que
