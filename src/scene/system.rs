@@ -179,6 +179,25 @@ pub struct System {
     pub eye_body: usize,
     /// Cuerpo con anillos (Cementerio).
     pub ring_body: usize,
+    /// Un lugar para visitar en cada planeta con superficie.
+    pub sites: Vec<Site>,
+}
+
+/// Un lugar para visitar en la superficie de un planeta, en el espacio del
+/// planeta: su vertical y hacia donde mirar al llegar.
+#[derive(Clone, Copy, Debug)]
+pub struct Site {
+    pub body: usize,
+    pub name: &'static str,
+    pub normal: DVec3,
+    pub forward: DVec3,
+}
+
+impl Site {
+    /// Vertical, frente y derecha del lugar (en el espacio del planeta).
+    pub fn frame(&self) -> (DVec3, DVec3, DVec3) {
+        (self.normal, self.forward, self.forward.cross(self.normal))
+    }
 }
 
 impl System {
@@ -361,8 +380,10 @@ impl System {
             prop_seed: config::PROP_SEED,
             star_base: 320.0,
             eye_body: 3,
+            sites: Vec::new(),
             ring_body: 5,
         };
+        system.sites = system.build_sites();
         system.scatter_props(config::PROP_SEED);
         Ok(system)
     }
@@ -380,6 +401,45 @@ impl System {
     /// Indice de un cuerpo por nombre.
     pub fn find(&self, name: &str) -> Option<usize> {
         self.bodies.iter().position(|b| b.name == name)
+    }
+
+    /// Los lugares para visitar. En Pira (que le da siempre la misma cara a
+    /// la estrella) y en Requiem quedan cerca del terminador: la estrella baja
+    /// en el horizonte marca el relieve. En Cementerio, al pie de la baliza.
+    fn build_sites(&self) -> Vec<Site> {
+        let t = 40.0;
+        let local = |index: usize, normal: DVec3, toward: DVec3| {
+            let inv = self.bodies[index].rotation(t).conjugate();
+            let forward = (toward - normal * toward.dot(normal)).normalize();
+            (inv.rotate(normal), inv.rotate(forward))
+        };
+        let axes = |index: usize| {
+            let center = self.bodies[index].position(t);
+            let to_star = (self.bodies[0].position(t) - center).normalize();
+            let side = to_star.cross(DVec3::Y).normalize();
+            (to_star, side, side.cross(to_star).normalize())
+        };
+        let mut sites = Vec::new();
+        if let Some(i) = self.find("Jardin") {
+            let (normal, forward, _) = self.garden_grove_frame();
+            sites.push(Site { body: i, name: "El claro", normal, forward });
+        }
+        if let Some(i) = self.find("Pira") {
+            let (to_star, side, up) = axes(i);
+            let (normal, forward) = local(i, (to_star * 0.42 + side * 0.9 + up * 0.1).normalize(), to_star);
+            sites.push(Site { body: i, name: "Los geiseres", normal, forward });
+        }
+        if let Some(i) = self.find("Requiem") {
+            let (to_star, side, up) = axes(i);
+            let (normal, forward) = local(i, (to_star * 0.35 - side * 0.85 + up * 0.4).normalize(), to_star);
+            sites.push(Site { body: i, name: "La catedral", normal, forward });
+        }
+        if let Some(i) = self.find("Cementerio") {
+            let normal = DVec3::new(0.32, 0.22, 0.92).normalize();
+            let forward = normal.cross(DVec3::Y).normalize();
+            sites.push(Site { body: i, name: "La baliza", normal, forward });
+        }
+        sites
     }
 
     /// Bioma de llegada, fijo en el espacio local de Jardín. El claro y sus

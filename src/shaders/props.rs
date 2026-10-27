@@ -7,8 +7,8 @@
 
 use super::{Fragment, Uniforms, detail, pbr, rings};
 use crate::math::blackbody::planckian_rgb;
-use crate::math::{Vec3, smoothstep};
-use crate::scene::props::{CORAL_TOP, PropKind, SPIRE_TIERS, SPIRE_TIP, WRECK_UV_SIZE};
+use crate::math::{Vec2, Vec3, smoothstep};
+use crate::scene::props::{CORAL_TOP, PropKind, SPIRE_TIERS, SPIRE_TIP, VENT_TOP, WRECK_UV_SIZE};
 use std::f32::consts::TAU;
 
 /// Datos de una instancia para su shader.
@@ -23,6 +23,25 @@ pub struct PropStyle {
     pub occluder: f32,
     /// Radio angular del disco de la estrella visto desde el objeto.
     pub disc: f32,
+    /// Numero al azar de la instancia (0 a 1): cada geiser hace erupcion a
+    /// su ritmo.
+    pub seed: f32,
+}
+
+/// Que tan cerca esta la nave de `pos` (relativo a la camara): 0 a `far`
+/// unidades o mas, 1 a `close` o menos.
+#[inline]
+pub fn near_ship(u: &Uniforms, pos: Vec3, far: f32, close: f32) -> f32 {
+    smoothstep(far, close, (pos - u.ship).length())
+}
+
+/// Actividad de un geiser (0 a 1): cada uno hace erupcion solo de vez en
+/// cuando, a su ritmo, y despierta del todo cuando la nave se le acerca.
+pub fn vent_activity(time: f32, seed: f32, ship_distance: f32) -> f32 {
+    let cycle = (time * (0.05 + 0.04 * seed) + seed * 7.3).fract();
+    let burst = smoothstep(0.0, 0.04, cycle) * smoothstep(0.32, 0.12, cycle);
+    let near = smoothstep(230.0, 70.0, ship_distance);
+    (0.12 + 0.88 * burst).max(near)
 }
 
 /// Centro del sombrero de los hongos (en el modelo) y altura del anillo que
@@ -59,7 +78,8 @@ pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
         PropKind::Spike => spike(&c),
         PropKind::Wreck => wreck(&c),
         PropKind::Boulder => boulder(&c),
-        PropKind::Beacon => beacon(&c),
+        PropKind::Beacon => beacon(&c, style),
+        PropKind::Vent => vent(&c, style),
     }
 }
 
@@ -135,7 +155,10 @@ fn spire(c: &Ctx) -> Vec3 {
     let tip = smoothstep(SPIRE_TIP - 3.0, SPIRE_TIP, p.y);
     let pulse = u.beat_at(p.y * 0.045);
     let after = (u.biolum - 1.0).max(0.0) * 0.5;
-    let light = (0.12 + 1.5 * pulse + after) * u.gains.requiem;
+    // Despierta cuando la nave se acerca: la luz se enciende primero en lo
+    // que le queda mas cerca y sube por la aguja.
+    let awake = near_ship(u, f.pos, 260.0, 40.0);
+    let light = (0.12 + 1.5 * pulse + after + awake * (2.5 + 1.5 * pulse)) * u.gains.requiem;
     let cold = Vec3::new(0.30, 0.62, 1.0);
     let emission = cold * ((window * 1.4 + tip * 0.8) * light);
     let cold = Ctx {
@@ -147,12 +170,12 @@ fn spire(c: &Ctx) -> Vec3 {
 
 /// La baliza: metal oscuro y una lampara roja que destella cada 2.4 s,
 /// como si siguiera transmitiendo la historia del exodo.
-fn beacon(c: &Ctx) -> Vec3 {
+fn beacon(c: &Ctx, _style: &PropStyle) -> Vec3 {
     let (f, u) = (c.f, c.u);
     let wear = u.noise.fbm(f.local * 0.6, 3) * 0.5 + 0.5;
     let albedo = Vec3::new(0.10, 0.10, 0.11).lerp(Vec3::new(0.22, 0.12, 0.07), wear * 0.6);
     let lamp = f.color.x > 0.5 && f.color.y < 0.5;
-    let flash = beacon_flash(u.time);
+    let flash = beacon_flash(u.time, near_ship(u, f.pos, 300.0, 60.0));
     let emission = if lamp {
         Vec3::new(1.0, 0.06, 0.03) * (0.3 + 12.0 * flash)
     } else {
@@ -161,10 +184,37 @@ fn beacon(c: &Ctx) -> Vec3 {
     lit(c, albedo, f.normal, 0.5, 40.0, 0.0) + emission * u.gains.cementerio
 }
 
-/// Destello de la baliza: sube de golpe y se apaga en medio segundo.
-pub fn beacon_flash(time: f32) -> f32 {
+/// Destello de la baliza: sube de golpe y se apaga en medio segundo. Con
+/// la nave cerca, entre destello y destello titila rapido: te detecto.
+pub fn beacon_flash(time: f32, near: f32) -> f32 {
     let phase = (time / BEACON_PERIOD).fract() * BEACON_PERIOD;
-    (-phase / 0.18).exp()
+    let quick = (time / 0.45).fract() * 0.45;
+    (-phase / 0.18).exp().max(near * (-quick / 0.08).exp() * 0.6)
+}
+
+/// Geiser de Pira: roca negra que se calienta hacia la boca, grietas que
+/// brillan y la lava de la boca, todo segun su actividad.
+fn vent(c: &Ctx, style: &PropStyle) -> Vec3 {
+    let (f, u) = (c.f, c.u);
+    let footprint = pixel_footprint(c);
+    let tex = detail::rock(f, u, 0.3, footprint, 0.8);
+    let top = f.object_to_world.mul_vec(Vec3::Y * (VENT_TOP * style.scale));
+    let mouth = f.pos - f.object_to_world.mul_vec(f.local * style.scale) + top;
+    let activity = vent_activity(u.time, style.seed, (mouth - u.ship).length());
+    let pool = f.color.x > 0.5 && f.color.y > 0.5;
+    if pool {
+        let churn = u.noise.fbm(f.local * 2.5 + Vec3::new(0.0, u.time * 0.8, 0.0), 3) * 0.5 + 0.5;
+        let temperature = 1300.0 + 900.0 * activity * (0.6 + 0.4 * churn);
+        return planckian_rgb(temperature) * ((1.5 + 6.0 * activity) * (0.6 + 0.4 * churn) * u.gains.pira);
+    }
+    let heat = smoothstep(3.5, VENT_TOP, f.local.y);
+    let cracks = 1.0 - u.noise.noise(f.local * 1.1).abs();
+    let crack = smoothstep(0.965, 0.995, cracks) * heat * heat;
+    let albedo = tex.color * Vec3::new(0.06, 0.05, 0.048);
+    let lit = pbr::shade_light(f, u, albedo, 0.75, 0.05, tex.normal, tex.ao, c.sun);
+    let glow = planckian_rgb(1200.0 + 500.0 * activity)
+        * ((crack * 2.0 + heat.powi(4) * 0.25) * (0.3 + activity) * u.gains.pira);
+    lit + glow
 }
 
 /// Cada cuanto destella la baliza (y sale una onda).
@@ -261,7 +311,31 @@ fn wreck(c: &Ctx) -> Vec3 {
     albedo = albedo.lerp(Vec3::new(0.02, 0.018, 0.015), burn * 0.75) * texel.height.clamp(0.8, 1.0);
     // Las paredes de adentro (color de vertice oscuro) casi no reciben luz.
     albedo = albedo * f.color.x;
-    lit(c, albedo, n, 0.6 * (1.0 - rust), 60.0, 0.0)
+    // Ventanillas en filas a lo largo del casco: cuando la nave pasa cerca
+    // se encienden, parpadeando como si les quedara un poco de energia.
+    let awake = near_ship(u, f.pos, 160.0, 30.0);
+    let mut glow = Vec3::ZERO;
+    if awake > 0.0 && f.color.x > 0.5 {
+        let grid = Vec2::new(f.uv.x * 6.0, f.uv.y * 3.0);
+        let id = Vec2::new(grid.x.floor(), grid.y.floor());
+        let cell = Vec2::new(grid.x - id.x, grid.y - id.y);
+        // Solo unas pocas ventanillas siguen vivas.
+        let alive = ((id.x * 12.9898 + id.y * 78.233).sin() * 43_758.547).fract().abs() < 0.22;
+        let window = if alive {
+            smoothstep(0.22, 0.14, (cell.x - 0.5).abs()) * smoothstep(0.14, 0.08, (cell.y - 0.5).abs())
+        } else {
+            0.0
+        };
+        let flicker = (u.time * 9.0 + id.x * 3.1 + id.y * 7.7).sin() * (u.time * 2.3 + id.x).sin();
+        let on = smoothstep(-0.3, 0.6, flicker);
+        let tint = if (id.x + id.y) % 3.0 < 1.0 {
+            Vec3::new(1.0, 0.35, 0.12)
+        } else {
+            Vec3::new(0.65, 0.85, 1.0)
+        };
+        glow = tint * (window * on * awake * 1.6 * u.gains.cementerio);
+    }
+    lit(c, albedo, n, 0.6 * (1.0 - rust), 60.0, 0.0) + glow
 }
 
 fn boulder(c: &Ctx) -> Vec3 {

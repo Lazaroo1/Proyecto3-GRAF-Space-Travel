@@ -12,9 +12,9 @@ use std::f64::consts::TAU;
 use super::System;
 use super::props::{self, PropSet};
 use crate::config;
-use crate::math::hash_u32;
+use crate::math::{DVec3, hash_u32};
 use crate::shaders::AtmosphereModel;
-use crate::terrain::Terrain;
+use crate::terrain::{HeightField, Terrain};
 
 impl System {
     /// Los objetos del cuerpo `index` con la semilla `seed`. Cada cuerpo
@@ -27,17 +27,16 @@ impl System {
         let rules = props::rules_for(body.name);
         let planet_seed = hash_u32(seed ^ hash_u32(index as u32 + 1));
         let mut instances = props::scatter(body.radius, &**field, &rules, planet_seed);
-        if body.name == "Jardin" {
-            props::garden_grove(
-                &mut instances,
-                body.radius,
-                &**field,
-                planet_seed,
-                self.garden_grove_frame(),
-            );
-        }
-        if body.name == "Cementerio" {
-            props::beacon_site(&mut instances, body.radius, &**field);
+        if let Some(site) = self.sites.iter().find(|s| s.body == index) {
+            let frame = site.frame();
+            let place = match body.name {
+                "Jardin" => props::garden_grove,
+                "Pira" => props::vent_field,
+                "Requiem" => props::cathedral,
+                "Cementerio" => props::beacon_site,
+                _ => |_: &mut Vec<_>, _: f64, _: &dyn HeightField, _: u32, _: (DVec3, DVec3, DVec3)| {},
+            };
+            place(&mut instances, body.radius, &**field, planet_seed, frame);
         }
         PropSet::new(instances, &self.prop_models)
     }
@@ -113,6 +112,36 @@ mod tests {
 
     fn system() -> System {
         System::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("assets")).unwrap()
+    }
+
+    #[test]
+    fn every_site_has_its_landmarks_and_vents_wake_up_near_the_ship() {
+        use crate::scene::props::PropKind;
+        let sys = system();
+        assert_eq!(sys.sites.len(), 4);
+        for (body, kind, count) in [
+            ("Pira", PropKind::Vent, 12),
+            ("Requiem", PropKind::Spire, 10),
+            ("Cementerio", PropKind::Beacon, 1),
+        ] {
+            let i = sys.find(body).unwrap();
+            let site = sys.sites.iter().find(|s| s.body == i).unwrap();
+            // Los objetos del lugar estan alrededor de su centro.
+            let close = sys.props[i]
+                .instances
+                .iter()
+                .filter(|p| p.kind == kind)
+                .filter(|p| (p.position.normalize() - site.normal).length() * sys.bodies[i].radius < 160.0)
+                .count();
+            assert!(close >= count, "{body}: {close}");
+        }
+        // Un geiser lejos de la nave casi siempre esta tranquilo; cerca, en
+        // erupcion.
+        let calm = (0..200)
+            .filter(|k| crate::shaders::vent_activity(*k as f32 * 0.37, 0.3, 1000.0) < 0.2)
+            .count();
+        assert!(calm > 100, "{calm}");
+        assert_eq!(crate::shaders::vent_activity(12.0, 0.3, 20.0), 1.0);
     }
 
     #[test]

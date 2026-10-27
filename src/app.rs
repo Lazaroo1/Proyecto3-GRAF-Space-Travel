@@ -11,7 +11,7 @@ use crate::audio::AudioParams;
 use crate::config;
 use crate::math::blackbody::planckian_rgb;
 use crate::math::geodesic::LensTable;
-use crate::math::{DMat3, DMat4, DQuat, DVec3, Vec3, smoothing};
+use crate::math::{DMat3, DMat4, DQuat, DVec3, Vec3, hash_u32, smoothing, smoothstep};
 use crate::render::shadow::ShadowMap;
 use crate::render::{Draw, Particle, Renderer, Ripple, Stats, View};
 use crate::scene::camera::{Camera, CameraMode};
@@ -63,6 +63,13 @@ pub struct DemoTour {
 #[derive(Clone, Copy, Debug)]
 pub enum Shot {
     Garden,
+    /// Sobre el lugar de un planeta, a `altitude` del suelo y `back` antes
+    /// del centro, mirando hacia el.
+    Site {
+        body: &'static str,
+        altitude: f64,
+        back: f64,
+    },
     BlackHole,
     Star,
     /// Todo el sistema desde arriba.
@@ -124,7 +131,7 @@ pub struct Preset {
     pub act: Option<f64>,
 }
 
-pub const PRESETS: [Preset; 26] = [
+pub const PRESETS: [Preset; 29] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
@@ -340,11 +347,41 @@ pub const PRESETS: [Preset; 26] = [
     },
     Preset {
         name: "26_baliza",
-        shot: Shot::Landmark {
+        shot: Shot::Site {
             body: "Cementerio",
-            kind: PropKind::Beacon,
-            distance: 110.0,
-            sun: 0.25,
+            altitude: 18.0,
+            back: 70.0,
+        },
+        time: 40.0,
+        act: None,
+    },
+    Preset {
+        name: "27_geiseres",
+        shot: Shot::Site {
+            body: "Pira",
+            altitude: 16.0,
+            back: 30.0,
+        },
+        time: 40.0,
+        act: None,
+    },
+    Preset {
+        name: "28_catedral",
+        shot: Shot::Site {
+            body: "Requiem",
+            altitude: 14.0,
+            back: 40.0,
+        },
+        time: 40.0,
+        act: None,
+    },
+    Preset {
+        name: "29_ojo_cerca",
+        shot: Shot::Orbit {
+            body: "Vigia",
+            distance: 1.3,
+            azimuth: 0.8,
+            elevation: 0.1,
         },
         time: 40.0,
         act: None,
@@ -376,6 +413,9 @@ pub struct App {
     pub cycle: CycleState,
     /// Cuando se desataron el final y el renacer (tecla J).
     pub timeline: Timeline,
+    /// El ultimo lugar visitado con N y su nombre para el HUD.
+    next_site: usize,
+    pub site_banner: Option<&'static str>,
     /// Tabla de geodesicas de Gargantua: se rehace al cambiar la distancia.
     lens: Option<LensTable>,
     /// Camara congelada (F7): el culling y el LOD se calculan desde ella
@@ -542,6 +582,8 @@ impl App {
             exposure: config::EXPOSURE,
             cycle: cycle::at(t, &Timeline::default(), system_star_radius),
             timeline: Timeline::default(),
+            next_site: usize::MAX,
+            site_banner: None,
             lens: None,
             freeze: None,
             markers: Vec::new(),
@@ -603,6 +645,28 @@ impl App {
         self.sim_time = t;
         self.accumulator = 0.0;
         self.local_up = None;
+    }
+
+    /// N: viaja al siguiente lugar para visitar (instantaneo), conservando
+    /// el tiempo y el ciclo.
+    pub fn visit_next_site(&mut self) {
+        if self.system.sites.is_empty() {
+            return;
+        }
+        self.next_site = (self.next_site + 1) % self.system.sites.len();
+        let site = self.system.sites[self.next_site];
+        let time = self.time();
+        self.apply_preset(&Preset {
+            name: "lugar",
+            shot: Shot::Site {
+                body: self.system.bodies[site.body].name,
+                altitude: 22.0,
+                back: 90.0,
+            },
+            time,
+            act: self.timeline.since(time),
+        });
+        self.site_banner = Some(site.name);
     }
 
     /// J: desata el final de la estrella o, si ya empezo, su renacer.
@@ -968,6 +1032,37 @@ impl App {
                 });
             }
         }
+        // Los lugares de los demas planetas tambien alumbran lo de alrededor.
+        let ship_rel = (ship_pos - camera.pos).as_vec3();
+        for (mouth, _, activity, _) in vents_near(&self.system, t, camera.pos, ship_pos) {
+            points.push(crate::shaders::PointLight {
+                pos: mouth,
+                color: Vec3::new(2.6, 0.9, 0.22) * (90.0 * activity),
+                radius: 60.0,
+            });
+        }
+        for (base, up, _, scale) in props_near(&self.system, "Requiem", PropKind::Spire, 9.0, t, camera.pos, 260.0) {
+            let awake = smoothstep(260.0, 40.0, (base - ship_rel).length());
+            if awake > 0.02 {
+                points.push(crate::shaders::PointLight {
+                    pos: base + up * 2.0,
+                    color: Vec3::new(0.25, 0.6, 1.4) * (70.0 * awake * scale * scale),
+                    radius: 55.0 * scale,
+                });
+            }
+        }
+        if let Some((top, _)) = beacon_lamp(&self.system, t) {
+            let near = smoothstep(300.0, 60.0, (top - ship_pos).length() as f32);
+            let flash = shaders::beacon_flash(t as f32, near);
+            points.push(crate::shaders::PointLight {
+                pos: (top - camera.pos).as_vec3(),
+                color: Vec3::new(2.4, 0.12, 0.05) * (400.0 * flash),
+                radius: 160.0,
+            });
+        }
+        // Las mas cercanas primero: el shading recorre todas por pixel.
+        points.sort_by(|a, b| a.pos.length_squared().total_cmp(&b.pos.length_squared()));
+        points.truncate(12);
         let atmospheres = atmosphere_frames(&self.system, t, &camera, &view);
         // Si la camara esta dentro de una atmosfera, su cielo sale de una tabla.
         let sky_view = atmospheres
@@ -1076,6 +1171,12 @@ impl App {
             textures: &self.system.textures,
             pixel_angle: pixel_angle as f32,
             eye_dir: self.eye.as_vec3(),
+            eye_near: {
+                let vigia = &self.system.bodies[self.system.eye_body];
+                let distance = (self.ship.world_pos - vigia.position(t)).length() / vigia.radius;
+                smoothstep(4.0, 1.25, distance as f32)
+            },
+            ship: (ship_pos - camera.pos).as_vec3(),
             ring: ring_info(&self.system, t, camera.pos),
             atmospheres: &atmospheres,
             sky_view: sky_view.as_ref(),
@@ -1234,13 +1335,50 @@ impl App {
         if let Some((top, up)) = beacon_lamp(system, t) {
             let start = out.len();
             out.resize(start + effects::BEACON_COUNT, blank);
+            let near = smoothstep(300.0, 60.0, (top - ship_pos).length() as f32);
             effects::beacon_waves(
                 &mut out[start..],
                 (top - camera.pos).as_vec3(),
                 up.as_vec3(),
                 t,
                 shaders::BEACON_PERIOD,
+                near,
             );
+        }
+        // Lo que flota alrededor de la camara cerca del suelo de cada planeta.
+        for (name, kind, top) in [
+            ("Pira", effects::Motes::Embers, 120.0),
+            ("Requiem", effects::Motes::Snow, 120.0),
+            ("Cementerio", effects::Motes::Dust, 100.0),
+            ("Vigia", effects::Motes::Mist, 260.0),
+        ] {
+            let Some(i) = system.find(name) else { continue };
+            let body = &system.bodies[i];
+            let altitude = (camera.pos - body.position(t)).length() - body.radius;
+            if altitude < top {
+                let start = out.len();
+                out.resize(start + effects::MOTE_COUNT, blank);
+                let strength = smoothstep(top as f32, top as f32 * 0.4, altitude as f32);
+                effects::motes(&mut out[start..], body, t, camera.pos, kind, strength);
+            }
+        }
+        // Los geiseres cerca de la camara echan lava; los naufragios
+        // despiertos, chispas.
+        let ship_rel = (ship_pos - camera.pos).as_vec3();
+        for (mouth, up, activity, seed) in vents_near(system, t, camera.pos, ship_pos) {
+            if activity > 0.05 {
+                let start = out.len();
+                out.resize(start + effects::FOUNTAIN_COUNT, blank);
+                effects::fountain(&mut out[start..], mouth, up, t, activity, seed);
+            }
+        }
+        for (at, up, seed) in wrecks_near(system, t, camera.pos) {
+            let near = smoothstep(160.0, 30.0, (at - ship_rel).length());
+            if near > 0.05 {
+                let start = out.len();
+                out.resize(start + effects::SPARK_COUNT, blank);
+                effects::sparks(&mut out[start..], at, up, t, near, seed);
+            }
         }
         if let Some(i) = system.find("Jardin") {
             let jardin = &system.bodies[i];
@@ -1373,6 +1511,23 @@ impl App {
                 let ground = body.surface_height(normal, t);
                 let pos = body.position(t) + normal * (body.radius + ground + 6.5);
                 (pos, forward + normal * 0.05, normal, 1.1, (0.0, 0.0))
+            }
+            Shot::Site {
+                body,
+                altitude,
+                back,
+            } => {
+                let i = index(body);
+                let b = &bodies[i];
+                let site = self.system.sites.iter().find(|s| s.body == i);
+                let (n, f, _) = site.map_or((DVec3::Y, DVec3::Z, DVec3::X), |s| s.frame());
+                let rotation = b.rotation(t);
+                let normal = rotation.rotate(n);
+                let forward = rotation.rotate(f);
+                let center = b.position(t) + normal * (b.radius + b.surface_height(normal, t));
+                let pos = center + normal * altitude - forward * back;
+                let target = center + forward * 45.0 + normal * (altitude * 0.25);
+                (pos, target - pos, normal, 1.0, (0.0, 0.0))
             }
             Shot::Overview => {
                 // Desde arriba y de lado, mirando un poco mas alla de la estrella.
@@ -1661,6 +1816,32 @@ fn markers(
                 distance: (distance - body.radius).max(0.0),
             })
         })
+        .chain(system.sites.iter().filter_map(|site| {
+            // Los lugares se marcan cuando se esta cerca de su planeta y del
+            // lado donde estan.
+            let body = &system.bodies[site.body];
+            let center = body.position(t);
+            let normal = body.rotation(t).rotate(site.normal);
+            let at = center + normal * (body.radius + body.surface_height(normal, t) + 10.0);
+            let rel = at - camera.pos;
+            let distance = rel.length();
+            if distance > body.radius * 6.0 || normal.dot(-rel) < 0.0 {
+                return None;
+            }
+            let clip = view.view_proj.transform_point(rel.as_vec3());
+            if clip.w <= view.near {
+                return None;
+            }
+            let x = (clip.x / clip.w + 1.0) * 0.5 * width as f32;
+            let y = (1.0 - clip.y / clip.w) * 0.5 * height as f32;
+            let on_screen = x > 0.0 && y > 0.0 && x < width as f32 && y < height as f32;
+            on_screen.then_some(Marker {
+                name: site.name,
+                x,
+                y,
+                distance,
+            })
+        }))
         .collect()
 }
 
@@ -1686,6 +1867,70 @@ fn pira_tail(system: &System, t: f64, camera: DVec3, light: Vec3) -> Option<shad
         light,
         time: t as f32,
     })
+}
+
+/// Los objetos de `kind` de un cuerpo a menos de `reach` de la camara: el
+/// punto a `lift` unidades del modelo sobre su base (relativo a la camara),
+/// la vertical ahi y un numero propio de cada uno.
+fn props_near(
+    system: &System,
+    body: &str,
+    kind: PropKind,
+    lift: f32,
+    t: f64,
+    camera: DVec3,
+    reach: f64,
+) -> Vec<(Vec3, Vec3, u32, f32)> {
+    let Some(i) = system.find(body) else {
+        return Vec::new();
+    };
+    let b = &system.bodies[i];
+    let center = b.position(t);
+    if (center - camera).length() > b.radius + reach * 2.0 {
+        return Vec::new();
+    }
+    let rotation = b.rotation(t);
+    system.props[i]
+        .instances
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.kind == kind)
+        .filter_map(|(index, p)| {
+            let top = p.position + p.rotation.rotate(DVec3::Y * (lift * p.scale) as f64);
+            let world = center + rotation.rotate(top);
+            ((world - camera).length() < reach).then(|| {
+                (
+                    (world - camera).as_vec3(),
+                    rotation.rotate(p.position.normalize()).as_vec3(),
+                    hash_u32(index as u32 ^ 0x5EED),
+                    p.scale,
+                )
+            })
+        })
+        .collect()
+}
+
+/// Bocas de los geiseres de Pira cerca de la camara, su vertical, su
+/// actividad y su numero. La nave las despierta.
+fn vents_near(system: &System, t: f64, camera: DVec3, ship: DVec3) -> Vec<(Vec3, Vec3, f32, u32)> {
+    let ship = (ship - camera).as_vec3();
+    props_near(system, "Pira", PropKind::Vent, props::VENT_TOP, t, camera, 320.0)
+        .into_iter()
+        .map(|(mouth, up, seed, _)| {
+            let unit = (seed >> 8) as f32 / 16_777_216.0;
+            let activity = shaders::vent_activity(t as f32, unit, (mouth - ship).length());
+            (mouth, up, activity, seed)
+        })
+        .collect()
+}
+
+/// Naufragios de Cementerio cerca de la camara: un punto sobre el casco, la
+/// vertical y su numero.
+fn wrecks_near(system: &System, t: f64, camera: DVec3) -> Vec<(Vec3, Vec3, u32)> {
+    props_near(system, "Cementerio", PropKind::Wreck, 4.5, t, camera, 220.0)
+        .into_iter()
+        .map(|(at, up, seed, _)| (at, up, seed))
+        .collect()
 }
 
 /// La lampara de la baliza de Cementerio en el mundo y la vertical ahi.
@@ -1846,6 +2091,7 @@ fn prop_draws<'a>(
                     // el terreno de alrededor tapa la estrella a esa altura.
                     occluder: instance.position.length() as f32,
                     disc,
+                    seed: (hash_u32(pick.index as u32 ^ 0x5EED) >> 8) as f32 / 16_777_216.0,
                 }),
                 bounds_center: (offset + rot.mul_vec(mesh.bounds_center.as_dvec3() * scale))
                     .as_vec3(),
