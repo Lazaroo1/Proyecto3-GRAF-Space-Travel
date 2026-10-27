@@ -18,9 +18,10 @@ horizonte muere y el tiempo se rebobina. Otra J hace renacer a la estrella.
 | --- | --- |
 | ![Agonía: la estrella late y Pira se le deshace encima](media/22_agonia.png) | ![Estertor: la estrella suelta su capa de gas](media/25_estertor.png) |
 | ![Vigía y su ojo-tormenta](media/06_vigia.png) | ![Pira: corteza en placas y lava](media/02_pira.png) |
-| ![Agujas góticas de Réquiem](media/10_agujas.png) | ![Cementerio: naves en los anillos y la baliza](media/08_cementerio.png) |
+| ![Un monolito de Réquiem con su glifo](media/10_glifo.png) | ![Cementerio: naves en los anillos y la baliza](media/08_cementerio.png) |
 | ![Superficie de Jardín](media/23_jardin_biopunk.png) | ![Pira y su cola de polvo](media/14_cola.png) |
 | ![Gargantúa se come a Pira](media/30_comida.png) | ![El gas de Pira se mezcla con el disco](media/31_digestion.png) |
+| ![El ojo de Vigía reflejado en un lago de Párpado](media/32_espejo.png) | ![Réquiem, su anillo de ruinas y el cielo](media/07_requiem.png) |
 
 ## Lugares para visitar
 
@@ -31,7 +32,8 @@ con luces que alumbran lo de alrededor y algo que flota a su lado. La tecla
 | | |
 | --- | --- |
 | ![Los géiseres de Pira](media/27_geiseres.png) | **Los géiseres** (Pira): bocas de lava que hacen erupción de vez en cuando y despiertan al pasar la nave; alumbran el suelo y suben brasas a su alrededor. |
-| ![La catedral de Réquiem](media/28_catedral.png) | **La catedral** (Réquiem): un círculo de agujas alrededor de una aguja mayor. Se encienden empezando por lo que la nave tiene más cerca y alumbran el hielo de azul. Cae nieve. |
+| ![Los monolitos de Réquiem](media/28_monolitos.png) | **Los monolitos** (Réquiem): losas de piedra oscura gastadas por el viento, con un glifo tallado (un círculo cruzado por una línea) que apenas brilla. Todas miran a la estrella y varias se inclinan hacia ella: apuntan a donde va a nacer Gargantúa. Con la nave cerca los glifos se encienden y alumbran el hielo; después del colapso se quedan encendidos. Detrás, picos de roca; en el cielo, la luna Epitafio. Cae nieve. |
+| ![El espejo en Párpado](media/32_espejo.png) | **El espejo** (Párpado, la luna de Vigía): un lago quieto entre cristales, con Vigía del otro lado del agua. El ojo te mira y también se ve en el lago, porque el reflejo se sombrea con el mismo shader de Vigía. La nave levanta ondas al pasar sobre el agua y los cristales se encienden por dentro. |
 | ![La baliza de Cementerio](media/26_baliza.png) | **La baliza** (Cementerio): naves caídas alrededor de la torre. A su paso les vuelven las luces y echan chispas; la baliza titila más rápido y su onda sube. |
 | ![El ojo de Vigía de cerca](media/29_ojo_cerca.png) | **El ojo** (Vigía): sigue a la nave y, cuando se acerca, cierra la pupila, enciende el iris y los relámpagos se juntan debajo de ella. Jirones de nube pasan rozando. |
 | ![El claro de Jardín](media/11_hongos.png) | **El claro** (Jardín): colonias de hongos y corales que alumbran el suelo, con esporas flotando. |
@@ -66,7 +68,7 @@ Opciones:
 
 ```sh
 cargo run --release -- --res 1920x1080        # resolución del render (por defecto 1280x720)
-cargo run --release -- --captura capturas     # las 32 vistas fijas como PNG, sin abrir ventana
+cargo run --release -- --captura capturas     # las 33 vistas fijas como PNG, sin abrir ventana
 cargo run --release -- --bench 30             # mide cada vista fija y da medianas por etapa
 cargo run --release -- --wire --lod           # empieza con wireframe y colores de LOD
 cargo test --release                          # pruebas de vuelo, raster, sombras y gas volumétrico
@@ -84,7 +86,7 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | Turbo | Shift |
 | **Freno de emergencia** (prioridad sobre turbo y crucero) | **X sostenida** |
 | **Recuperar posicion** junto a Pira, conservando el ciclo | **Inicio / Home** |
-| **Viajar al siguiente lugar** (géiseres, catedral, baliza, claro) | **N** |
+| **Viajar al siguiente lugar** (claro, géiseres, monolitos, baliza, espejo) | **N** |
 | Acercar / alejar la cámara | Rueda |
 | Cámara de persecución / cabina | C |
 | Asistente de vuelo / gravedad | Z / G |
@@ -148,12 +150,12 @@ Las vistas fijas se generan con `--captura` (nombres entre paréntesis).
 
 | Característica del menú | Cómo está hecho | Dónde verlo |
 | --- | --- | --- |
-| **5 planetas** que orbitan, rotan y se ven de cerca (50) | Pira (corteza negra en placas con lava que late, acoplada por marea; la estrella la está desintegrando y le arranca una cola de polvo, como a K2-22b), Jardín (mundo vivo que respira, con una red de luz bajo la piel), Vigía (gigante gaseoso morado con un ojo-tormenta que gira, sigue a la nave y dilata la pupila con el latido), Réquiem (mundo helado con agujas góticas y grietas de luz fría) y Cementerio (anillos llenos de naves del éxodo y una baliza que sigue transmitiendo). Órbitas y giros son funciones del tiempo. | (02) a (08); volar a cualquiera |
-| **9 tipos de modelos** propios en la superficie (20) | Aguja gótica y aguja en ruinas (Réquiem), hongo y coral (Jardín), espinas de obsidiana y géiser (Pira), nave náufraga y baliza de celosía (Cementerio) y rocas, armados con código en `scene/props.rs`, cada uno en tres niveles de detalle. | (10) a (13), (26) |
+| **5 planetas** que orbitan, rotan y se ven de cerca (50) | Pira (corteza negra en placas con lava que late, acoplada por marea; la estrella la está desintegrando y le arranca una cola de polvo, como a K2-22b), Jardín (mundo vivo que respira, con una red de luz bajo la piel), Vigía (gigante gaseoso morado con un ojo-tormenta de gas rosa que gira, sigue a la nave y dilata la pupila con el latido; anillos delgados de polvo y una luna, Párpado, de cristal y lagos que reflejan el ojo), Réquiem (mundo helado con monolitos tallados, picos de roca, dunas, un anillo de ruinas y su luna Epitafio) y Cementerio (anillos llenos de naves del éxodo y una baliza que sigue transmitiendo). Órbitas y giros son funciones del tiempo; las lunas giran alrededor de su planeta. | (02) a (08); volar a cualquiera |
+| **11 tipos de modelos** propios en la superficie (20) | Monolito, monolito partido y pico de roca (Réquiem), hongo y coral (Jardín), espinas de obsidiana y géiser (Pira), nave náufraga y baliza de celosía (Cementerio), racimo de cristal (Párpado) y rocas, armados con código en `scene/props.rs`, cada uno en tres niveles de detalle. | (10) a (13), (26), (32) |
 | **Distribución procedural** reproducible con ruido (10) | Una grilla por cara del cubo-esfera; cada celda propone un punto y lo acepta con una probabilidad de ruido fBm (grupos y claros) por las reglas del terreno (pendiente, hielo, lava, valles). Misma semilla, mismas ubicaciones. | F6 o T → semilla |
 | **Posición y orientación** sobre la superficie curva que gira (5) | Cada objeto vive en el espacio de su planeta, parado sobre la normal radial y hundido en el suelo; gira con el planeta y sube y baja con la respiración de Jardín. | Cualquier superficie |
-| **Shaders propios** distintos (24) | Estrella (granulación de plasma, onda del latido, llamaradas), Pira (placas de Voronoi y lava de cuerpo negro), Jardín (tejido con luz interna y poros), Vigía (paleta propia, vórtice de Rodrigues, iris y relámpagos; del mapa del Hubble solo se toma el detalle de las nubes), Réquiem (hielo con grietas de luz fría), Cementerio, anillos de naves, agujas, baliza, nebulosa del estertor y Gargantúa. | Todas las vistas |
-| **Shader animado** (8) | La estrella late y cada latido cruza su superficie; la lava y la luz de Jardín laten con retraso; Jardín respira; los géiseres hacen erupción; el vórtice de Vigía gira y su pupila se dilata; la luz sube por las agujas; los anillos orbitan con luces que parpadean; la nebulosa se expande; el gas del disco fluye. | (02), (04), (06), (10), (18), (25) |
+| **Shaders propios** distintos (24) | Estrella (granulación de plasma, onda del latido, llamaradas), Pira (placas de Voronoi y lava de cuerpo negro), Jardín (tejido con luz interna y poros), Vigía (paleta propia, vórtice de Rodrigues, brazos en espiral, iris de gas turbulento y relámpagos; del mapa del Hubble solo se toma el detalle de las nubes), Párpado (lagos espejo que reflejan a Vigía con su propio shader, cristal), Réquiem (hielo con grietas de luz fría y dunas), Cementerio, anillos (naves, polvo y ruinas), monolitos con su glifo, cristales, baliza, Pira hirviendo (corona volumétrica), nebulosa del estertor y Gargantúa. | Todas las vistas |
+| **Shader animado** (8) | La estrella late y cada latido cruza su superficie; la lava y la luz de Jardín laten con retraso; Jardín respira; los géiseres hacen erupción; el vórtice de Vigía gira, su tormenta cambia de fuerza y de color y su pupila se dilata; los glifos y los cristales laten; el lago de Párpado ondula bajo la nave; los anillos orbitan con luces que parpadean; la nebulosa se expande; el gas del disco fluye. | (02), (04), (06), (10), (18), (25) |
 | **Mapeo de normales** (8) | Las placas del casco de los naufragios (generadas al arrancar), la roca y el tejido orgánico en triplanar, con mipmaps; tangentes por vértice y base TBN por pixel. | (13), (05) |
 | **Deformación de la geometría** con ruido (10) | Las funciones de altura de cada planeta desplazan los vértices del cubo-esfera (cráteres, crestas, mares de lava, zanjas); Jardín además respira en el vertex shader. | Todas; `--wire` |
 | **Generación de geometría** propia antes de rasterizar (10) | Quadtree de chunks del cubo-esfera generados en paralelo con faldones, icosfera por subdivisión, modelos con `MeshBuilder`, cintas para líneas, recorte de Sutherland-Hodgman. | F3, F4 |
