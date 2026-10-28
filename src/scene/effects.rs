@@ -23,15 +23,22 @@ const SPORE_RISE: f32 = 8.0;
 /// Particulas del escape de la nave.
 pub const EXHAUST_COUNT: usize = 100;
 /// Protuberancias: arcos de plasma de varias hebras torcidas.
-const PROMINENCE_ARCS: usize = 14;
+const PROMINENCE_ARCS: usize = 11;
 const PROMINENCE_STRANDS: usize = 5;
-const PROMINENCE_SEGMENTS: usize = 72;
-pub const PROMINENCE_COUNT: usize = PROMINENCE_ARCS * PROMINENCE_STRANDS * PROMINENCE_SEGMENTS;
+const PROMINENCE_SEGMENTS: usize = 120;
+/// Chispas que salen despedidas del borde de la estrella.
+const STAR_EMBERS: usize = 700;
+pub const PROMINENCE_COUNT: usize =
+    PROMINENCE_ARCS * PROMINENCE_STRANDS * PROMINENCE_SEGMENTS + STAR_EMBERS;
 
-/// Arcos de plasma anclados a la fotosfera: cada uno es una cuerda de
+/// Arcos de plasma y chispas en el borde de la estrella. Como el ojo de la
+/// estrella mira a la camara (`shaders::sun::eye_frame`), los arcos se
+/// anclan al limbo tal como se ve desde ella: siempre se recortan contra el
+/// cielo, nunca quedan aplastados sobre el disco. Cada arco es una cuerda de
 /// hebras torcidas, mas caliente (amarilla) en los pies y roja arriba, con
-/// nudos de material que bajan por el arco. Con las llamaradas del
-/// estertor (`flares`) crecen, y uno de cada tres se desprende.
+/// nudos de material que bajan por el arco; resbalan despacio por el borde.
+/// Con las llamaradas del estertor (`flares`) crecen, y uno de cada tres se
+/// desprende.
 pub fn prominences(
     out: &mut [Particle],
     star: &Body,
@@ -41,27 +48,32 @@ pub fn prominences(
     flares: f32,
 ) {
     let center = (star.position(t) - camera).as_vec3();
-    let rotation = star.rotation(t).to_mat3().to_f32();
+    let distance = center.length();
     let r = star.radius as f32;
     let time = t as f32;
+    let axis = -center / distance;
+    let (a, b) = basis(axis);
+    // El limbo visto desde la camara: un circulo un poco hacia ella.
+    let cap = (r / distance).min(0.99);
+    let ring = (1.0 - cap * cap).sqrt();
+    let limb = |phi: f32, lean: f32| {
+        (a * (phi.cos() * ring) + b * (phi.sin() * ring) + axis * (cap + lean)).normalize()
+    };
+    let (arcs, embers) = out.split_at_mut(PROMINENCE_ARCS * PROMINENCE_STRANDS * PROMINENCE_SEGMENTS);
     let per_arc = PROMINENCE_STRANDS * PROMINENCE_SEGMENTS;
-    for (i, p) in out.iter_mut().enumerate() {
+    for (i, p) in arcs.iter_mut().enumerate() {
         let arc = i / per_arc;
         let strand = (i / PROMINENCE_SEGMENTS) % PROMINENCE_STRANDS;
         let s = (i % PROMINENCE_SEGMENTS) as f32 / (PROMINENCE_SEGMENTS - 1) as f32;
         let h = hash_u32(arc as u32 ^ 0xAC1D_72A1);
-        let y = unit(h) * 2.0 - 1.0;
-        let phi = unit(hash_u32(h)) * std::f32::consts::TAU;
-        let n = Vec3::new(
-            (1.0 - y * y).sqrt() * phi.cos(),
-            y,
-            (1.0 - y * y).sqrt() * phi.sin(),
-        );
-        let (a, b) = basis(n);
-        let spin = unit(hash_u32(h ^ 93)) * std::f32::consts::TAU;
-        let tangent = a * spin.cos() + b * spin.sin();
+        // Repartidos sin orden por el borde, mas arriba que abajo.
+        let up = unit(hash_u32(h)) * 2.0 - 1.0;
+        let phi = std::f32::consts::FRAC_PI_2 + up * (1.0 + 1.6 * up.abs()) + time * 0.004;
+        let n = limb(phi, 0.06 + 0.1 * unit(hash_u32(h ^ 41)));
+        // Los pies van a lo largo del borde y el arco sube hacia afuera.
+        let tangent = axis.cross(n).normalize();
         let side = n.cross(tangent);
-        let width = 0.07 + 0.11 * unit(hash_u32(h ^ 7));
+        let width = 0.06 + 0.12 * unit(hash_u32(h ^ 7));
         let angle = (s - 0.5) * width * 2.0;
         let wave = (std::f32::consts::PI * s).sin().max(0.0);
         // Uno de cada tres se desprende cuando las llamaradas arrecian.
@@ -70,7 +82,9 @@ pub fn prominences(
         } else {
             0.0
         };
-        let height = (0.06 + 0.16 * unit(hash_u32(h ^ 13)))
+        // Pocos arcos grandes y muchos chicos.
+        let tall = unit(hash_u32(h ^ 13));
+        let height = (0.13 + 0.36 * tall * tall)
             * (0.85 + 0.15 * (time * 0.12 + arc as f32).sin())
             * (1.0 + 1.6 * flares + 5.0 * erupt);
         let radial = n * angle.cos() + tangent * angle.sin();
@@ -79,19 +93,34 @@ pub fn prominences(
         let twist = strand as f32 / PROMINENCE_STRANDS as f32 * std::f32::consts::TAU
             + s * 7.0
             + time * 0.6;
-        let rope = r * (0.006 + 0.009 * wave) * (1.0 + erupt);
+        let rope = r * (0.01 + 0.018 * wave) * (1.0 + erupt);
         let jitter = unit(hash_u32(i as u32 ^ 0x5EED)) - 0.5;
         let offset = (side * twist.cos() + radial * twist.sin()) * rope
             + tangent * (jitter * r * 0.003);
         // Nudos de material que caen por el arco hacia los pies.
         let knots = 0.5 + 0.5 * (s * 22.0 - time * 1.6 + arc as f32 * 1.7).sin();
-        let foot = Vec3::new(1.9, 0.7, 0.16);
-        let crown = Vec3::new(1.15, 0.16, 0.035);
-        let brightness = strength * (0.35 + 0.65 * knots) * (0.55 + 0.45 * (1.0 - erupt));
+        let foot = Vec3::new(2.6, 1.1, 0.25);
+        let crown = Vec3::new(1.6, 0.3, 0.05);
+        let brightness = strength * (0.65 + 0.35 * knots) * (0.55 + 0.45 * (1.0 - erupt));
         *p = Particle {
-            pos: center + rotation.mul_vec(radial * lift + offset),
-            radius: r * (0.005 + 0.004 * wave) * (1.0 + 0.6 * erupt),
-            color: foot.lerp(crown, wave) * (0.5 * brightness),
+            pos: center + radial * lift + offset,
+            radius: r * (0.008 + 0.007 * wave) * (1.0 + 0.6 * erupt),
+            color: foot.lerp(crown, wave) * (0.45 * brightness),
+        };
+    }
+    // Chispas: salen del borde, suben girando un poco y se apagan.
+    for (i, p) in embers.iter_mut().enumerate() {
+        let h = hash_u32(i as u32 ^ 0xE3B3_5A11);
+        let life = 3.0 + 4.0 * unit(hash_u32(h ^ 3));
+        let age = (time / life + unit(h)).fract();
+        let phi = unit(hash_u32(h ^ 5)) * std::f32::consts::TAU + age * 0.25 * (unit(hash_u32(h ^ 9)) - 0.5);
+        let start = limb(phi, (unit(hash_u32(h ^ 11)) - 0.3) * 0.5);
+        let reach = 0.15 + 0.9 * unit(hash_u32(h ^ 17)).powi(2);
+        let fade = smoothstep(0.0, 0.08, age) * (1.0 - age) * (1.0 - age);
+        *p = Particle {
+            pos: center + start * (r * (1.0 + reach * age)),
+            radius: r * (0.0025 + 0.002 * unit(hash_u32(h ^ 19))),
+            color: Vec3::new(3.0, 1.1, 0.25).lerp(Vec3::new(1.4, 0.2, 0.04), age) * (fade * strength),
         };
     }
 }

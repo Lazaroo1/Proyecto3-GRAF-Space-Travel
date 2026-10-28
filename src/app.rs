@@ -459,6 +459,8 @@ pub struct App {
     frustum_mesh: Mesh,
     disk_gas: crate::gargantua_p2::disk::GasTexture,
     disk_noise: crate::gargantua_p2::math::noise::NoiseTable,
+    /// Nubes de la corona de la estrella, tabuladas cada frame.
+    clouds: shaders::CoronaClouds,
     /// Mapa de sombras; sus buffers se reutilizan de un frame al otro.
     shadow: ShadowMap,
     cinematic_fov: Option<f64>,
@@ -623,6 +625,7 @@ impl App {
             markers: Vec::new(),
             frustum_mesh: Mesh::default(),
             disk_gas: crate::gargantua_p2::disk::GasTexture::new(),
+            clouds: shaders::CoronaClouds::default(),
             disk_noise: crate::gargantua_p2::math::noise::NoiseTable::new(
                 crate::gargantua_p2::config::NOISE_SEED,
             ),
@@ -1281,6 +1284,19 @@ impl App {
             }
         }
         let rings = ring_info(&self.system, t, camera.pos);
+        // Las nubes de la corona se tabulan solo si pueden caer en pantalla
+        // (si no, un reflejo que las vea las calcula pixel por pixel).
+        let corona = {
+            let to_star = star_pos - camera.pos;
+            let distance = to_star.length();
+            let reach = (star_radius * 3.0 / distance).min(1.0).asin();
+            let half_diagonal = (view.tan_half_x as f64).hypot(view.tan_half_y as f64).atan();
+            let cone = (half_diagonal + reach).min(std::f64::consts::PI);
+            state.star_glow > 0.001 && to_star.dot(camera.rot.forward()) > distance * cone.cos()
+        };
+        if corona {
+            self.clouds.update(t as f32, &self.system.noise);
+        }
         let uniforms = Uniforms {
             shadow,
             points: &points,
@@ -1344,6 +1360,7 @@ impl App {
             sky_view: sky_view.as_ref(),
             biolum: self.gains.jardin * state.biolum,
             gains: self.gains,
+            clouds: corona.then_some(&self.clouds),
             debug: self.debug,
         };
         self.stats = self.renderer.render(&draws, &view, &uniforms);

@@ -109,14 +109,29 @@
   siendo función pura del tiempo y de los instantes de J (`Timeline`), así
   que rebobinar funciona igual. Otra J hace renacer a la estrella con un
   fundido a blanco.
-- **Estrella** (`shaders/sun.rs`): granulación en tres escalas (gotas de
-  plasma separadas por canales fríos, nunca negros), limbo oscuro y rojo, la
-  onda de cada latido que cruza la superficie y llamaradas en el estertor. El
-  color es de cuerpo negro entre 1700 y 2700 K: a 3400 K el sRGB lo vería
-  color durazno.
-- **Arcos de plasma** (`scene/effects.rs`): cuerdas de cinco hebras torcidas,
-  amarillas en los pies y rojas arriba, con nudos que bajan; en el estertor
-  crecen y uno de cada tres se desprende.
+- **Estrella con un ojo** (`shaders/sun.rs`): un remolino de fuego que gira
+  hacia una pupila negra. Todo está en coordenadas polares alrededor del eje
+  que va de la estrella a la cámara (`eye_frame`), así que la pupila queda
+  siempre en el centro del disco: la estrella te mira, como Vigía. El ángulo
+  se tuerce más cerca del centro y gira más rápido adentro; el humo es ruido
+  con *domain warping* muestreado en ese disco torcido, con filamentos de
+  fuego, motas amarillas hacia el borde y humo lila en medio. El calor se
+  pinta con una rampa de brasa (negro, granate, rojo, naranja, amarillo
+  blanco); el borde es lo más caliente. La pupila se dilata con el latido y
+  cada latido sale de ella como un anillo de luz. Si la estrella se calienta
+  al colapsar, el fuego pasa a color de cuerpo negro.
+- **Llamas y corona** (`shaders/sky.rs::corona`): `sun::limb_fire` da cuánto
+  llega el fuego en cada ángulo del borde; el disco la evalúa en el limbo y
+  el cielo por fuera, con el mismo ángulo, así que las llamas siguen de un
+  lado al otro del borde. Alrededor, nubes de gas carmesí y magenta: son de
+  baja frecuencia, así que se tabulan una vez por frame en una tabla polar
+  (640 ángulos por 80 anillos) y cada pixel del cielo solo interpola. Eso
+  bajó el costo extra de la estrella llenando la pantalla de 21 a 9 ms.
+- **Arcos de plasma y chispas** (`scene/effects.rs`): cuerdas de cinco
+  hebras torcidas, amarillas en los pies y rojas arriba, con nudos que bajan.
+  Se anclan al borde tal como se ve desde la cámara (más arriba que abajo),
+  así que siempre se recortan contra el cielo; en el estertor crecen y uno de
+  cada tres se desprende. Chispas salen despedidas del borde y se apagan.
 - **Nebulosa** (`shaders/nebula.rs`): la capa de gas del estertor. Ver la
   sección 10.
 - **Pira**: corteza en placas de Voronoi con lava entre ellas, más del lado
@@ -292,9 +307,10 @@ cara a la estrella.
 
 Cada material es una función que recibe los atributos del pixel y devuelve
 su color HDR. Algunos ejemplos de técnica:
-- **Estrella** ([sun.rs](src/shaders/sun.rs)): granulación de plasma con ruido
-  deformado por otro ruido (*domain warping*), oscurecimiento del limbo, la
-  onda del latido que cruza la superficie y las llamaradas.
+- **Estrella** ([sun.rs](src/shaders/sun.rs)): un remolino en coordenadas
+  polares alrededor del eje que mira a la cámara, humo con *domain warping*,
+  una pupila que late, el borde encendido con las mismas llamas que siguen en
+  la corona del cielo y las llamaradas del estertor.
 - **Lava** ([pira.rs](src/shaders/pira.rs)): placas de Voronoi; el color de la
   lava sale de la ley de Planck (temperatura → color de cuerpo negro). Las
   grietas más delgadas que un pixel se ensanchan y bajan su brillo en la
