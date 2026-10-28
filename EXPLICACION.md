@@ -22,10 +22,16 @@
   del final lo cierra, y cuando se abre Gargantúa deja de mirarte y la mira
   a ella.
 - **De cerca**: la pupila se cierra y la esclera se inyecta de sangre a
-  medida que la nave se acerca. Si la nave baja a la carne, el ojo se hunde
-  entero (`presence`) y salen los ojos chicos, que la miran todos; al subir,
-  vuelve a salir debajo de ella. Los ojos chicos se hunden cuando el grande
-  les pasa encima.
+  medida que la nave se acerca. Volando bajo el ojo va **debajo de la
+  nave**, un poco adelante de hacia donde apunta (así la pupila queda a la
+  vista y no tapada por la nave): se vuela encima del iris, con la pared de
+  los párpados en el horizonte. Los ojos chicos de la carne se hunden cuando
+  el grande les pasa encima (`argos::rim_distance`).
+- **La corona**: sobre los párpados del ojo grande van 28 ojos chicos que se
+  mueven con él (se arman cada frame con `argos::rim_point` y los levanta el
+  mismo vertex shader de los párpados) y miran hacia adentro, a la nave.
+  Desde lejos rodean al ojo; volando encima, te miran desde la pared de
+  carne.
 - **Iris** en polares alrededor del eje del ojo (anclado al ojo, no a la
   carne): estrías y criptas en el rojo de adentro, la collareta encendida,
   fibras radiales magenta y moradas (ruido con mucha frecuencia a lo largo
@@ -40,12 +46,16 @@
   con perfil `(1 - x²)^1.5` (una semicircunferencia tiene pendiente
   infinita en el borde y la malla la dibujaba en dientes de sierra). Granate
   y mojada, crestas claras, surcos negros y venas moradas.
-- **Ojos de carne** (`PropKind::Eye`): un globo medio hundido entre párpados
-  (un tubo cerrado con grumos) sobre un bulto de carne; el shader lleva la
-  dirección de la nave a los ejes del modelo para que el iris la mire, y
-  cada uno parpadea a su ritmo. Se reparten con ruido en lo alto de los
-  pliegues y en **El nido** (el lugar de Argos para la tecla N). Flotan
-  gotas rojas cerca de la superficie.
+- **Ojos de carne** (`PropKind::Eye`): un globo medio hundido en un bulto
+  de carne, con el borde grumoso de la cuenca. Los párpados los dibuja el
+  shader sobre el globo: piel fuera de una almendra alrededor del eje de la
+  cuenca, con la arruga oscura y la mucosa en el borde, y se juntan en medio
+  al parpadear (cada ojo a su ritmo). El iris mira a la nave (su dirección
+  se lleva a los ejes del modelo) sin salirse de la almendra. Se reparten con
+  ruido en lo alto de los pliegues, en **El nido** (el lugar de Argos para
+  la tecla N; cuando llegás, el ojo grande viene debajo de vos y los del
+  nido se hunden para dejarlo pasar) y en la corona. Flotan gotas rojas
+  cerca de la superficie.
 - La sombra del globo se busca un poco arriba de la superficie, sobre la
   normal y más con la luz rasante: sin eso el mapa de sombras hacía franjas
   en la esfera lisa.
@@ -357,7 +367,7 @@ cara a la estrella.
 | Jardín | Arterias que laten con la estrella, poros, capilares; la superficie respira (desplazamiento en el vertex shader). |
 | Vigía | Gigante gaseoso morado con un vórtice que gira y una tormenta en forma de ojo, de gas rosa, que sigue a la nave; la pupila late. Anillos delgados de polvo. |
 | Párpado | La luna de Vigía: cristal y lagos espejo donde se refleja el ojo. |
-| Argos | Carne en pliegues con un ojo enorme que gira dentro de ella para seguir a la nave por todo el sistema; parpadea, cierra la pupila de cerca, se hunde si bajás y la carne está llena de ojos chicos que también te miran. |
+| Argos | Carne en pliegues con un ojo enorme que gira dentro de ella para seguir a la nave por todo el sistema, con una corona de ojos chicos en sus párpados; parpadea, cierra la pupila de cerca y, volando bajo, va debajo de la nave. La carne está llena de ojos chicos que también te miran. |
 | Cementerio | Cráteres y zanjas de naves estrelladas, anillos llenos de naves del éxodo y una baliza que sigue transmitiendo. |
 
 ## 4. Shaders ([shaders/](src/shaders))

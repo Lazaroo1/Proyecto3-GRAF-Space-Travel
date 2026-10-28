@@ -8,9 +8,8 @@
 //! globo), le sube la cornea y levanta un borde de parpados alrededor. La
 //! abertura es una elipse en el plano del ojo, mas ancha que alta, con los
 //! parpados a lo largo del eje del planeta. Al parpadear, la piel de los
-//! parpados baja y sube sobre el globo hasta juntarse en medio. Cuando la
-//! nave baja a la carne, el ojo se hunde entero (`presence`) y queda carne
-//! con sus ojos chicos.
+//! parpados baja y sube sobre el globo hasta juntarse en medio. Si la nave
+//! vuela bajo, el ojo queda debajo de ella.
 //!
 //! # El iris
 //! En polares alrededor del eje del ojo, anclado al ojo y no a la carne:
@@ -54,8 +53,6 @@ pub struct ArgosLook {
     pub near: f32,
     /// Parpadeo: 0 abierto, 1 cerrado.
     pub blink: f32,
-    /// 1 con el ojo afuera, 0 hundido en la carne.
-    pub presence: f32,
 }
 
 impl Default for ArgosLook {
@@ -65,7 +62,6 @@ impl Default for ArgosLook {
             radius: 1.0,
             near: 0.0,
             blink: 0.0,
-            presence: 1.0,
         }
     }
 }
@@ -149,6 +145,24 @@ fn spot(p: Vec3, look: &ArgosLook, x: Vec3, y: Vec3) -> Spot {
     }
 }
 
+/// Donde cae la direccion `dir` (en el espacio del planeta) respecto a la
+/// abertura del ojo: menos de 1 sobre el globo, 1 en el borde de los
+/// parpados. Los ojos chicos se hunden de este lado.
+pub fn rim_distance(look: &ArgosLook, dir: Vec3) -> f32 {
+    let (x, y) = frame(look.eye);
+    spot(dir, look, x, y).d
+}
+
+/// La direccion (en el espacio del planeta) del punto de la elipse de la
+/// abertura en el angulo `phi` alrededor del ojo y a la distancia `d` (1 en
+/// el borde de los parpados). Ahi van los ojos de la corona.
+pub fn rim_point(look: &ArgosLook, phi: f32, d: f32) -> Vec3 {
+    let (x, y) = frame(look.eye);
+    let (s, c) = phi.sin_cos();
+    let angle = d / ((c / OPEN).powi(2) + (s / (OPEN * ALMOND)).powi(2)).sqrt();
+    look.eye * angle.cos() + (x * c + y * s) * angle.sin()
+}
+
 /// Cuanto se baja la carne hacia el globo: del todo adentro del ojo y en una
 /// pendiente corta alrededor, que los parpados tapan.
 #[inline]
@@ -172,14 +186,11 @@ fn relief(s: Spot) -> f32 {
 /// planeta) en la direccion radial. Cerca del ojo baja la carne hasta el
 /// globo; en el borde levanta los parpados.
 pub fn lift(local: Vec3, look: &ArgosLook) -> f32 {
-    if look.presence <= 0.0 {
-        return 0.0;
-    }
     let r = local.length();
     let p = local / r;
     let (x, y) = frame(look.eye);
     let s = spot(p, look, x, y);
-    look.presence * (sink(s.d) * (look.radius - r) + relief(s))
+    sink(s.d) * (look.radius - r) + relief(s)
 }
 
 pub fn shade(f: &Fragment, u: &Uniforms, look: &ArgosLook) -> Vec3 {
@@ -188,8 +199,7 @@ pub fn shade(f: &Fragment, u: &Uniforms, look: &ArgosLook) -> Vec3 {
     let p = f.local.normalize();
     let (x, y) = frame(look.eye);
     let s = spot(p, look, x, y);
-    let presence = look.presence;
-    let socket = smoothstep(1.0, 0.94, s.d) * presence;
+    let socket = smoothstep(1.0, 0.94, s.d);
     let open = socket * (1.0 - s.cover);
     let footprint = f.pos.length() * u.pixel_angle / look.radius;
 
@@ -198,7 +208,7 @@ pub fn shade(f: &Fragment, u: &Uniforms, look: &ArgosLook) -> Vec3 {
     let to_world = |v: Vec3| f.object_to_world.mul_vec(v);
     let ground = to_world(p)
         .normalize()
-        .lerp(f.normal, 1.0 - sink(s.d) * presence)
+        .lerp(f.normal, 1.0 - sink(s.d))
         .normalize();
     let helper = if p.y.abs() < 0.9 { Vec3::Y } else { Vec3::X };
     let t1 = helper.cross(p).normalize();
@@ -209,7 +219,7 @@ pub fn shade(f: &Fragment, u: &Uniforms, look: &ArgosLook) -> Vec3 {
         let q = (p + dir * step).normalize();
         (relief(spot(q, look, x, y)) - height) / (step * look.radius)
     };
-    let tilt = to_world(t1 * slope(t1) + t2 * slope(t2)) * presence;
+    let tilt = to_world(t1 * slope(t1) + t2 * slope(t2));
     let normal = (ground - tilt).normalize();
     let l = f.light_dir(u);
     let nl = normal.dot(l);
@@ -230,7 +240,7 @@ pub fn shade(f: &Fragment, u: &Uniforms, look: &ArgosLook) -> Vec3 {
             .lerp(CREASE, 0.95 * smoothstep(0.35, 1.0, crease));
         flesh = flesh.lerp(FLESH_VEIN * (1.0 + 0.6 * beat), flesh_vein * 0.8);
         // Por dentro del borde, mucosa rosa y mojada.
-        let waterline = smoothstep(0.95, 0.99, s.d) * smoothstep(1.05, 1.0, s.d) * presence;
+        let waterline = smoothstep(0.95, 0.99, s.d) * smoothstep(1.05, 1.0, s.d);
         flesh = flesh.lerp(MUCOSA, waterline * 0.7);
         // La piel de los parpados cerrados: lisa, con arrugas a lo largo de
         // la rendija y la arruga oscura donde se juntan.

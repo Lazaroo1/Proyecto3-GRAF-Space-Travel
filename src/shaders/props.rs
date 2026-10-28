@@ -139,49 +139,84 @@ fn to_model(f: &Fragment, v: Vec3) -> Vec3 {
     )
 }
 
-/// Un ojo de la carne de Argos. Los parpados son carne mojada. El globo
-/// mira a la nave: su direccion se lleva a los ejes del modelo y el iris se
-/// dibuja alrededor de ella (sin mirar hacia adentro de la carne). Cada ojo
-/// parpadea a su ritmo y cierra la pupila con la nave cerca.
+/// Hacia donde se abre la cuenca de los ojos de Argos, en el modelo: arriba
+/// y un poco al frente.
+const SOCKET: Vec3 = Vec3::new(0.0, 0.82, 0.57);
+
+/// Un ojo de la carne de Argos. La carne es granate y mojada. Sobre el globo,
+/// los parpados son piel fuera de una almendra alrededor del eje de la
+/// cuenca, con la arruga oscura y la mucosa rosa en el borde; parpadean
+/// juntandose en medio, cada ojo a su ritmo. El iris mira a la nave (su
+/// direccion se lleva a los ejes del modelo), sin salirse de la abertura, y
+/// cierra la pupila con la nave cerca. El globo es un espejo mojado.
 fn eye(c: &Ctx, style: &PropStyle) -> Vec3 {
     let (f, u) = (c.f, c.u);
-    let flesh = |albedo: Vec3| pbr::shade_light(f, u, albedo, 0.24, 0.0, f.normal, 1.0, c.sun);
     let grain = u.noise.fbm(f.local * 2.5, 2) * 0.5 + 0.5;
-    let skin = Vec3::new(0.2, 0.025, 0.04).lerp(Vec3::new(0.5, 0.12, 0.14), grain * grain);
+    let skin = Vec3::new(0.12, 0.015, 0.025).lerp(Vec3::new(0.34, 0.07, 0.09), grain * grain);
+    let shade = |albedo: Vec3, rough: f32| pbr::shade_light(f, u, albedo, rough, 0.0, f.normal, 1.0, c.sun);
     if f.color.x < 0.5 {
-        return flesh(skin);
+        return shade(skin, 0.22);
     }
     let q = (f.local - EYE_CENTER).normalize();
-    // Parpadeo: el parpado baja desde arriba, cada ojo a su ritmo.
+    // La almendra: coordenadas alrededor del eje de la cuenca, a lo ancho y a
+    // lo alto.
+    let socket = SOCKET.normalize();
+    let across = Vec3::X;
+    let tall = socket.cross(across);
+    let angle = q.dot(socket).clamp(-1.0, 1.0).acos();
+    let (qx, qy) = (q.dot(across), q.dot(tall));
+    let s = (qx * qx + qy * qy).sqrt().max(1e-6);
+    let wide = angle * qx / s / 0.9;
+    let high = angle * qy / s / 0.55;
+    let d = (wide * wide + high * high).sqrt();
     let cycle = (u.time * (0.09 + 0.05 * style.seed) + style.seed * 13.0).fract();
     let closed = smoothstep(0.0, 0.015, cycle) * smoothstep(0.045, 0.03, cycle);
-    if q.y > 1.0 - 2.2 * closed {
-        return flesh(skin * 1.2);
-    }
+    let edge = (1.0 - closed) * (1.0 - wide * wide).max(0.0).sqrt();
+    let lid = smoothstep(0.92, 1.02, d).max(smoothstep(edge - 0.05, edge + 0.03, high.abs()));
+    // El borde del parpado: la arruga oscura y, adentro, la mucosa.
+    let rim = (-((lid - 0.5) / 0.25).powi(2)).exp();
+    let lid_skin = Vec3::new(0.3, 0.07, 0.09).lerp(Vec3::new(0.04, 0.005, 0.01), rim * 0.8);
+
+    // El iris mira a la nave, sin salirse de la abertura.
     let center = f.pos - f.object_to_world.mul_vec((f.local - EYE_CENTER) * c.scale);
-    let mut gaze = to_model(f, u.ship - center).normalize();
-    gaze.y = gaze.y.max(0.3);
-    let gaze = gaze.normalize();
-    let angle = q.dot(gaze).clamp(-1.0, 1.0).acos();
+    let toward = to_model(f, u.ship - center).normalize();
+    let off = toward.dot(socket).clamp(-1.0, 1.0).acos();
+    let axis = socket.cross(toward);
+    let gaze = if axis.length_squared() > 1e-8 {
+        let turn = off.min(0.4);
+        let axis = axis.normalize();
+        socket * turn.cos() + axis.cross(socket) * turn.sin()
+    } else {
+        socket
+    };
+    let look = q.dot(gaze).clamp(-1.0, 1.0).acos();
     let near = near_ship(u, center, 200.0, 25.0);
-    let pupil = 0.17 * (1.0 - 0.45 * near) * (1.0 + 0.15 * u.beat_at(0.2));
-    // Iris lila grisaceo con fibras, anillo oscuro alrededor.
+    let pupil = 0.16 * (1.0 - 0.45 * near) * (1.0 + 0.15 * u.beat_at(0.2));
     let helper = if gaze.y.abs() < 0.95 { Vec3::Y } else { Vec3::X };
     let a = helper.cross(gaze).normalize();
     let phi = q.dot(gaze.cross(a)).atan2(q.dot(a));
-    let fibers = 1.0 - u.noise.noise(Vec3::new(phi.cos() * 9.0, phi.sin() * 9.0, angle * 6.0 + style.seed * 20.0)).abs();
-    let iris_color = Vec3::new(0.2, 0.14, 0.3).lerp(Vec3::new(0.48, 0.38, 0.62), fibers * fibers);
-    let iris = smoothstep(0.47, 0.43, angle);
-    let ring = smoothstep(0.36, 0.45, angle) * iris;
-    let pupil_mask = smoothstep(pupil + 0.02, pupil - 0.01, angle);
-    let veins = smoothstep(0.93, 0.98, 1.0 - u.noise.noise(f.local * 7.0).abs()) * smoothstep(0.6, 1.1, angle);
-    let sclera = Vec3::new(0.62, 0.46, 0.5).lerp(Vec3::new(0.35, 0.03, 0.05), veins * (0.6 + 0.4 * near));
-    let albedo = sclera
-        .lerp(iris_color * (1.0 - 0.75 * ring), iris)
+    let fibers = 1.0 - u.noise.noise(Vec3::new(phi.cos() * 11.0, phi.sin() * 11.0, look * 7.0 + style.seed * 20.0)).abs();
+    let iris_color = Vec3::new(0.16, 0.07, 0.24).lerp(Vec3::new(0.62, 0.36, 0.78), fibers.powi(3));
+    let iris = smoothstep(0.5, 0.46, look);
+    let ring = smoothstep(0.36, 0.47, look) * iris;
+    let pupil_mask = smoothstep(pupil + 0.02, pupil - 0.01, look);
+    let veins = smoothstep(0.93, 0.98, 1.0 - u.noise.noise(f.local * 7.0).abs()) * smoothstep(0.55, 0.95, d);
+    let sclera = Vec3::new(0.72, 0.58, 0.62).lerp(Vec3::new(0.35, 0.03, 0.05), veins * (0.6 + 0.4 * near))
+        * (0.55 + 0.45 * smoothstep(1.0, 0.55, d));
+    let ball = sclera
+        .lerp(iris_color * (1.0 - 0.8 * ring), iris)
         .lerp(Vec3::new(0.004, 0.0, 0.006), pupil_mask);
-    let wet = pbr::shade_light(f, u, albedo, 0.08, 0.0, f.normal, 1.0, c.sun);
+    let mucosa = smoothstep(0.75, 0.98, d) * (1.0 - lid);
+    let ball = ball.lerp(Vec3::new(0.62, 0.16, 0.22), mucosa * 0.6);
+    // Mojado: el brillo de la estrella y uno de la luz del cielo, de arriba.
+    let v = f.view_dir();
+    let up = f.object_to_world.mul_vec(Vec3::Y).normalize();
+    let h = ((v + up * 0.7).normalize() + v).normalize();
+    let glint = f.normal.dot(h).max(0.0).powf(500.0) * 1.2;
+    let wet = shade(ball, 0.06) + Vec3::new(0.95, 0.9, 1.0) * glint;
     // Un poco de brillo propio en el iris, para que se vea en la sombra.
-    wet + iris_color * (iris * (1.0 - pupil_mask) * (0.04 + 0.12 * near) * u.gains.argos)
+    let glow = iris_color * (iris * (1.0 - pupil_mask) * (0.06 + 0.14 * near) * u.gains.argos);
+    (wet + glow).lerp(shade(lid_skin, 0.25), lid)
 }
 
 /// La baliza: metal oscuro y una lampara roja que destella cada 2.4 s,
