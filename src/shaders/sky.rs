@@ -169,8 +169,8 @@ fn nebula(dir: Vec3, noise: &Perlin) -> Vec3 {
 /// del disco.
 const CLOUD_REACH: f32 = 3.0;
 /// Raiz y punta de las llamas del borde.
-const FIRE_ROOT: Vec3 = Vec3::new(4.4, 1.7, 0.4);
-const FIRE_TIP: Vec3 = Vec3::new(2.2, 0.38, 0.08);
+const FIRE_ROOT: Vec3 = Vec3::new(3.2, 1.0, 0.2);
+const FIRE_TIP: Vec3 = Vec3::new(1.7, 0.22, 0.05);
 /// Las dos tintas del gas que envuelve a la estrella.
 const CRIMSON: Vec3 = Vec3::new(0.7, 0.07, 0.04);
 const MAGENTA: Vec3 = Vec3::new(0.55, 0.08, 0.42);
@@ -231,7 +231,7 @@ fn cloud(theta: f32, x: f32, t: f32, n: &Perlin) -> Vec3 {
 }
 
 /// Resplandor alrededor del disco de la estrella: las llamas del borde (las
-/// mismas del limbo del disco, con el mismo angulo en `sun::eye_frame`),
+/// mismas del limbo del disco, con el mismo angulo en `sun::limb_frame`),
 /// nubes de gas carmesi y magenta que la envuelven y se estiran hacia
 /// afuera, y un halo que cae rapido junto al borde y deja una cola larga y
 /// tenue.
@@ -263,11 +263,11 @@ pub fn corona(dir: Vec3, u: &Uniforms) -> Vec3 {
         let h = x - 1.0;
         // Las nubes y las llamas siguen el brillo de la estrella.
         let strength = u.sun_light.luminance() / 1.5;
-        let (_, a, b) = super::sun::eye_frame(u.sun_pos);
+        let (_, a, b) = super::sun::limb_frame(u.sun_pos);
         let theta = dir.dot(b).atan2(dir.dot(a));
         // Llamas: amarillas en la raiz, rojas en la punta.
         if h < 0.45 {
-            let fire = super::sun::limb_fire(theta, h, t, n) + 0.12 * (-h * 14.0).exp();
+            let fire = super::sun::limb_fire(theta, h, t, n) + 0.05 * (-h * 14.0).exp();
             light += FIRE_ROOT.lerp(FIRE_TIP, smoothstep(0.0, 0.3, h)) * (fire * strength);
         }
         let clouds = match u.clouds {

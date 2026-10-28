@@ -109,14 +109,18 @@
   siendo función pura del tiempo y de los instantes de J (`Timeline`), así
   que rebobinar funciona igual. Otra J hace renacer a la estrella con un
   fundido a blanco.
-- **Estrella con un ojo** (`shaders/sun.rs`): un remolino de fuego que gira
-  hacia una pupila negra. Todo está en coordenadas polares alrededor del eje
-  que va de la estrella a la cámara (`eye_frame`), así que la pupila queda
-  siempre en el centro del disco: la estrella te mira, como Vigía. El ángulo
-  se tuerce más cerca del centro y gira más rápido adentro; el humo es ruido
-  con *domain warping* muestreado en ese disco torcido, con filamentos de
-  fuego, motas amarillas hacia el borde y humo lila en medio. El calor se
-  pinta con una rampa de brasa (negro, granate, rojo, naranja, amarillo
+- **Estrella con un ojo** (`shaders/sun.rs`): una tormenta en un lugar fijo
+  de la superficie (`EYE_AXIS`, en el espacio de la estrella): gira con ella,
+  así que de un lado se ve de frente, de otro queda en el borde y desde atrás
+  no se ve. A los 40 s de la agonía mira de frente a la vista de detrás de
+  Pira, cerca de donde arranca la nave. Alrededor del ojo el punto se gira
+  con la fórmula de Rodrigues (como el vórtice de Vigía) y todo el patrón da
+  vueltas en bloque, así no se enrosca sin fin. El fuego es ruido con dos
+  capas de *domain warping* que hierve con el tiempo: humo de detalle fino
+  sobre regiones grandes que arden o se apagan, motas brillantes y lenguas
+  finas donde arde, y velos malva en lo frío. Alrededor de la pupila hay un
+  anillo de humo oscuro y después uno de fuego, como un iris. El calor se
+  pinta con una rampa de brasa (negro, granate, carmesí, naranja, amarillo
   blanco); el borde es lo más caliente. La pupila se dilata con el latido y
   cada latido sale de ella como un anillo de luz. Si la estrella se calienta
   al colapsar, el fuego pasa a color de cuerpo negro.
@@ -127,11 +131,13 @@
   baja frecuencia, así que se tabulan una vez por frame en una tabla polar
   (640 ángulos por 80 anillos) y cada pixel del cielo solo interpola. Eso
   bajó el costo extra de la estrella llenando la pantalla de 21 a 9 ms.
-- **Arcos de plasma y chispas** (`scene/effects.rs`): cuerdas de cinco
-  hebras torcidas, amarillas en los pies y rojas arriba, con nudos que bajan.
-  Se anclan al borde tal como se ve desde la cámara (más arriba que abajo),
-  así que siempre se recortan contra el cielo; en el estertor crecen y uno de
-  cada tres se desprende. Chispas salen despedidas del borde y se apagan.
+- **Arcos de plasma y chispas** (`scene/effects.rs`): cinco arcos grandes,
+  tres arriba. Cada uno es un manojo de nueve hebras que se enroscan a
+  distintos radios (se ve deshilachado, como fuego), encendido en los pies y
+  rojo arriba, con nudos que bajan. Se anclan al borde tal como se ve desde
+  la cámara, así que siempre se recortan contra el cielo; en el estertor
+  crecen y uno de cada tres se desprende. Chispas salen despedidas del borde
+  y se apagan.
 - **Nebulosa** (`shaders/nebula.rs`): la capa de gas del estertor. Ver la
   sección 10.
 - **Pira**: corteza en placas de Voronoi con lava entre ellas, más del lado
@@ -307,10 +313,10 @@ cara a la estrella.
 
 Cada material es una función que recibe los atributos del pixel y devuelve
 su color HDR. Algunos ejemplos de técnica:
-- **Estrella** ([sun.rs](src/shaders/sun.rs)): un remolino en coordenadas
-  polares alrededor del eje que mira a la cámara, humo con *domain warping*,
-  una pupila que late, el borde encendido con las mismas llamas que siguen en
-  la corona del cielo y las llamaradas del estertor.
+- **Estrella** ([sun.rs](src/shaders/sun.rs)): un ojo fijo en la
+  superficie con un remolino de Rodrigues, fuego con dos capas de *domain
+  warping*, una pupila que late, el borde encendido con las mismas llamas que
+  siguen en la corona del cielo y las llamaradas del estertor.
 - **Lava** ([pira.rs](src/shaders/pira.rs)): placas de Voronoi; el color de la
   lava sale de la ley de Planck (temperatura → color de cuerpo negro). Las
   grietas más delgadas que un pixel se ensanchan y bajan su brillo en la

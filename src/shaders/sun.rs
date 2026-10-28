@@ -1,34 +1,37 @@
-//! Supergigante roja moribunda con un ojo: un remolino de fuego que gira
-//! hacia una pupila negra, el borde encendido en llamas y un corazon que
-//! late.
+//! Supergigante roja moribunda con un ojo: una tormenta en un lugar fijo de
+//! su superficie, un remolino de fuego alrededor de una pupila negra, el
+//! borde encendido en llamas y un corazon que late.
 //!
 //! # El ojo
-//! Todo se dibuja en coordenadas polares alrededor del eje que va del centro
-//! de la estrella a la camara (`eye_frame`): la pupila siempre queda en el
-//! centro del disco y la estrella te mira desde donde estes, como Vigia.
-//! El angulo se tuerce mas cerca del centro y gira con el tiempo, mas rapido
-//! adentro: el gas se arremolina hacia la pupila. La pupila se dilata con
-//! cada latido.
+//! El ojo vive en el espacio de la estrella (`EYE_AXIS`) y gira con ella: se
+//! ve de frente desde un lado, de canto en el borde y desde atras no se ve.
+//! Al empezar la agonia mira hacia Pira, donde arranca la nave. Alrededor
+//! del ojo el punto se gira (formula de Rodrigues, como el vortice de Vigia)
+//! mas cuanto mas cerca, y todo el patron da vueltas despacio en bloque, asi
+//! el remolino gira sin enroscarse sin fin. La pupila se dilata con cada
+//! latido; alrededor hay un anillo de humo oscuro y despues uno de fuego,
+//! como un iris.
 //!
-//! # El gas
-//! Humo con domain warping en el dominio polar (pocas vueltas a lo largo y
-//! muchas a lo ancho: las hebras quedan concentricas), filamentos de fuego
-//! donde un ruido cruza por cero y, entre la pupila y el borde, humo claro
-//! tenido de lila. El calor sale del radio (oscuro adentro, encendido en el
-//! borde) y del gas, y se pinta con una rampa de brasa: negro, granate,
-//! rojo, naranja y amarillo blanco.
+//! # El fuego
+//! Dos capas de domain warping que cambian con el tiempo (el fuego hierve):
+//! humo de detalle fino sobre regiones grandes que arden o se apagan y,
+//! donde arde, motas brillantes y lenguas finas (donde un ruido cruza por
+//! cero). El calor se pinta con una rampa de brasa: negro, granate, carmesi,
+//! naranja y amarillo blanco. En lo frio hay velos malva y junto al ojo
+//! hebras lilas claras.
 //!
 //! # Borde y llamas
-//! El borde es lo mas caliente. `limb_fire` decide cuanto llega cada lengua
-//! de fuego segun el angulo; el disco la evalua en el limbo y la corona del
-//! cielo (`sky::corona`) por fuera, con el mismo angulo, asi que las llamas
-//! siguen de un lado al otro del borde.
+//! `limb_fire` decide cuanto llega cada lengua de fuego segun el angulo
+//! alrededor del disco visto desde la camara (`limb_frame`); el disco la
+//! evalua en el limbo y la corona del cielo (`sky::corona`) por fuera, con el
+//! mismo angulo, asi que las llamas siguen de un lado al otro del borde.
 //!
 //! # Latido y llamaradas
-//! Cada latido sale de la pupila como un anillo de luz hacia el borde. En el
-//! estertor aparecen manchas que estallan de luz. Si la estrella se calienta
-//! al colapsar, la rampa se lleva hacia el color de cuerpo negro.
+//! Cada latido sale del ojo como un anillo de luz. En el estertor aparecen
+//! manchas que estallan de luz. Si la estrella se calienta al colapsar, la
+//! rampa se lleva hacia el color de cuerpo negro.
 
+use super::vigia::rotate;
 use super::{Fragment, Uniforms};
 use crate::math::blackbody::planckian_rgb;
 use crate::math::{Perlin, Vec3, smoothstep};
@@ -45,8 +48,12 @@ pub struct SunStyle {
 const CALM_TEMPERATURE: f32 = 3400.0;
 /// La rampa de brasa esta en unidades de la intensidad de la superficie.
 const DISC_GAIN: f32 = 0.45;
-/// Humo claro entre la pupila y el borde.
+/// Donde esta el ojo, en el espacio de la estrella: a los 40 s de la agonia
+/// mira de frente a la vista de detras de Pira (22_agonia).
+const EYE_AXIS: Vec3 = Vec3::new(-0.9684, 0.1954, 0.1551);
+/// Hebras claras alrededor del ojo y humo frio.
 const LILAC: Vec3 = Vec3::new(0.62, 0.3, 0.42);
+const VIOLET: Vec3 = Vec3::new(0.36, 0.06, 0.26);
 /// Brillo morado dentro de la pupila.
 const PUPIL_GLINT: Vec3 = Vec3::new(0.004, 0.0015, 0.012);
 
@@ -67,11 +74,12 @@ pub fn heartbeat_phase(phase: f64) -> f64 {
     beat(0.1, 0.045, 1.0) + beat(0.3, 0.06, 0.55)
 }
 
-/// Ejes del ojo para la estrella en `sun_pos` (relativo a la camara): el
-/// eje que mira a la camara y dos ejes en el plano del disco. Los comparten
-/// el disco, la corona y los arcos de plasma.
+/// Ejes del disco visto desde la camara, para la estrella en `sun_pos`
+/// (relativo a la camara): el eje que mira a la camara y dos ejes en el
+/// plano del disco. Con ellos se mide el angulo alrededor del borde en el
+/// disco y en la corona.
 #[inline]
-pub fn eye_frame(sun_pos: Vec3) -> (Vec3, Vec3, Vec3) {
+pub fn limb_frame(sun_pos: Vec3) -> (Vec3, Vec3, Vec3) {
     let axis = (-sun_pos).normalize();
     let helper = if axis.y.abs() < 0.9 { Vec3::Y } else { Vec3::X };
     let a = helper.cross(axis).normalize();
@@ -88,7 +96,7 @@ pub fn limb_fire(theta: f32, h: f32, t: f32, n: &Perlin) -> f32 {
     let big = n.noise(Vec3::new(c * 3.0, s * 3.0, t * 0.05)) * 0.5 + 0.5;
     let lick = (1.0 - n.noise(Vec3::new(c * 11.0, s * 11.0, h * 4.0 - t * 0.6)).abs()).powi(3);
     let fine = n.noise(Vec3::new(c * 30.0, s * 30.0, h * 10.0 - t * 1.2)) * 0.5 + 0.5;
-    let reach = 0.02 + 0.3 * big * big * (0.3 + 0.7 * lick) + 0.05 * fine;
+    let reach = 0.03 + 0.42 * big * big * (0.3 + 0.7 * lick) + 0.06 * fine;
     // Hay tramos del borde que arden y otros apenas rojos.
     smoothstep(reach, 0.0, h) * (0.3 + 0.5 * lick + 0.2 * fine) * (0.2 + 0.8 * smoothstep(0.25, 0.75, big))
 }
@@ -99,7 +107,7 @@ fn ember(heat: f32) -> Vec3 {
         (0.0, Vec3::new(0.0, 0.0, 0.0)),
         (0.18, Vec3::new(0.035, 0.005, 0.004)),
         (0.38, Vec3::new(0.28, 0.03, 0.018)),
-        (0.58, Vec3::new(0.8, 0.14, 0.04)),
+        (0.58, Vec3::new(0.66, 0.09, 0.035)),
         (0.78, Vec3::new(1.5, 0.52, 0.12)),
         (1.0, Vec3::new(2.6, 1.5, 0.6)),
         (1.3, Vec3::new(4.2, 3.2, 1.9)),
@@ -117,71 +125,78 @@ fn ember(heat: f32) -> Vec3 {
 pub fn shade(f: &Fragment, u: &Uniforms, s: &SunStyle) -> Vec3 {
     let t = u.time;
     let n = u.noise;
-    let (_, a, b) = eye_frame(u.sun_pos);
-    let p = f.normal;
+    // La superficie gira con la estrella.
+    let p = f.local.normalize();
     // Radio sobre el disco tal como se ve: 0 en el centro, 1 en el limbo.
-    let mu = p.dot(f.view_dir()).clamp(0.0, 1.0);
+    let mu = f.normal.dot(f.view_dir()).clamp(0.0, 1.0);
     let r = (1.0 - mu * mu).sqrt();
-    let theta = p.dot(b).atan2(p.dot(a));
 
-    // El remolino: el angulo se tuerce hacia el centro y gira, mas rapido
-    // adentro; el humo se muestrea en el disco ya torcido, asi sus manchas
-    // se estiran en espiral.
-    let inner = (1.0 - r) * (1.0 - r);
-    let spun = theta + 1.3 * inner + t * (0.012 + 0.1 * inner);
-    let (sn, cs) = spun.sin_cos();
-    let q = Vec3::new(cs * r * 3.0, sn * r * 3.0, t * 0.02);
+    // El remolino alrededor del ojo, que gira en bloque.
+    let angle = p.dot(EYE_AXIS).clamp(-1.0, 1.0).acos();
+    let around = (-(angle / 0.75).powi(2)).exp();
+    let q = rotate(p, EYE_AXIS, 0.7 * around + t * 0.035);
+    // El fuego hierve: dos capas de domain warping.
+    let boil = Vec3::new(0.0, 0.0, t * 0.05);
+    let w = q * 2.6 + boil;
     let warp = Vec3::new(
-        n.noise(q * 0.9 + Vec3::new(5.2, 1.3, 0.0)),
-        n.noise(q * 0.9 + Vec3::new(-3.7, 8.1, 0.0)),
-        0.0,
+        n.noise(w),
+        n.noise(w + Vec3::new(13.1, 0.0, 0.0)),
+        n.noise(w + Vec3::new(0.0, 27.3, 0.0)),
     );
-    // Zonas grandes oscuras y claras, y encima el humo turbulento.
-    let large = n.fbm(q + warp * 0.6, 3) * 0.5 + 0.5;
-    let detail = n.fbm(q * 2.7 + warp * 1.5 + Vec3::new(0.0, 0.0, t * 0.03), 3) * 0.5 + 0.5;
-    let smoke = smoothstep(0.25, 0.8, 0.5 * large + 0.5 * detail);
-    // Motas de fuego amarillo hacia el borde.
-    let flecks = smoothstep(0.56, 0.82, detail) * smoothstep(0.3, 0.8, r) * smoothstep(0.3, 0.6, large);
-    // Vetas que siguen el giro: pocas a lo largo, muchas a lo ancho.
-    let polar = Vec3::new(cs * 2.0, sn * 2.0, r * 6.0 - t * 0.03);
-    let streak = n.noise(polar + warp * 0.8) * 0.5 + 0.5;
-    // Filamentos de fuego donde un ruido cruza por cero, solo en algunas
-    // regiones.
-    let thread = n.fbm(q * 2.4 + warp * 1.6 + Vec3::new(0.0, 0.0, -t * 0.05), 2);
-    let patches = smoothstep(0.0, 0.5, n.noise(q * 0.7 + Vec3::new(9.0, 4.0, t * 0.01)));
-    let filaments = (1.0 - thread.abs() * 4.0).max(0.0).powi(3) * patches;
+    let qq = q * 5.5 + warp * 0.75;
+    // Humo de detalle fino sobre regiones grandes que arden o se apagan.
+    let smoke = n.fbm(qq + boil * 0.8, 4) * 0.5 + 0.5;
+    let mass = n.fbm(q * 2.0 + warp * 0.5 + Vec3::new(4.0, 9.0, t * 0.02), 2) * 0.5 + 0.5;
+    let burning = smoothstep(0.38, 0.72, mass);
+    // Motas brillantes y lenguas finas (crestas donde el ruido cruza por
+    // cero), sobre todo donde arde.
+    let fleck = n.fbm(qq * 3.0 + Vec3::new(5.0, 1.0, -t * 0.1), 3) * 0.5 + 0.5;
+    let flecks = smoothstep(0.5, 0.76, fleck) * (0.25 + 0.75 * burning);
+    let tongues = (1.0 - n.noise(qq * 1.6 + Vec3::new(3.0, 0.0, -t * 0.12)).abs()).powi(6) * burning;
 
-    // La pupila late con el corazon.
-    let pupil_radius = 0.13 + 0.035 * u.beat_at(0.0);
-    let pupil = smoothstep(pupil_radius + 0.08, pupil_radius - 0.02, r);
-    // Oscuro junto a la pupila, encendido hacia el borde.
-    let depth = smoothstep(0.08, 0.95, r);
-    let limb = smoothstep(0.88, 1.0, r);
-    let rim = smoothstep(0.6, 0.97, r);
-    // Las llamas solo cuentan junto al borde.
-    let fire = if limb > 0.0 { limb_fire(theta, 0.0, t, n) } else { 0.0 };
-    let mut heat = depth * (0.13 + 0.36 * smoke + 0.08 * streak)
-        + 0.3 * filaments * smoothstep(0.2, 0.6, r)
-        + 0.55 * flecks
-        + 0.14 * rim
-        + limb * (0.3 + 0.45 * fire);
+    // La pupila late con el corazon; alrededor, un anillo de humo oscuro y
+    // despues uno de fuego, como un iris.
+    let pupil_radius = 0.17 + 0.04 * u.beat_at(0.0);
+    let pupil = smoothstep(pupil_radius + 0.08, pupil_radius - 0.02, angle);
+    let smoky = smoothstep(0.12, 0.45, angle);
+    let iris = (-((angle - 0.62) / 0.16).powi(2)).exp();
+    // Hacia el borde arde mas; las llamas solo cuentan junto al limbo.
+    let rim = smoothstep(0.55, 1.0, r);
+    let limb = smoothstep(0.82, 1.0, r);
+    let fire = if limb > 0.0 {
+        let (_, a, b) = limb_frame(u.sun_pos);
+        limb_fire(f.normal.dot(b).atan2(f.normal.dot(a)), 0.0, t, n)
+    } else {
+        0.0
+    };
+    let dense = smoothstep(0.32, 0.72, smoke);
+    let mut heat = (0.03 + 0.3 * dense * dense + 0.12 * mass + 0.72 * flecks + 0.3 * tongues) * (0.22 + 0.78 * smoky)
+        + iris * (0.04 + 0.18 * smoke)
+        + rim * (0.02 + 0.12 * mass * mass)
+        + limb * (0.2 + 0.55 * fire);
 
-    // El latido sale de la pupila como un anillo de luz.
-    let front = u.beat_phase.fract() * 1.4;
-    let ring = (-((r - front) * 7.0).powi(2)).exp() * (1.0 - u.beat_phase.fract());
-    heat += 0.12 * ring * u.heart;
+    // El latido sale del ojo como un anillo de luz.
+    let front = u.beat_phase.fract() * 1.8;
+    let ring = (-((angle - front) * 6.0).powi(2)).exp() * (1.0 - u.beat_phase.fract());
+    heat += 0.1 * ring * u.heart;
     // Llamaradas del estertor: parches que estallan de luz.
     if u.flares > 0.0 {
-        let burst = n.noise(q * 1.4 + Vec3::new(0.0, t * 0.35, 0.0));
+        let burst = n.noise(q * 3.0 + Vec3::new(0.0, t * 0.35, 0.0));
         heat += u.flares * smoothstep(0.25, 0.6, burst) * 0.4;
     }
     let heat = heat * (1.0 - 0.97 * pupil);
 
     let mut color = ember(heat);
-    // Humo claro y lila en el anillo de en medio.
-    let veil = smoothstep(0.6, 0.95, smoke) * smoothstep(0.2, 0.45, r) * smoothstep(0.85, 0.55, r);
-    color = color.lerp(LILAC * (0.1 + 0.9 * heat), veil * 0.18);
-    color += PUPIL_GLINT * (pupil * smoothstep(0.0, 0.6, smoke));
+    // Velos violetas entre el fuego: hebras donde un ruido cruza por cero.
+    let veil = (1.0 - n.noise(qq * 0.45 + Vec3::new(7.0, 3.0, t * 0.03)).abs()).powi(10);
+    color = color.lerp(
+        VIOLET * (0.25 + 0.9 * heat),
+        veil * smoothstep(0.55, 0.26, heat) * smoothstep(0.3, 0.6, angle) * 0.4,
+    );
+    // Hebras lilas claras en el humo junto al ojo.
+    let wisp = smoothstep(0.62, 0.85, smoke) * smoothstep(0.15, 0.3, angle) * smoothstep(0.55, 0.32, angle);
+    color = color.lerp(LILAC * (0.2 + heat), wisp * 0.3);
+    color += PUPIL_GLINT * (pupil * smoke);
     // Si se calienta al colapsar, el fuego se vuelve de cuerpo negro.
     let hot = smoothstep(CALM_TEMPERATURE * 1.05, CALM_TEMPERATURE * 3.0, s.temperature);
     if hot > 0.0 {

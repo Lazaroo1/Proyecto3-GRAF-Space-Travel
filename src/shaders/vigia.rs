@@ -41,7 +41,7 @@ const DEEP_GLOW: Vec3 = Vec3::new(0.75, 0.42, 1.25);
 
 /// Gira `p` un angulo `angle` alrededor del eje unitario `axis` (Rodrigues).
 #[inline]
-fn rotate(p: Vec3, axis: Vec3, angle: f32) -> Vec3 {
+pub(super) fn rotate(p: Vec3, axis: Vec3, angle: f32) -> Vec3 {
     let (s, c) = angle.sin_cos();
     p * c + axis.cross(p) * s + axis * (axis.dot(p) * (1.0 - c))
 }
