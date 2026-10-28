@@ -6,9 +6,11 @@
 
 mod app;
 mod audio;
+mod chapin;
 mod config;
 mod gargantua_p2;
 mod hud;
+mod marimba;
 #[allow(dead_code)]
 mod math;
 mod parallel;
@@ -308,6 +310,12 @@ fn run_window(options: &Options) -> Result<(), String> {
             }
         }
         if rl.is_key_pressed(KeyboardKey::KEY_V) {
+            app.toggle_version();
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_B) {
+            app.next_bottle();
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_Y) {
             // AUTO -> ON -> OFF -> AUTO
             app.path_mode = match app.path_mode {
                 None => Some(true),

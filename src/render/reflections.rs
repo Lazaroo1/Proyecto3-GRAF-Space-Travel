@@ -37,7 +37,7 @@ pub fn tile(tile: usize, out: &mut [Vec3], c: &Context) {
             let tri = &chunk.tris[(pixel.id & 0xffff) as usize];
             if !matches!(
                 c.draws[tri.draw as usize].material,
-                Material::Jardin | Material::Ship(_)
+                Material::Jardin | Material::Ship(_) | Material::Bottle
             ) {
                 continue;
             }

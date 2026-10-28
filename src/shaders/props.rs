@@ -88,6 +88,7 @@ pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
         PropKind::Beacon => beacon(&c, style),
         PropKind::Vent => vent(&c, style),
         PropKind::Crystal => crystal(&c, style),
+        chapin => crate::chapin::shade_prop(chapin, f, u, style, c.sun),
     }
 }
 

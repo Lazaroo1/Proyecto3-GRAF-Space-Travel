@@ -42,6 +42,8 @@ pub struct SunStyle {
     pub temperature: f32,
     /// Brillo de la superficie (HDR).
     pub intensity: f32,
+    /// En la version chapina es Kinich Ajaw, el sol maya.
+    pub glyph: bool,
 }
 
 /// Temperatura de la estrella en la agonia: arriba de esto se calienta.

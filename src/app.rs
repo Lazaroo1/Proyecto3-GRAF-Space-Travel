@@ -20,7 +20,7 @@ use crate::scene::effects::{self, EXHAUST_COUNT, SPORE_COUNT};
 use crate::scene::props::{self, Instance, PropKind, PropSet, PropStats, PropView};
 use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
 use crate::scene::trajectory::{self, Prediction};
-use crate::scene::{Mesh, System, nearest_surface, ribbon};
+use crate::scene::{Mesh, System, Version, nearest_surface, ribbon};
 use crate::shaders::{
     self, ArgosLook, AtmosphereFrame, BlackHole, DebugView, Gains, Material, PropStyle, RingInfo,
     SkyView, SunStyle, Uniforms, heartbeat_phase,
@@ -130,14 +130,17 @@ pub struct Preset {
     pub time: f64,
     /// Segundos desde la J del final (`None`: la estrella sigue en agonia).
     pub act: Option<f64>,
+    /// Si se ve en la version chapina.
+    pub chapin: bool,
 }
 
-pub const PRESETS: [Preset; 33] = [
+pub const PRESETS: [Preset; 49] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "02_pira",
@@ -149,6 +152,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "03_pira_noche",
@@ -160,6 +164,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "04_jardin",
@@ -171,6 +176,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "05_jardin_superficie",
@@ -182,6 +188,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "06_vigia",
@@ -193,6 +200,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "07_argos",
@@ -204,6 +212,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "08_cementerio",
@@ -215,12 +224,14 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "09_nave",
         shot: Shot::Ship { body: "Argos" },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "10_ojos",
@@ -232,6 +243,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "11_hongos",
@@ -243,6 +255,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "12_espinas",
@@ -254,6 +267,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "13_naufragio",
@@ -265,12 +279,14 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "14_cola",
         shot: Shot::Stream,
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "15_trayectoria",
@@ -281,6 +297,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "16_arritmia",
@@ -292,30 +309,35 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 700.0,
         act: Some(16.0),
+        chapin: false,
     },
     Preset {
         name: "17_colapso",
         shot: Shot::Gaze { body: "Jardin" },
         time: 725.2,
         act: Some(25.2),
+        chapin: false,
     },
     Preset {
         name: "17_onda_gravitacional",
         shot: Shot::Gaze { body: "Jardin" },
         time: 726.6,
         act: Some(30.6),
+        chapin: false,
     },
     Preset {
         name: "18_gargantua",
         shot: Shot::Gaze { body: "Pira" },
         time: 830.0,
         act: Some(134.0),
+        chapin: false,
     },
     Preset {
         name: "19_gargantua_jardin",
         shot: Shot::Gaze { body: "Jardin" },
         time: 830.0,
         act: Some(134.0),
+        chapin: false,
     },
     Preset {
         name: "20_jardin_noche_eterna",
@@ -327,24 +349,28 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 850.0,
         act: Some(154.0),
+        chapin: false,
     },
     Preset {
         name: "22_agonia",
         shot: Shot::Star,
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "23_jardin_biopunk",
         shot: Shot::Garden,
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "25_estertor",
         shot: Shot::Star,
         time: 40.0,
         act: Some(17.0),
+        chapin: false,
     },
     Preset {
         name: "26_baliza",
@@ -356,6 +382,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "27_geiseres",
@@ -367,6 +394,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "28_nido",
@@ -378,6 +406,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "33_iris",
@@ -389,6 +418,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "32_espejo",
@@ -400,6 +430,7 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "29_ojo_cerca",
@@ -411,24 +442,200 @@ pub const PRESETS: [Preset; 33] = [
         },
         time: 40.0,
         act: None,
+        chapin: false,
     },
     Preset {
         name: "30_comida",
         shot: Shot::Gaze { body: "Pira" },
         time: 830.0,
         act: Some(44.0),
+        chapin: false,
     },
     Preset {
         name: "31_digestion",
         shot: Shot::Gaze { body: "Pira" },
         time: 830.0,
         act: Some(62.0),
+        chapin: false,
     },
     Preset {
         name: "24_el_ojo",
         shot: Shot::BlackHole,
         time: 835.0,
         act: Some(139.0),
+        chapin: false,
+    },
+    Preset {
+        name: "40_chapin",
+        shot: Shot::Overview,
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "41_fuego",
+        shot: Shot::Orbit {
+            body: "Pira",
+            distance: 3.0,
+            azimuth: 0.5,
+            elevation: 0.15,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "42_antigua",
+        shot: Shot::Site {
+            body: "Pira",
+            altitude: 14.0,
+            back: 40.0,
+            lift: 0.0,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "43_peten",
+        shot: Shot::Orbit {
+            body: "Jardin",
+            distance: 3.0,
+            azimuth: 1.2,
+            elevation: 0.25,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "44_tikal",
+        shot: Shot::Site {
+            body: "Jardin",
+            altitude: 14.0,
+            back: 40.0,
+            lift: 0.0,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "45_atitlan",
+        shot: Shot::Orbit {
+            body: "Vigia",
+            distance: 2.6,
+            azimuth: 0.8,
+            elevation: 0.1,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "46_panajachel",
+        shot: Shot::Site {
+            body: "Vigia",
+            altitude: 14.0,
+            back: 40.0,
+            lift: 0.0,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "47_semuc",
+        shot: Shot::Site {
+            body: "Parpado",
+            altitude: 10.0,
+            back: 30.0,
+            lift: 2.0,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "48_cuchumatanes",
+        shot: Shot::Orbit {
+            body: "Argos",
+            distance: 2.7,
+            azimuth: 0.9,
+            elevation: 0.2,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "49_quirigua",
+        shot: Shot::Site {
+            body: "Argos",
+            altitude: 14.0,
+            back: 40.0,
+            lift: 0.0,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "50_xela",
+        shot: Shot::Orbit {
+            body: "Xela",
+            distance: 3.0,
+            azimuth: 0.6,
+            elevation: 0.2,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "51_capital",
+        shot: Shot::Orbit {
+            body: "Cementerio",
+            distance: 4.2,
+            azimuth: 0.9,
+            elevation: 0.7,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "52_reformador",
+        shot: Shot::Site {
+            body: "Cementerio",
+            altitude: 14.0,
+            back: 40.0,
+            lift: 0.0,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "53_kinich",
+        shot: Shot::Star,
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "54_xibalba",
+        shot: Shot::BlackHole,
+        time: 835.0,
+        act: Some(139.0),
+        chapin: true,
+    },
+    Preset {
+        name: "55_botella",
+        shot: Shot::Ship { body: "Pira" },
+        time: 40.0,
+        act: None,
+        chapin: true,
     },
 ];
 
@@ -502,6 +709,8 @@ pub struct App {
     accumulator: f64,
     /// Hacia donde mira el ojo de Vigia, en el espacio de Vigia.
     eye: DVec3,
+    /// La nave botella elegida para la version chapina (B la cambia).
+    pub bottle: usize,
     /// El ojo de Argos, en su espacio: a donde mira, el punto que tiene
     /// fijado, cuando puede saltar al siguiente y cuantos saltos lleva.
     stare: DVec3,
@@ -533,6 +742,7 @@ impl App {
             },
             time: 40.0,
             act: None,
+            chapin: self.system.version == Version::Chapin,
         });
         self.settings.local = false;
         DemoTour::default()
@@ -618,6 +828,7 @@ impl App {
             eye,
             stare,
             fixation: stare,
+            bottle: 0,
             next_saccade: 0.0,
             saccades: 0,
             system,
@@ -726,6 +937,7 @@ impl App {
             },
             time,
             act: self.timeline.since(time),
+            chapin: self.system.version == Version::Chapin,
         });
         self.banner = Some(site.name);
     }
@@ -805,7 +1017,7 @@ impl App {
             _ => 0.0,
         };
         // Un tono por planeta: notas graves de una escala menor.
-        let drone_hz = match self.body_name(f.nearest) {
+        let drone_hz = match self.system.bodies.get(f.nearest).map_or("", |b| b.name) {
             "Pira" => 55.0,
             "Jardin" => 73.4,
             "Vigia" => 41.2,
@@ -824,12 +1036,66 @@ impl App {
             wind: wind as f32,
             drone_hz,
             drone: 0.6,
+            marimba: if self.system.version == Version::Chapin { 0.55 } else { 0.0 },
             master: if self.muted { 0.0 } else { 0.8 },
         }
     }
 
+    /// El nombre de un cuerpo en el HUD (el de la version que se ve).
     pub fn body_name(&self, index: usize) -> &'static str {
-        self.system.bodies.get(index).map_or("?", |b| b.name)
+        self.system.bodies.get(index).map_or("?", |b| b.label)
+    }
+
+    /// Cambia de version (V): la nave sigue donde estaba.
+    pub fn toggle_version(&mut self) {
+        self.system.toggle_version();
+        self.apply_ship();
+        self.banner = Some(match self.system.version {
+            Version::Ocaso => "OCASO",
+            Version::Chapin => "Version chapina",
+        });
+    }
+
+    /// La siguiente nave botella (B), solo en la version chapina.
+    pub fn next_bottle(&mut self) {
+        if self.system.version != Version::Chapin || self.system.bottles.is_empty() {
+            return;
+        }
+        self.bottle = (self.bottle + 1) % self.system.bottles.len();
+        self.apply_ship();
+        self.banner = Some(self.system.bottles[self.bottle].name);
+    }
+
+    /// La nave de la version que se ve: la OCASO-1 o la botella elegida.
+    fn apply_ship(&mut self) {
+        match self.system.bottles.get(self.bottle).filter(|_| self.system.version == Version::Chapin) {
+            Some(bottle) => {
+                self.system.ship_mesh = [bottle.mesh; 3];
+                self.system.ship_material = Material::Bottle;
+            }
+            None => {
+                self.system.ship_mesh = [1, 2, 3];
+                self.system.ship_material = Material::Ship(crate::shaders::ShipStyle {
+                    specular: 0.5,
+                    shininess: 40.0,
+                });
+            }
+        }
+    }
+
+    /// Lo que sale por detras de la nave.
+    fn exhaust_style(&self) -> effects::Exhaust {
+        match self.system.bottles.get(self.bottle).filter(|_| self.system.version == Version::Chapin) {
+            Some(bottle) => bottle.exhaust,
+            None => effects::Exhaust::Plasma,
+        }
+    }
+
+    /// El nombre de la nave botella elegida, en la version chapina.
+    pub fn bottle_name(&self) -> Option<&'static str> {
+        (self.system.version == Version::Chapin)
+            .then(|| self.system.bottles.get(self.bottle).map(|b| b.name))
+            .flatten()
     }
 
     /// Estadisticas del terreno del planeta mas cercano a la nave.
@@ -866,6 +1132,7 @@ impl App {
             },
             time,
             act: self.timeline.since(time),
+            chapin: self.system.version == Version::Chapin,
         });
         self.settings.assist = true;
         self.settings.cruise = false;
@@ -1050,7 +1317,11 @@ impl App {
         // El ojo de Argos: a donde mira, que tan cerca esta la nave y si
         // parpadea. En el silencio, antes de que se abra Gargantua, lo cierra.
         // Si la nave vuela bajo, el ojo va debajo de ella, un poco adelante.
-        if let Some(i) = self.system.find("Argos") {
+        if let Some(i) = self
+            .system
+            .find("Argos")
+            .filter(|&i| matches!(self.system.bodies[i].material, Material::Argos(_)))
+        {
             let body = &self.system.bodies[i];
             let distance = (self.ship.world_pos - body.position(t)).length() / body.radius;
             let blink = if state.phase == cycle::Phase::Silence {
@@ -1081,6 +1352,7 @@ impl App {
         let star_material = Material::Sun(SunStyle {
             temperature: state.star_temperature,
             intensity: 3.0 * state.star_intensity,
+            glyph: self.system.version == Version::Chapin,
         });
         // De donde sale la luz: la estrella o, despues, el disco de Gargantua.
         let disk_light = state.disk_density * (1.0 - state.star_glow);
@@ -1568,13 +1840,24 @@ impl App {
             );
         }
         // Lo que flota alrededor de la camara cerca del suelo de cada planeta.
-        for (name, kind, top) in [
-            ("Pira", effects::Motes::Embers, 120.0),
-            ("Argos", effects::Motes::Drops, 120.0),
-            ("Cementerio", effects::Motes::Dust, 100.0),
-            ("Vigia", effects::Motes::Mist, 260.0),
-            ("Parpado", effects::Motes::Glints, 90.0),
-        ] {
+        let motes: Vec<(&str, effects::Motes, f64)> = match system.version {
+            Version::Ocaso => vec![
+                ("Pira", effects::Motes::Embers, 120.0),
+                ("Argos", effects::Motes::Drops, 120.0),
+                ("Cementerio", effects::Motes::Dust, 100.0),
+                ("Vigia", effects::Motes::Mist, 260.0),
+                ("Parpado", effects::Motes::Glints, 90.0),
+            ],
+            Version::Chapin => system
+                .bodies
+                .iter()
+                .filter_map(|b| {
+                    let (kind, top) = crate::chapin::spec(b.name)?.motes?;
+                    Some((b.name, kind, top))
+                })
+                .collect(),
+        };
+        for (name, kind, top) in motes {
             let Some(i) = system.find(name) else { continue };
             let body = &system.bodies[i];
             let altitude = (camera.pos - body.position(t)).length() - body.radius;
@@ -1603,7 +1886,7 @@ impl App {
                 effects::sparks(&mut out[start..], at, up, t, near, seed);
             }
         }
-        if let Some(i) = system.find("Jardin") {
+        if let Some(i) = system.find("Jardin").filter(|_| system.version == Version::Ocaso) {
             let jardin = &system.bodies[i];
             let altitude = (camera.pos - jardin.position(t)).length() - jardin.radius;
             if altitude < 120.0 {
@@ -1624,6 +1907,7 @@ impl App {
                 config::SHIP_LENGTH,
                 t,
                 camera.pos,
+                self.exhaust_style(),
             );
         }
         self.renderer.particles = out;
@@ -1686,6 +1970,11 @@ impl App {
 
     /// Coloca la nave y la camara en una vista fija.
     pub fn apply_preset(&mut self, preset: &Preset) {
+        let want = if preset.chapin { Version::Chapin } else { Version::Ocaso };
+        if self.system.version != want {
+            self.system.toggle_version();
+            self.apply_ship();
+        }
         let t = preset.time;
         self.timeline = Timeline::at(t, preset.act);
         self.cinematic_fov = if matches!(preset.shot, Shot::BlackHole) {
@@ -2030,10 +2319,10 @@ fn markers(
             if !on_screen || size > height as f64 * 0.2 {
                 return None;
             }
-            let name = if i == 0 && state.rs > 0.0 {
-                "Gargantua"
-            } else {
-                body.name
+            let name = match (i == 0 && state.rs > 0.0, system.version) {
+                (true, Version::Ocaso) => "Gargantua",
+                (true, Version::Chapin) => crate::chapin::HOLE_LABEL,
+                (false, _) => body.label,
             };
             Some(Marker {
                 name,
@@ -2625,6 +2914,7 @@ mod tests {
             },
             time: 40.0,
             act: None,
+            chapin: false,
         };
         app.apply_preset(&preset);
         let jardin = app.system.find("Jardin").unwrap();
@@ -2673,6 +2963,7 @@ mod tests {
             },
             time: 40.0,
             act: None,
+            chapin: false,
         };
         app.apply_preset(&preset);
         let jardin = app.system.find("Jardin").unwrap();

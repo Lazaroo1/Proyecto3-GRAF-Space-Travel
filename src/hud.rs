@@ -162,7 +162,11 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
             crate::scene::cycle::Phase::Agony => "AGONIA   J: desatar el final".to_string(),
             phase => format!(
                 "{}   {}   J: renacer",
-                phase.name().to_uppercase(),
+                match (phase, app.bottle_name()) {
+                    (crate::scene::cycle::Phase::EyeOpens, Some(_)) => "SE ABRE XIBALBA",
+                    _ => phase.name(),
+                }
+                .to_uppercase(),
                 clock(c.tau)
             ),
         },
@@ -187,9 +191,13 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
         ),
         format!("modo local [L]: {local}"),
         format!(
-            "crucero [O] {}   trayectoria [V] {path}{impact}",
+            "crucero [O] {}   trayectoria [Y] {path}{impact}",
             on_off(app.settings.cruise)
         ),
+        match app.bottle_name() {
+            Some(name) => format!("version chapina [V]   nave [B]: {name}"),
+            None => "version [V]: OCASO".to_string(),
+        },
     ];
     panel(d, 10, 10, &lines, true, width);
 
@@ -236,7 +244,8 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
             "W/S: adelante/atras   A/D: lados   Espacio/Ctrl: subir/bajar".to_string(),
             "Q/E: alabeo   Shift: turbo   C: camara   P: foto   Tab: soltar el mouse".to_string(),
             "X: freno de emergencia   Inicio: volver a Pira sin reiniciar el ciclo".to_string(),
-            "L: modo local   O: crucero (rodea el planeta)   V: trayectoria".to_string(),
+            "L: modo local   O: crucero (rodea el planeta)   Y: trayectoria".to_string(),
+            "V: version chapina / OCASO   B: cambiar de nave botella (en la chapina)".to_string(),
             "T: ajustes en vivo   M: sonido".to_string(),
             "R: rebobinar   [ ]: -30/+30 s   J: final / renacer   RePag/AvPag: vistas fijas".to_string(),
             "F3: wireframe   F4: colores de LOD   F5: LOD on/off   F6: otra semilla   F7: congelar frustum".to_string(),

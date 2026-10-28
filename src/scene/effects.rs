@@ -144,6 +144,17 @@ pub enum Motes {
     Mist,
     /// Polvo de cristal que flota sobre Parpado y destella.
     Glints,
+    // Version chapina.
+    /// Ceniza que cae del Volcan de Fuego.
+    Ash,
+    /// Luciernagas en la selva de Peten.
+    Fireflies,
+    /// Brisa de agua sobre Atitlan y Semuc Champey.
+    Spray,
+    /// Helada que brilla en el aire de los Cuchumatanes.
+    Frost,
+    /// Smog de la capital.
+    Smog,
 }
 
 pub const MOTE_COUNT: usize = 520;
@@ -166,6 +177,11 @@ pub fn motes(out: &mut [Particle], body: &Body, t: f64, camera: DVec3, kind: Mot
         Motes::Dust => (90.0, 2.0, 2.5, 0.12),
         Motes::Mist => (240.0, 0.0, 45.0, 9.0),
         Motes::Glints => (60.0, 3.0, 0.8, 0.03),
+        Motes::Ash => (70.0, -6.0, 3.0, 0.05),
+        Motes::Fireflies => (80.0, 2.0, 0.8, 0.04),
+        Motes::Spray => (90.0, 1.5, 4.0, 0.25),
+        Motes::Frost => (70.0, -2.0, 2.0, 0.025),
+        Motes::Smog => (200.0, 0.5, 6.0, 8.0),
     };
     let half = size * 0.5;
     let time = t as f32;
@@ -202,6 +218,11 @@ pub fn motes(out: &mut [Particle], body: &Body, t: f64, camera: DVec3, kind: Mot
                 Motes::Mist => Vec3::new(0.40, 0.28, 0.70) * 0.012,
                 // Destellos cortos: casi siempre apagados.
                 Motes::Glints => Vec3::new(0.8, 0.45, 1.0) * (6.0 * smoothstep(0.85, 1.0, flicker)),
+                Motes::Ash => Vec3::new(0.26, 0.24, 0.22) * 0.3,
+                Motes::Fireflies => Vec3::new(0.6, 1.0, 0.2) * (6.0 * smoothstep(0.8, 1.0, flicker)),
+                Motes::Spray => Vec3::new(0.5, 0.6, 0.7) * 0.05,
+                Motes::Frost => Vec3::new(0.8, 0.9, 1.0) * (4.0 * smoothstep(0.85, 1.0, flicker)),
+                Motes::Smog => Vec3::new(0.35, 0.28, 0.2) * 0.01,
             };
             *particle = Particle {
                 pos: to_world((cam + wrapped).as_dvec3()),
@@ -403,8 +424,22 @@ pub fn spores(out: &mut [Particle], jardin: &Body, t: f64, camera: DVec3, night:
     });
 }
 
-/// Fuego de los motores: un cono corto de plasma azul detras de la nave que
-/// crece con el empuje.
+/// Lo que sale por detras de la nave.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Exhaust {
+    /// El plasma azul de la OCASO-1.
+    Plasma,
+    /// Fuego de dos colores: el del centro y el de la punta.
+    Flame(Vec3, Vec3),
+    /// Espuma de cerveza: grumos claros que se abren despacio.
+    Foam,
+    /// Chispas de todos los colores.
+    Sparks,
+}
+
+/// Fuego de los motores: un cono corto detras de la nave que crece con el
+/// empuje, del estilo de la nave.
+#[allow(clippy::too_many_arguments)]
 pub fn exhaust(
     out: &mut [Particle],
     ship_pos: DVec3,
@@ -413,6 +448,7 @@ pub fn exhaust(
     length: f64,
     t: f64,
     camera: DVec3,
+    style: Exhaust,
 ) {
     let back = ship_rot.rotate(DVec3::Z).as_vec3();
     let nozzle = (ship_pos + ship_rot.rotate(DVec3::Z * (length * 0.5)) - camera).as_vec3();
@@ -426,11 +462,31 @@ pub fn exhaust(
         let dir = back + (a * angle.cos() + b * angle.sin()) * spread;
         let reach = (1.0 + 3.5 * throttle) * age;
         let heat = (1.0 - age) * (1.0 - age);
+        let (radius, color) = match style {
+            Exhaust::Plasma => (
+                0.05 + 0.12 * age,
+                Vec3::new(0.06, 0.5, 1.0).lerp(Vec3::new(0.04, 0.16, 0.6), age) * (throttle * heat * 0.65),
+            ),
+            Exhaust::Flame(core, tip) => (0.05 + 0.12 * age, core.lerp(tip, age) * (throttle * heat * 0.65)),
+            // Grumos mas grandes y lentos, que no se apagan tan pronto.
+            Exhaust::Foam => (
+                0.09 + 0.22 * age,
+                Vec3::new(0.95, 0.88, 0.7).lerp(Vec3::new(0.5, 0.42, 0.3), age) * (throttle * (1.0 - age) * 0.22),
+            ),
+            Exhaust::Sparks => {
+                let hue = unit(hash_u32(h ^ 0x51CA)) * 6.0;
+                let rainbow = Vec3::new(
+                    (1.0 - (hue - 0.0).abs().min((hue - 6.0).abs())).max(0.0) + (1.0 - (hue - 5.0).abs()).max(0.0),
+                    (1.0 - (hue - 2.0).abs()).max(0.0),
+                    (1.0 - (hue - 4.0).abs()).max(0.0),
+                );
+                (0.035 + 0.05 * age, rainbow * (throttle * heat * 1.4))
+            }
+        };
         *particle = Particle {
             pos: nozzle + dir * reach,
-            radius: 0.05 + 0.12 * age,
-            color: Vec3::new(0.06, 0.5, 1.0).lerp(Vec3::new(0.04, 0.16, 0.6), age)
-                * (throttle * heat * 0.65),
+            radius,
+            color,
         };
     }
 }
