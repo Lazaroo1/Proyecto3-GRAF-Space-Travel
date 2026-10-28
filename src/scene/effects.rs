@@ -23,20 +23,20 @@ const SPORE_RISE: f32 = 8.0;
 /// Particulas del escape de la nave.
 pub const EXHAUST_COUNT: usize = 100;
 /// Protuberancias: arcos de plasma de varias hebras torcidas.
-const PROMINENCE_ARCS: usize = 11;
-const PROMINENCE_STRANDS: usize = 5;
+const PROMINENCE_ARCS: usize = 5;
+const PROMINENCE_STRANDS: usize = 9;
 const PROMINENCE_SEGMENTS: usize = 120;
 /// Chispas que salen despedidas del borde de la estrella.
 const STAR_EMBERS: usize = 700;
 pub const PROMINENCE_COUNT: usize =
     PROMINENCE_ARCS * PROMINENCE_STRANDS * PROMINENCE_SEGMENTS + STAR_EMBERS;
 
-/// Arcos de plasma y chispas en el borde de la estrella. Como el ojo de la
-/// estrella mira a la camara (`shaders::sun::eye_frame`), los arcos se
-/// anclan al limbo tal como se ve desde ella: siempre se recortan contra el
-/// cielo, nunca quedan aplastados sobre el disco. Cada arco es una cuerda de
-/// hebras torcidas, mas caliente (amarilla) en los pies y roja arriba, con
-/// nudos de material que bajan por el arco; resbalan despacio por el borde.
+/// Arcos de plasma y chispas en el borde de la estrella. Los arcos se anclan
+/// al limbo tal como se ve desde la camara: siempre se recortan contra el
+/// cielo, nunca quedan aplastados sobre el disco. Son pocos y grandes, casi
+/// todos arriba. Cada uno es un manojo de hebras que se enroscan a distintos
+/// radios (se ve como fuego, no como un tubo), encendido en los pies y rojo
+/// arriba, con nudos de material que bajan; resbalan despacio por el borde.
 /// Con las llamaradas del estertor (`flares`) crecen, y uno de cada tres se
 /// desprende.
 pub fn prominences(
@@ -66,14 +66,14 @@ pub fn prominences(
         let strand = (i / PROMINENCE_SEGMENTS) % PROMINENCE_STRANDS;
         let s = (i % PROMINENCE_SEGMENTS) as f32 / (PROMINENCE_SEGMENTS - 1) as f32;
         let h = hash_u32(arc as u32 ^ 0xAC1D_72A1);
-        // Repartidos sin orden por el borde, mas arriba que abajo.
-        let up = unit(hash_u32(h)) * 2.0 - 1.0;
-        let phi = std::f32::consts::FRAC_PI_2 + up * (1.0 + 1.6 * up.abs()) + time * 0.004;
+        // Tres arriba y los demas en cualquier parte del borde.
+        let spread = if arc < 3 { 0.9 } else { 2.8 };
+        let phi = std::f32::consts::FRAC_PI_2 + (unit(hash_u32(h)) * 2.0 - 1.0) * spread + time * 0.004;
         let n = limb(phi, 0.06 + 0.1 * unit(hash_u32(h ^ 41)));
         // Los pies van a lo largo del borde y el arco sube hacia afuera.
         let tangent = axis.cross(n).normalize();
         let side = n.cross(tangent);
-        let width = 0.06 + 0.12 * unit(hash_u32(h ^ 7));
+        let width = 0.12 + 0.14 * unit(hash_u32(h ^ 7));
         let angle = (s - 0.5) * width * 2.0;
         let wave = (std::f32::consts::PI * s).sin().max(0.0);
         // Uno de cada tres se desprende cuando las llamaradas arrecian.
@@ -82,30 +82,36 @@ pub fn prominences(
         } else {
             0.0
         };
-        // Pocos arcos grandes y muchos chicos.
         let tall = unit(hash_u32(h ^ 13));
-        let height = (0.13 + 0.36 * tall * tall)
+        let height = (0.22 + 0.28 * tall)
             * (0.85 + 0.15 * (time * 0.12 + arc as f32).sin())
             * (1.0 + 1.6 * flares + 5.0 * erupt);
         let radial = n * angle.cos() + tangent * angle.sin();
         let lift = r * (1.0 + height * wave.powf(0.9) + 0.5 * erupt * erupt);
-        // Las hebras se enroscan alrededor del eje del arco.
+        // Cada hebra se enrosca a su radio y a su ritmo alrededor del eje del
+        // arco: el manojo se ve deshilachado.
+        let hs = hash_u32(h ^ (strand as u32 + 1) * 0x9E37);
         let twist = strand as f32 / PROMINENCE_STRANDS as f32 * std::f32::consts::TAU
-            + s * 7.0
-            + time * 0.6;
-        let rope = r * (0.01 + 0.018 * wave) * (1.0 + erupt);
+            + s * (3.0 + 6.0 * unit(hs))
+            + time * (0.3 + 0.4 * unit(hash_u32(hs)));
+        let rope = r * (0.008 + 0.024 * wave) * (0.4 + unit(hash_u32(hs ^ 5))) * (1.0 + erupt);
         let jitter = unit(hash_u32(i as u32 ^ 0x5EED)) - 0.5;
+        let flicker = unit(hash_u32(i as u32 ^ 0x0F1C)) - 0.5;
         let offset = (side * twist.cos() + radial * twist.sin()) * rope
-            + tangent * (jitter * r * 0.003);
+            + radial * (jitter * r * 0.02 * (0.3 + wave))
+            + side * (flicker * r * 0.015 * wave);
         // Nudos de material que caen por el arco hacia los pies.
         let knots = 0.5 + 0.5 * (s * 22.0 - time * 1.6 + arc as f32 * 1.7).sin();
-        let foot = Vec3::new(2.6, 1.1, 0.25);
+        let foot = Vec3::new(3.2, 1.6, 0.45);
         let crown = Vec3::new(1.6, 0.3, 0.05);
-        let brightness = strength * (0.65 + 0.35 * knots) * (0.55 + 0.45 * (1.0 - erupt));
+        let brightness = strength
+            * (0.5 + 0.5 * knots)
+            * (0.4 + 0.6 * unit(hash_u32(hs ^ 9)))
+            * (0.55 + 0.45 * (1.0 - erupt));
         *p = Particle {
             pos: center + radial * lift + offset,
-            radius: r * (0.008 + 0.007 * wave) * (1.0 + 0.6 * erupt),
-            color: foot.lerp(crown, wave) * (0.45 * brightness),
+            radius: r * (0.01 + 0.012 * wave) * (1.0 + 0.6 * erupt),
+            color: foot.lerp(crown, wave.powf(0.6)) * (0.1 * brightness),
         };
     }
     // Chispas: salen del borde, suben girando un poco y se apagan.
