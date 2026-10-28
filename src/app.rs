@@ -22,8 +22,8 @@ use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
 use crate::scene::trajectory::{self, Prediction};
 use crate::scene::{Mesh, System, nearest_surface, ribbon};
 use crate::shaders::{
-    self, AtmosphereFrame, BlackHole, DebugView, Gains, Material, PropStyle, RingInfo, SkyView,
-    SunStyle, Uniforms, heartbeat_phase,
+    self, ArgosLook, AtmosphereFrame, BlackHole, DebugView, Gains, Material, PropStyle, RingInfo,
+    SkyView, SunStyle, Uniforms, heartbeat_phase,
 };
 use crate::terrain::{LodSettings, TerrainStats, Viewer};
 
@@ -132,7 +132,7 @@ pub struct Preset {
     pub act: Option<f64>,
 }
 
-pub const PRESETS: [Preset; 32] = [
+pub const PRESETS: [Preset; 33] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
@@ -195,12 +195,12 @@ pub const PRESETS: [Preset; 32] = [
         act: None,
     },
     Preset {
-        name: "07_requiem",
-        shot: Shot::Surface {
-            body: "Requiem",
-            azimuth: 1.25,
-            elevation: 0.35,
-            altitude: 6.0,
+        name: "07_argos",
+        shot: Shot::Orbit {
+            body: "Argos",
+            distance: 2.7,
+            azimuth: 0.9,
+            elevation: 0.2,
         },
         time: 40.0,
         act: None,
@@ -218,16 +218,16 @@ pub const PRESETS: [Preset; 32] = [
     },
     Preset {
         name: "09_nave",
-        shot: Shot::Ship { body: "Requiem" },
+        shot: Shot::Ship { body: "Argos" },
         time: 40.0,
         act: None,
     },
     Preset {
-        name: "10_glifo",
+        name: "10_ojos",
         shot: Shot::Landmark {
-            body: "Requiem",
-            kind: PropKind::Monolith,
-            distance: 16.0,
+            body: "Argos",
+            kind: PropKind::Eye,
+            distance: 22.0,
             sun: 0.42,
         },
         time: 40.0,
@@ -275,7 +275,7 @@ pub const PRESETS: [Preset; 32] = [
     Preset {
         name: "15_trayectoria",
         shot: Shot::Coast {
-            body: "Requiem",
+            body: "Argos",
             distance: 2.2,
             speed: 0.85,
         },
@@ -369,12 +369,23 @@ pub const PRESETS: [Preset; 32] = [
         act: None,
     },
     Preset {
-        name: "28_monolitos",
+        name: "28_nido",
         shot: Shot::Site {
-            body: "Requiem",
+            body: "Argos",
             altitude: 14.0,
             back: 40.0,
             lift: 0.0,
+        },
+        time: 40.0,
+        act: None,
+    },
+    Preset {
+        name: "33_iris",
+        shot: Shot::Orbit {
+            body: "Argos",
+            distance: 1.5,
+            azimuth: 0.9,
+            elevation: 0.2,
         },
         time: 40.0,
         act: None,
@@ -491,6 +502,12 @@ pub struct App {
     accumulator: f64,
     /// Hacia donde mira el ojo de Vigia, en el espacio de Vigia.
     eye: DVec3,
+    /// El ojo de Argos, en su espacio: a donde mira, el punto que tiene
+    /// fijado, cuando puede saltar al siguiente y cuantos saltos lleva.
+    stare: DVec3,
+    fixation: DVec3,
+    next_saccade: f64,
+    saccades: u32,
 }
 
 /// Carpeta de modelos: la del directorio actual o, si se corre desde otro
@@ -596,8 +613,13 @@ impl App {
         let aim = DQuat::look_rotation(center - start, DVec3::Y);
         let ship = ShipState::new(&system.bodies, start, aim, t);
         let eye = eye_target(&system, start, t);
+        let stare = argos_target(&system, start, t, false);
         Ok(Self {
             eye,
+            stare,
+            fixation: stare,
+            next_saccade: 0.0,
+            saccades: 0,
             system,
             renderer: Renderer::new(width, height),
             settings: FlightSettings::default(),
@@ -787,10 +809,9 @@ impl App {
             "Pira" => 55.0,
             "Jardin" => 73.4,
             "Vigia" => 41.2,
-            "Requiem" => 49.0,
+            "Argos" => 49.0,
             "Cementerio" => 61.7,
             "Parpado" => 46.2,
-            "Epitafio" => 43.7,
             _ => 36.7,
         };
         let state = cycle::at(t, &self.timeline, self.system.star_base);
@@ -908,6 +929,19 @@ impl App {
         // El ojo de Vigia gira despacio hacia la nave.
         let target = eye_target(&self.system, self.ship.world_pos, self.sim_time);
         self.eye = self.eye.lerp(target, smoothing(0.35, frame_dt)).normalize();
+        // Argos fija la mirada y salta (una sacada) cuando la nave se le sale
+        // del punto fijado o cada poco rato. El salto es rapido pero tiene
+        // tope: si la nave esta del otro lado, el ojo llega arrastrandose
+        // bajo la carne. Cuando se abre Gargantua, la mira a ella.
+        let fear = self.cycle.since_eye > 0.0;
+        let target = argos_target(&self.system, self.ship.world_pos, self.sim_time, fear);
+        if self.fixation.dot(target) < 0.05f64.cos() || self.sim_time >= self.next_saccade {
+            self.fixation = target;
+            self.saccades = self.saccades.wrapping_add(1);
+            let unit = (hash_u32(self.saccades) >> 8) as f64 / 16_777_216.0;
+            self.next_saccade = self.sim_time + 0.5 + unit;
+        }
+        self.stare = turn_toward(self.stare, self.fixation, smoothing(18.0, frame_dt), 1.6 * frame_dt);
     }
 
     /// El mouse mueve la mira al ritmo de la pantalla (sin esperar a la
@@ -1012,6 +1046,27 @@ impl App {
         self.system.bodies[0].radius = state.collision_radius;
         if let Some(i) = self.system.find("Pira") {
             self.system.bodies[i].hidden = state.swallow >= 1.0;
+        }
+        // El ojo de Argos: a donde mira, que tan cerca esta la nave y si
+        // parpadea. En el silencio, antes de que se abra Gargantua, lo cierra.
+        // Si la nave baja a la carne el ojo se hunde y salen los ojos chicos
+        // a mirarla; al subir, vuelve a salir debajo de ella.
+        if let Some(i) = self.system.find("Argos") {
+            let body = &self.system.bodies[i];
+            let distance = (self.ship.world_pos - body.position(t)).length() / body.radius;
+            let blink = if state.phase == cycle::Phase::Silence {
+                1.0
+            } else {
+                argos_blink(t)
+            };
+            let look = ArgosLook {
+                eye: self.stare.as_vec3(),
+                radius: body.radius as f32,
+                near: smoothstep(4.0, 1.15, distance as f32),
+                blink,
+                presence: smoothstep(0.15, 0.32, (distance - 1.0) as f32),
+            };
+            self.system.bodies[i].material = Material::Argos(look);
         }
         let star = &self.system.bodies[0];
         self.cycle = state;
@@ -1146,16 +1201,6 @@ impl App {
                 color: Vec3::new(2.6, 0.9, 0.22) * (90.0 * activity),
                 radius: 60.0,
             });
-        }
-        for (glyph, up, _, scale) in props_near(&self.system, "Requiem", PropKind::Monolith, props::GLYPH_HEIGHT, t, camera.pos, 220.0) {
-            let awake = smoothstep(220.0, 30.0, (glyph - ship_rel).length());
-            if awake > 0.02 {
-                points.push(crate::shaders::PointLight {
-                    pos: glyph + up * 1.0,
-                    color: Vec3::new(0.6, 0.75, 1.2) * (22.0 * awake * scale * scale),
-                    radius: 40.0 * scale,
-                });
-            }
         }
         for (base, up, _, scale) in props_near(&self.system, "Parpado", PropKind::Crystal, 6.0, t, camera.pos, 200.0) {
             let awake = smoothstep(150.0, 20.0, (base - ship_rel).length());
@@ -1527,7 +1572,7 @@ impl App {
         // Lo que flota alrededor de la camara cerca del suelo de cada planeta.
         for (name, kind, top) in [
             ("Pira", effects::Motes::Embers, 120.0),
-            ("Requiem", effects::Motes::Snow, 120.0),
+            ("Argos", effects::Motes::Drops, 120.0),
             ("Cementerio", effects::Motes::Dust, 100.0),
             ("Vigia", effects::Motes::Mist, 260.0),
             ("Parpado", effects::Motes::Glints, 90.0),
@@ -1835,9 +1880,8 @@ impl App {
     /// posicion de la camara, el punto que mira y la vertical.
     ///
     /// Entre todos los objetos de ese tipo elige el que tiene el sol mas cerca
-    /// de la altura pedida y, en los monolitos, una cara con el glifo de lado
-    /// al sol. La camara se para frente a esa cara, o a 60 grados del sol en
-    /// los demas; si una loma tapa el objeto, prueba otros angulos alrededor.
+    /// de la altura pedida. La camara se para a 60 grados del sol; si una loma
+    /// tapa el objeto, prueba otros angulos alrededor.
     fn landmark(
         &self,
         index: usize,
@@ -1936,6 +1980,8 @@ impl App {
         self.flight.nearest = nearest_surface(&self.system.bodies, pos, t).0;
         self.local_up = None;
         self.eye = eye_target(&self.system, pos, t);
+        self.stare = argos_target(&self.system, pos, t, false);
+        self.fixation = self.stare;
     }
 }
 
@@ -2140,6 +2186,46 @@ fn beacon_lamp(system: &System, t: f64) -> Option<(DVec3, DVec3)> {
 
 /// Direccion de la nave vista desde el centro de Vigia, en su propio espacio:
 /// hacia ahi quiere mirar el ojo.
+/// A donde quiere mirar Argos, en su espacio: a la nave o, con `fear`, a
+/// Gargantua (donde estaba la estrella).
+fn argos_target(system: &System, ship_pos: DVec3, t: f64, fear: bool) -> DVec3 {
+    let Some(i) = system.find("Argos") else {
+        return DVec3::X;
+    };
+    let body = &system.bodies[i];
+    let goal = if fear { system.bodies[0].position(t) } else { ship_pos };
+    let toward = (goal - body.position(t)).normalize();
+    body.rotation(t).conjugate().rotate(toward)
+}
+
+/// Gira `from` hacia `to` (unitarios) una fraccion del angulo entre ellos,
+/// sin pasar de `max_step` radianes.
+fn turn_toward(from: DVec3, to: DVec3, fraction: f64, max_step: f64) -> DVec3 {
+    let gap = from.dot(to).clamp(-1.0, 1.0).acos();
+    if gap < 1e-9 {
+        return to;
+    }
+    let mut axis = from.cross(to);
+    if axis.length_squared() < 1e-18 {
+        axis = from.cross(if from.y.abs() < 0.9 { DVec3::Y } else { DVec3::X });
+    }
+    DQuat::from_axis_angle(axis.normalize(), (gap * fraction).min(max_step)).rotate(from).normalize()
+}
+
+/// Parpadeo de Argos (0 abierto, 1 cerrado): uno cada 8 s, a una hora al
+/// azar dentro de ese rato, de 0.45 s. Solo depende del tiempo.
+fn argos_blink(t: f64) -> f32 {
+    let period = 8.0;
+    let k = (t / period).floor();
+    let start = k * period + 4.0 * (hash_u32(k as i64 as u32 ^ 0xB11C) >> 8) as f64 / 16_777_216.0;
+    let x = (t - start) / 0.45;
+    if (0.0..1.0).contains(&x) {
+        (PI * x).sin().powf(0.6) as f32
+    } else {
+        0.0
+    }
+}
+
 fn eye_target(system: &System, ship_pos: DVec3, t: f64) -> DVec3 {
     let body = &system.bodies[system.eye_body];
     let toward = (ship_pos - body.position(t)).normalize();
@@ -2264,18 +2350,29 @@ fn prop_draws<'a>(
             &mut stats,
             &mut chosen,
         );
+        // En Argos, los ojos chicos se hunden en la carne cuando el grande les
+        // pasa encima, y salen cuando el grande se hunde.
+        let argos = match body.material {
+            Material::Argos(look) => Some(look),
+            _ => None,
+        };
         for pick in &chosen {
             let instance = &set.instances[pick.index];
             let mesh = &system.prop_models[instance.kind.index()].lods[pick.lod];
+            let mut grow = pick.grow;
+            if let Some(look) = argos {
+                let angle = instance.position.normalize().as_vec3().dot(look.eye).clamp(-1.0, 1.0).acos();
+                let clear = smoothstep(shaders::ARGOS_OPEN + 0.03, shaders::ARGOS_OPEN + 0.14, angle);
+                grow *= clear.max(1.0 - look.presence);
+                if grow <= 0.01 {
+                    continue;
+                }
+            }
             // Los modelos nacen en su base: al encogerse se hunden en el suelo.
-            let scale = (instance.scale * pick.grow) as f64;
-            let lift = shaders::displace(
-                &body.material,
-                instance.position.as_vec3(),
-                t as f32,
-                &system.noise,
-            );
-            let position = instance.position + instance.position.normalize() * lift as f64;
+            let scale = (instance.scale * grow) as f64;
+            let base = instance.position.as_vec3();
+            let lift = shaders::displace(&body.material, base, base.normalize(), t as f32, &system.noise);
+            let position = instance.position + lift.as_dvec3();
             let rot = rotation.mul(&instance.rotation.to_mat3());
             let linear = rot.scale(scale);
             let offset = center + rotation.mul_vec(position);

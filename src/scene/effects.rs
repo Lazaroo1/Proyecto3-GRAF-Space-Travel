@@ -136,8 +136,8 @@ pub fn prominences(
 pub enum Motes {
     /// Brasas que suben del suelo de Pira.
     Embers,
-    /// Nieve que cae sobre Requiem, con el viento.
-    Snow,
+    /// Gotas de liquido rojo que flotan despacio sobre la carne de Argos.
+    Drops,
     /// Polvo y ceniza de metal en Cementerio.
     Dust,
     /// Jirones de nube que pasan rozando a Vigia.
@@ -162,7 +162,7 @@ pub fn motes(out: &mut [Particle], body: &Body, t: f64, camera: DVec3, kind: Mot
     // lateral (unidades por segundo) y tamano.
     let (size, travel, wind, radius) = match kind {
         Motes::Embers => (80.0f32, 26.0f32, 1.5f32, 0.035f32),
-        Motes::Snow => (70.0, -14.0, 6.0, 0.06),
+        Motes::Drops => (70.0, -3.0, 1.2, 0.07),
         Motes::Dust => (90.0, 2.0, 2.5, 0.12),
         Motes::Mist => (240.0, 0.0, 45.0, 9.0),
         Motes::Glints => (60.0, 3.0, 0.8, 0.03),
@@ -197,7 +197,7 @@ pub fn motes(out: &mut [Particle], body: &Body, t: f64, camera: DVec3, kind: Mot
                 // Solo una de cada tres brasas esta encendida a la vez.
                 Motes::Embers if h % 3 == 0 => planckian_rgb(1300.0 + 900.0 * unit(h >> 9)) * (7.0 * flicker),
                 Motes::Embers => Vec3::ZERO,
-                Motes::Snow => Vec3::new(0.75, 0.86, 1.0) * (1.2 + 1.2 * flicker),
+                Motes::Drops => Vec3::new(0.7, 0.05, 0.1) * (0.25 + 0.35 * flicker),
                 Motes::Dust => Vec3::new(0.55, 0.42, 0.32) * 0.35,
                 Motes::Mist => Vec3::new(0.40, 0.28, 0.70) * 0.012,
                 // Destellos cortos: casi siempre apagados.

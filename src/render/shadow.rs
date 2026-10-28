@@ -152,8 +152,7 @@ impl ShadowMap {
                     let i = global - caster.points;
                     let mut p = mesh.positions[i];
                     if deforms {
-                        p += mesh.normals[i]
-                            * shaders::displace(&draw.material, p + draw.local_offset, time, noise);
+                        p += shaders::displace(&draw.material, p + draw.local_offset, mesh.normals[i], time, noise);
                     }
                     out[global - first] = frame.project(draw.model.transform_affine(p));
                 }

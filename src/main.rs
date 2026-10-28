@@ -420,8 +420,8 @@ fn run_capture(options: &Options, dir: &Path) -> Result<(), String> {
         .iter()
         .map(|p| (p.name.to_string(), Some(p)))
         .collect();
-    // Demostracion del culling: se congela el frustum sobre Requiem y la
-    // camara se aleja hacia atras y arriba.
+    // Demostracion del culling: se congela el frustum en el nido de Argos y
+    // la camara se aleja hacia atras y arriba.
     shots.push(("21_frustum_congelado".to_string(), None));
     for (name, preset) in shots {
         if options.preset.is_some_and(|i| name != PRESETS[i].name) {
@@ -430,7 +430,8 @@ fn run_capture(options: &Options, dir: &Path) -> Result<(), String> {
         match preset {
             Some(preset) => app.apply_preset(preset),
             None => {
-                app.apply_preset(&PRESETS[6]);
+                let nest = PRESETS.iter().find(|p| p.name == "28_nido").expect("la vista del nido");
+                app.apply_preset(nest);
                 settle(&mut app);
                 app.toggle_freeze();
                 let back = app.aim().rotate(DVec3::new(0.0, 0.6, 1.0)).normalize();

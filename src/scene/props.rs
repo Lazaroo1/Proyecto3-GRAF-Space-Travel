@@ -2,9 +2,9 @@
 //!
 //! # Modelos
 //! Todos generados con codigo (`MeshBuilder`), cada uno en tres niveles de
-//! detalle: monolitos, sus ruinas y picos de roca (Requiem), hongos y
-//! corales (Jardin), espinas de obsidiana y geiseres (Pira), naves
-//! naufragas y la baliza (Cementerio) y cristales (Parpado).
+//! detalle: ojos de carne (Argos), hongos y corales (Jardin), espinas de
+//! obsidiana y geiseres (Pira), naves naufragas y la baliza (Cementerio) y
+//! cristales (Parpado).
 //!
 //! # Distribucion
 //! Cada cara del cubo-esfera se divide en una grilla; cada celda propone un
@@ -12,7 +12,7 @@
 //! cara y la celda). El candidato se acepta con una probabilidad que sale de
 //! **ruido fractal** (asi los objetos forman grupos y claros, no una lluvia
 //! pareja) multiplicado por lo que dice el terreno en ese punto: altura,
-//! pendiente y mascaras (no hay hongos en la lava ni agujas en el hielo).
+//! pendiente y mascaras (no hay hongos en la lava ni ojos en los surcos).
 //! Todo depende solo de la semilla: la misma semilla, las mismas ubicaciones.
 //!
 //! # Orientacion
@@ -41,8 +41,7 @@ use crate::terrain::{HeightField, TerrainSample, cube_to_sphere};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PropKind {
-    Monolith,
-    Ruin,
+    Eye,
     Mushroom,
     Coral,
     Spike,
@@ -51,13 +50,11 @@ pub enum PropKind {
     Beacon,
     Vent,
     Crystal,
-    Crag,
 }
 
 impl PropKind {
-    pub const ALL: [Self; 11] = [
-        Self::Monolith,
-        Self::Ruin,
+    pub const ALL: [Self; 9] = [
+        Self::Eye,
         Self::Mushroom,
         Self::Coral,
         Self::Spike,
@@ -66,7 +63,6 @@ impl PropKind {
         Self::Beacon,
         Self::Vent,
         Self::Crystal,
-        Self::Crag,
     ];
 
     /// Posicion en `ALL` (y en la lista de modelos).
@@ -75,14 +71,13 @@ impl PropKind {
     }
 
     /// Cuanto cuenta su tamano en pantalla para decidir si se dibuja. Los
-    /// naufragios (1) se ven desde lejos; los monumentos, delgados, un poco
-    /// menos (en el borde del planeta parecerian pelos); la vegetacion y las
-    /// espinas (0.5) necesitan el doble de tamano: desde la orbita solo
-    /// ensuciarian.
+    /// naufragios (1) se ven desde lejos; los ojos de Argos, un poco menos;
+    /// la vegetacion y las espinas (0.5) necesitan el doble de tamano: desde
+    /// la orbita solo ensuciarian.
     pub fn visibility(self) -> f32 {
         match self {
-            Self::Wreck | Self::Boulder | Self::Beacon | Self::Crag => 1.0,
-            Self::Monolith | Self::Ruin => 0.75,
+            Self::Wreck | Self::Boulder | Self::Beacon => 1.0,
+            Self::Eye => 0.75,
             Self::Mushroom | Self::Coral | Self::Spike | Self::Vent | Self::Crystal => 0.5,
         }
     }
@@ -111,10 +106,8 @@ pub const CORAL_TOP: f32 = 12.9;
 /// apoyado en `y = 0`.
 const HULL: f32 = 3.2;
 
-/// Monolitos de Requiem: medio ancho, medio grosor y altura de la losa, y la
-/// altura del centro del glifo (en sus dos caras anchas, `z` = +-grosor).
-pub const MONOLITH: (f32, f32, f32) = (1.35, 0.45, 13.0);
-pub const GLYPH_HEIGHT: f32 = 8.6;
+/// Centro del globo de los ojos de Argos, en unidades del modelo (radio 1).
+pub const EYE_CENTER: Vec3 = Vec3::new(0.0, 0.35, 0.0);
 /// Altura de la luz de la baliza de Cementerio, en unidades del modelo.
 pub const BEACON_TOP: f32 = 46.0;
 
@@ -132,6 +125,8 @@ const POOL: Vec3 = Vec3::new(1.0, 1.0, 0.0);
 pub const VENT_TOP: f32 = 7.3;
 /// Paredes de adentro del casco: el shader las oscurece con el rojo.
 const INSIDE: Vec3 = Vec3::new(0.15, 1.0, 1.0);
+/// El globo de los ojos de Argos (el shader lo distingue de la carne).
+const EYEBALL: Vec3 = Vec3::new(1.0, 1.0, 1.0);
 
 /// Ejes de una caja girada `angle` alrededor de z.
 fn tilted(angle: f32) -> [Vec3; 3] {
@@ -139,95 +134,29 @@ fn tilted(angle: f32) -> [Vec3; 3] {
     [Vec3::new(c, s, 0.0), Vec3::new(-s, c, 0.0), Vec3::Z]
 }
 
-/// Monolito de Requiem: una losa alta de piedra oscura, gastada. El cuerpo
-/// va en tres tramos que no calzan del todo (la piedra se partio y se
-/// asento) y remata en un corte inclinado; al pie, cascajo. Las caras
-/// anchas (`z`) llevan el glifo, que dibuja el shader. `broken`: el de una
-/// ruina, partido a media altura con el pedazo de arriba tirado al lado.
-fn monolith(detail: usize, broken: bool) -> Mesh {
+/// Un ojo de la carne de Argos: un globo de radio 1 medio hundido en un
+/// bulto de carne, entre parpados (un tubo cerrado en forma de almendra, con
+/// grumos). El globo lleva el color `EYEBALL`; la carne, `STONE`.
+fn eye(detail: usize) -> Mesh {
     let mut b = MeshBuilder::new();
+    let (rings, segments, around, tube) = [(4, 8, 10, 5), (6, 12, 16, 6), (9, 18, 26, 8)][detail];
+    b.color(EYEBALL);
+    b.ellipsoid(EYE_CENTER, Vec3::splat(0.95), rings, segments, true);
     b.color(STONE);
-    let (half_x, half_z, height) = MONOLITH;
-    let axes = [Vec3::X, Vec3::Y, Vec3::Z];
-    if detail == 0 {
-        let top = if broken { height * 0.55 } else { height };
-        b.cuboid(Vec3::new(0.0, (top - 1.0) * 0.5, 0.0), axes, Vec3::new(half_x, (top + 1.0) * 0.5, half_z));
-        return b.build();
+    // El bulto de carne donde se hunde.
+    b.ellipsoid(Vec3::new(0.0, -0.1, 0.0), Vec3::new(1.75, 0.65, 1.5), rings, segments, true);
+    // Los parpados: un anillo grueso, mas ancho que alto, con grumos.
+    let mut path = Vec::with_capacity(around + 1);
+    let mut radii = Vec::with_capacity(around + 1);
+    for k in 0..=around {
+        let a = k as f32 / around as f32 * TAU;
+        let h = hash_u32(0xE7E5 ^ (k % around) as u32);
+        let lump = ((h >> 8) & 0xFF) as f32 / 255.0;
+        path.push(Vec3::new(a.cos() * 1.12, EYE_CENTER.y + 0.12 + 0.08 * (2.0 * a).cos(), a.sin() * 0.8));
+        radii.push(0.3 + 0.12 * lump);
     }
-    let tiers = [(-1.0, 4.6, 1.0, 0.0), (4.6, 10.2, 0.96, 0.05), (10.2, height - 0.6, 0.92, -0.04)];
-    let count = if broken { 2 } else { 3 };
-    for (k, &(bottom, top, width, shift)) in tiers[..count].iter().enumerate() {
-        // El tramo de arriba de una ruina quedo a media altura.
-        let top = if broken && k == 1 { top - 2.2 } else { top };
-        b.cuboid(
-            Vec3::new(shift, (bottom + top) * 0.5, -shift * 0.6),
-            axes,
-            Vec3::new(half_x * width, (top - bottom) * 0.5, half_z * width),
-        );
-    }
-    if broken {
-        // El pedazo de arriba, tirado y medio enterrado.
-        b.cuboid(
-            Vec3::new(3.6, 0.55, 0.9),
-            [Vec3::new(0.15, -0.99, 0.0).normalize(), Vec3::new(0.99, 0.15, 0.0).normalize(), Vec3::Z],
-            Vec3::new(half_x * 0.9, 3.4, half_z * 0.9),
-        );
-    } else {
-        // Remate cortado en diagonal.
-        b.cuboid(
-            Vec3::new(0.0, height - 0.55, 0.0),
-            tilted(0.32),
-            Vec3::new(half_x * 0.88, 0.75, half_z * 0.9),
-        );
-    }
-    if detail >= 2 {
-        // Cascajo al pie.
-        for k in 0..5u32 {
-            let h = hash_u32(0x30A0 ^ k.wrapping_mul(0x9E37_79B9) ^ broken as u32);
-            let unit = |shift: u32| ((h >> shift) & 0xFF) as f32 / 255.0;
-            let angle = unit(0) * TAU;
-            let at = Vec3::new(angle.cos() * (1.9 + 1.4 * unit(8)), 0.1, angle.sin() * (1.2 + 1.0 * unit(8)));
-            let size = 0.25 + 0.35 * unit(16);
-            b.cuboid(at, tilted(unit(24) * 2.0), Vec3::new(size, size * 0.8, size * 1.1));
-        }
-    }
-    b.build()
-}
-
-/// Pico de roca de Requiem: una aguja natural, oscura y angulosa, en tres
-/// tramos quebrados que se afinan hasta la punta; los mas detallados tienen
-/// otros mas chicos al lado.
-fn crag(detail: usize) -> Mesh {
-    let mut b = MeshBuilder::new();
-    b.color(STONE);
-    let sides = [4, 5, 5][detail];
-    let count = [1, 2, 3][detail];
-    for k in 0..count {
-        let h = hash_u32(0xC2A6 ^ (k as u32).wrapping_mul(0x9E37_79B9));
-        let unit = |shift: u32| ((h >> shift) & 0xFF) as f32 / 255.0;
-        let angle = unit(0) * TAU;
-        let mut base = if k == 0 {
-            Vec3::new(0.0, -1.0, 0.0)
-        } else {
-            Vec3::new(angle.cos(), 0.0, angle.sin()) * (1.8 + 1.2 * unit(8)) - Vec3::Y
-        };
-        let height = if k == 0 { 17.0 } else { 6.0 + 7.0 * unit(16) };
-        let mut radius = if k == 0 { 2.3 } else { 1.0 + 0.7 * unit(24) };
-        for segment in 0..3u32 {
-            let bend = hash_u32(h ^ segment.wrapping_mul(0x51ED));
-            let lean = Vec3::new(
-                (((bend >> 4) & 0xFF) as f32 / 255.0 - 0.5) * 0.45,
-                1.0,
-                (((bend >> 12) & 0xFF) as f32 / 255.0 - 0.5) * 0.45,
-            )
-            .normalize();
-            let length = height / 3.0 * (0.85 + 0.3 * ((bend >> 20) & 0xFF) as f32 / 255.0);
-            let next = if segment == 2 { 0.0 } else { radius * 0.6 };
-            b.frustum(base, lean, length, radius, next, sides, false, (false, false));
-            base += lean * length;
-            radius = next;
-        }
-    }
+    *radii.last_mut().unwrap() = radii[0];
+    b.tube(&path, &radii, tube);
     b.build()
 }
 
@@ -370,67 +299,33 @@ pub fn vent_field(
     }
 }
 
-/// Los monolitos de Requiem: uno enorme en medio y un campo alrededor,
-/// todos con el glifo hacia la estrella y varios inclinados hacia ella:
-/// apuntan a donde va a nacer Gargantua. Entre ellos, ruinas; atras, picos
-/// de roca.
-pub fn monolith_field(
+/// El nido de Argos: un ojo enorme en medio y un monton alrededor, de todos
+/// los tamanos, apretados en la carne. Todos miran a la nave.
+pub fn eye_nest(
     instances: &mut Vec<Instance>,
     radius: f64,
     field: &dyn HeightField,
     seed: u32,
     frame: (DVec3, DVec3, DVec3),
 ) {
-    clear_site(instances, radius, frame.0, 130.0);
-    let forward = frame.1;
-    let center = 55.0;
-    // De pie con la cara del glifo hacia la estrella e inclinado `lean`
-    // hacia ella.
-    let stand = |kind: PropKind, x: f64, z: f64, scale: f32, lean: f64| {
-        let mut instance = at_site(radius, field, frame, kind, x, z, scale, 0.0, 0.8);
-        let up = instance.position.normalize();
-        instance.rotation =
-            upright_rotation(up, yaw_toward(up, forward)) * DQuat::from_axis_angle(DVec3::X, lean);
-        instance
-    };
-    instances.push(stand(PropKind::Monolith, 0.0, center, 2.6, 0.0));
-    for k in 0..11u32 {
-        let h = hash_u32(seed ^ k.wrapping_mul(0x51ED) ^ 0xCA7E);
-        let angle = (k as f64 + 0.3 * unit(h) as f64) / 11.0 * std::f64::consts::TAU;
-        let distance = 30.0 + 26.0 * unit(hash_u32(h)) as f64;
-        let kind = if unit(hash_u32(h ^ 1)) < 0.3 {
-            PropKind::Ruin
-        } else {
-            PropKind::Monolith
-        };
-        let lean = if unit(hash_u32(h ^ 2)) < 0.45 {
-            0.12 + 0.25 * unit(hash_u32(h ^ 3)) as f64
-        } else {
-            0.0
-        };
-        instances.push(stand(
-            kind,
-            angle.cos() * distance,
-            center + angle.sin() * distance,
-            0.9 + 0.6 * unit(hash_u32(h ^ 4)),
-            lean,
-        ));
-    }
-    // Picos de roca atras, como un cerco.
-    for k in 0..9u32 {
-        let h = hash_u32(seed ^ k.wrapping_mul(0x2B1E) ^ 0x7A11);
-        let angle = (k as f64 + 0.5 * unit(h) as f64) / 9.0 * std::f64::consts::TAU;
-        let distance = 85.0 + 35.0 * unit(hash_u32(h)) as f64;
+    clear_site(instances, radius, frame.0, 110.0);
+    let center = 50.0;
+    instances.push(at_site(radius, field, frame, PropKind::Eye, 0.0, center, 9.0, 0.0, 0.25));
+    for k in 0..22u32 {
+        let h = hash_u32(seed ^ k.wrapping_mul(0x51ED) ^ 0xE7E5);
+        let angle = (k as f64 + 0.6 * unit(h) as f64) / 22.0 * std::f64::consts::TAU;
+        let distance = 18.0 + 60.0 * unit(hash_u32(h)) as f64;
+        let size = unit(hash_u32(h ^ 1));
         instances.push(at_site(
             radius,
             field,
             frame,
-            PropKind::Crag,
+            PropKind::Eye,
             angle.cos() * distance,
             center + angle.sin() * distance,
-            0.9 + 0.7 * unit(hash_u32(h ^ 5)),
+            1.5 + 4.5 * size * size,
             unit(hash_u32(h ^ 9)) as f64 * std::f64::consts::TAU,
-            1.0,
+            0.25,
         ));
     }
 }
@@ -822,14 +717,13 @@ fn fit_height(mut mesh: Mesh, top: f32) -> Mesh {
     mesh
 }
 
-/// Los seis modelos, en el orden de `PropKind::ALL`.
+/// Los modelos, en el orden de `PropKind::ALL`.
 pub fn build_models() -> Vec<PropModel> {
     PropKind::ALL
         .iter()
         .map(|&kind| {
             let make = |detail: usize| match kind {
-                PropKind::Monolith => monolith(detail, false),
-                PropKind::Ruin => monolith(detail, true),
+                PropKind::Eye => eye(detail),
                 PropKind::Mushroom => mushroom(detail),
                 PropKind::Coral => coral(detail),
                 PropKind::Spike => spikes(detail),
@@ -838,7 +732,6 @@ pub fn build_models() -> Vec<PropModel> {
                 PropKind::Beacon => beacon(detail),
                 PropKind::Vent => vent(detail),
                 PropKind::Crystal => crystal(detail),
-                PropKind::Crag => crag(detail),
             };
             let mut lods = [make(2), make(1), make(0)];
             if matches!(kind, PropKind::Mushroom | PropKind::Coral) {
@@ -973,15 +866,6 @@ pub fn scatter(
 }
 
 /// Orientacion con +Y sobre `up` y un giro `yaw` alrededor de el.
-/// Giro alrededor de la vertical `up` que deja la cara +z del modelo
-/// mirando hacia `toward` (con los mismos ejes que `upright_rotation`).
-fn yaw_toward(up: DVec3, toward: DVec3) -> f64 {
-    let helper = if up.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
-    let x = helper.cross(up).normalize();
-    let z = x.cross(up);
-    toward.dot(x).atan2(toward.dot(z))
-}
-
 fn upright_rotation(up: DVec3, yaw: f64) -> DQuat {
     let helper = if up.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
     let x = helper.cross(up).normalize();
@@ -1184,50 +1068,21 @@ pub fn select(
 /// Reglas de cada planeta, por nombre.
 pub fn rules_for(planet: &str) -> Vec<Scatter> {
     match planet {
-        // Monolitos y ruinas en tierra firme y plana, nunca en las llanuras
-        // de hielo; picos de roca en las alturas nevadas.
-        "Requiem" => vec![
-            Scatter {
-                kind: PropKind::Monolith,
-                cells: 18,
-                scale: (0.8, 1.4),
-                sink: 0.8,
-                upright: true,
-                accept: |density, s, slope| {
-                    (1.0 - s.attrs.x)
-                        * smoothstep(0.6, 0.2, slope)
-                        * smoothstep(0.58, 0.72, density)
-                        * 0.6
-                },
+        // Ojos en grupos sobre la carne, en lo alto de los pliegues y nunca
+        // en el fondo de los surcos.
+        "Argos" => vec![Scatter {
+            kind: PropKind::Eye,
+            cells: 34,
+            scale: (2.5, 9.0),
+            sink: 0.2,
+            upright: true,
+            accept: |density, s, slope| {
+                (1.0 - s.attrs.y)
+                    * smoothstep(0.9, 0.3, slope)
+                    * smoothstep(0.5, 0.7, density)
+                    * 0.6
             },
-            Scatter {
-                kind: PropKind::Crag,
-                cells: 34,
-                scale: (0.6, 1.6),
-                sink: 1.0,
-                upright: true,
-                accept: |density, s, slope| {
-                    (1.0 - s.attrs.x)
-                        * (0.3 + 0.7 * s.attrs.y)
-                        * smoothstep(0.95, 0.4, slope)
-                        * smoothstep(0.5, 0.68, density)
-                        * 0.55
-                },
-            },
-            Scatter {
-                kind: PropKind::Ruin,
-                cells: 14,
-                scale: (0.8, 1.2),
-                sink: 0.5,
-                upright: true,
-                accept: |density, s, slope| {
-                    (1.0 - s.attrs.x)
-                        * smoothstep(0.4, 0.1, slope)
-                        * smoothstep(0.6, 0.72, density)
-                        * 0.6
-                },
-            },
-        ],
+        }],
         // Hongos en los valles, corales en las crestas.
         "Jardin" => vec![
             Scatter {
@@ -1311,12 +1166,12 @@ pub fn rules_for(planet: &str) -> Vec<Scatter> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terrain::shapes::RequiemField;
+    use crate::terrain::shapes::ArgosField;
 
     #[test]
     fn same_seed_same_places_and_another_seed_moves_them() {
-        let field = RequiemField::new(3);
-        let rules = rules_for("Requiem");
+        let field = ArgosField::new(3);
+        let rules = rules_for("Argos");
         let a = scatter(160.0, &field, &rules, 42);
         let b = scatter(160.0, &field, &rules, 42);
         let c = scatter(160.0, &field, &rules, 43);
@@ -1332,8 +1187,8 @@ mod tests {
 
     #[test]
     fn instances_stand_on_the_surface_pointing_up() {
-        let field = RequiemField::new(3);
-        let instances = scatter(160.0, &field, &rules_for("Requiem"), 7);
+        let field = ArgosField::new(3);
+        let instances = scatter(160.0, &field, &rules_for("Argos"), 7);
         for i in instances.iter().take(200) {
             let up = i.rotation.rotate(DVec3::Y);
             let radial = i.position.normalize();
@@ -1349,8 +1204,8 @@ mod tests {
     #[test]
     fn selection_picks_detail_by_screen_size_and_hides_the_far_side() {
         let models = build_models();
-        let field = RequiemField::new(3);
-        let set = PropSet::new(scatter(160.0, &field, &rules_for("Requiem"), 5), &models);
+        let field = ArgosField::new(3);
+        let set = PropSet::new(scatter(160.0, &field, &rules_for("Argos"), 5), &models);
         let (low, high) = field.height_range();
         let everything = |_: DVec3, _: f64| true;
         let run = |camera: DVec3| {

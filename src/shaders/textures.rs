@@ -5,7 +5,7 @@
 //! pendiente de la altura por diferencias centrales:
 //! `n = normalize(-dh/du, -dh/dv, 1)` en el espacio tangente, con z hacia
 //! afuera de la superficie. Junto a la normal va un canal de brillo: lo que
-//! el shader hace emitir luz (el ojo tallado de los monolitos).
+//! el shader hace emitir luz.
 
 use crate::math::{Perlin, Vec2, Vec3, smoothstep};
 

@@ -1,3 +1,55 @@
+# Cambios de la sexta revisión
+
+- **Argos reemplaza a Réquiem** (misma órbita, radio 200): un planeta de
+  carne con un ojo enorme que **te sigue por todo el sistema**. Réquiem, su
+  luna Epitafio, el anillo de ruinas, los monolitos, los picos de roca y la
+  nieve se fueron.
+- **El ojo se mueve dentro de la carne** ([shaders/argos.rs](src/shaders/argos.rs)):
+  no está en el relieve. El material lleva cada frame a dónde mira
+  (`ArgosLook`), y el vertex shader (`argos::lift`) mueve cada vértice en la
+  dirección radial: cerca del ojo baja la carne hasta una esfera exacta (el
+  globo), le sube la córnea y levanta un borde de párpados. El planeta sigue
+  girando debajo (orbita y rota como los demás) y la carne pasa por debajo
+  del ojo. Para esto `shaders::displace` ahora devuelve un vector: Jardín
+  respira sobre la normal y Argos se mueve en radial, porque sobre la normal
+  inclinada de los pliegues el globo no quedaba liso y la sombra y el AO
+  dibujaban los pliegues encima.
+- **Sacadas**: el ojo fija un punto y salta cuando la nave se le sale de ahí
+  o cada medio segundo a segundo y medio, como un ojo de verdad; el salto es
+  rápido pero con tope de velocidad, así que si la nave está del otro lado
+  se ve llegar arrastrándose bajo la carne (`App::stare`, `turn_toward`).
+  Parpadea cada 8 s a una hora al azar (función del tiempo). En el silencio
+  del final lo cierra, y cuando se abre Gargantúa deja de mirarte y la mira
+  a ella.
+- **De cerca**: la pupila se cierra y la esclera se inyecta de sangre a
+  medida que la nave se acerca. Si la nave baja a la carne, el ojo se hunde
+  entero (`presence`) y salen los ojos chicos, que la miran todos; al subir,
+  vuelve a salir debajo de ella. Los ojos chicos se hunden cuando el grande
+  les pasa encima.
+- **Iris** en polares alrededor del eje del ojo (anclado al ojo, no a la
+  carne): estrías y criptas en el rojo de adentro, la collareta encendida,
+  fibras radiales magenta y moradas (ruido con mucha frecuencia a lo largo
+  del ángulo y poca a lo largo del radio), hebras lila y el anillo límbico;
+  brilla un poco por dentro, así que se ve de noche y desde lejos. La
+  **esclera** tiene venas que entran desde los párpados hacia el iris (ruido
+  estirado a lo largo del radio, donde cruza por cero) y laten con la
+  estrella. La **córnea** es un espejo mojado con un segundo brillo de la luz
+  del cielo. La luz de la estrella llega casi sin color.
+- **Carne** ([terrain/shapes.rs](src/terrain/shapes.rs) `ArgosField`):
+  pliegues redondos donde un ruido torcido cruza por cero, en dos escalas,
+  con perfil `(1 - x²)^1.5` (una semicircunferencia tiene pendiente
+  infinita en el borde y la malla la dibujaba en dientes de sierra). Granate
+  y mojada, crestas claras, surcos negros y venas moradas.
+- **Ojos de carne** (`PropKind::Eye`): un globo medio hundido entre párpados
+  (un tubo cerrado con grumos) sobre un bulto de carne; el shader lleva la
+  dirección de la nave a los ejes del modelo para que el iris la mire, y
+  cada uno parpadea a su ritmo. Se reparten con ruido en lo alto de los
+  pliegues y en **El nido** (el lugar de Argos para la tecla N). Flotan
+  gotas rojas cerca de la superficie.
+- La sombra del globo se busca un poco arriba de la superficie, sobre la
+  normal y más con la luz rasante: sin eso el mapa de sombras hacía franjas
+  en la esfera lisa.
+
 # Cambios de la quinta revisión
 
 - **Pira ya no se estira** ([shaders/vapor.rs](src/shaders/vapor.rs)): la
@@ -305,8 +357,7 @@ cara a la estrella.
 | Jardín | Arterias que laten con la estrella, poros, capilares; la superficie respira (desplazamiento en el vertex shader). |
 | Vigía | Gigante gaseoso morado con un vórtice que gira y una tormenta en forma de ojo, de gas rosa, que sigue a la nave; la pupila late. Anillos delgados de polvo. |
 | Párpado | La luna de Vigía: cristal y lagos espejo donde se refleja el ojo. |
-| Réquiem | Hielo y escarcha bajo una luz fría, grietas que respiran luz, dunas, picos de roca y monolitos con un glifo que apunta a donde nacerá Gargantúa. Un anillo de ruinas. |
-| Epitafio | La luna de Réquiem: hielo viejo lleno de cráteres. |
+| Argos | Carne en pliegues con un ojo enorme que gira dentro de ella para seguir a la nave por todo el sistema; parpadea, cierra la pupila de cerca, se hunde si bajás y la carne está llena de ojos chicos que también te miran. |
 | Cementerio | Cráteres y zanjas de naves estrelladas, anillos llenos de naves del éxodo y una baliza que sigue transmitiendo. |
 
 ## 4. Shaders ([shaders/](src/shaders))
@@ -324,6 +375,11 @@ su color HDR. Algunos ejemplos de técnica:
 - **Jardín** ([jardin.rs](src/shaders/jardin.rs)): las arterias son las
   líneas donde un ruido cruza un valor; cuando un pixel cubre más que la
   línea, se dibuja su brillo promedio en vez de parpadear.
+- **Argos** ([argos.rs](src/shaders/argos.rs)): el ojo se dibuja en
+  polares alrededor de su eje, que cambia cada frame; la normal del globo y
+  la pendiente de la córnea y los párpados salen de la misma altura que usa
+  el vertex shader, derivada con diferencias finitas. Cada región (carne,
+  esclera, iris) calcula su ruido solo donde se ve.
 - **Vigía** ([vigia.rs](src/shaders/vigia.rs)): coordenadas giradas con la
   fórmula de Rodrigues para el vórtice; el iris en coordenadas polares
   alrededor del eje del ojo, con ruido que se retuerce y corre hacia adentro.
@@ -343,7 +399,7 @@ su color HDR. Algunos ejemplos de técnica:
   radio, en un minuto se estirarían en rayas).
 
 **Animados**: todos los que usan `u.time` o el latido: estrella, lava, venas,
-vórtice, tormenta y pupila de Vigía, glifos, cristales, lagos, anillos,
+vórtice, tormenta y pupila de Vigía, ojo de Argos, cristales, lagos, anillos,
 nebulosa, Pira hirviendo y gas del disco.
 
 ## 5. Mapeo de normales ([shaders/textures.rs](src/shaders/textures.rs))
@@ -362,7 +418,7 @@ nebulosa, Pira hirviendo y gas del disco.
 
 ## 6. Objetos de la superficie ([scene/props.rs](src/scene/props.rs))
 
-- **Modelos**: once tipos armados con código con `MeshBuilder`
+- **Modelos**: nueve tipos armados con código con `MeshBuilder`
   ([scene/builder.rs](src/scene/builder.rs)): cajas, conos truncados,
   elipsoides y tubos con transporte paralelo. Cada uno en tres niveles de
   detalle.
@@ -370,7 +426,7 @@ nebulosa, Pira hirviendo y gas del disco.
   cada celda propone un candidato en un punto pseudoaleatorio (un hash de la
   semilla, la cara y la celda). Se acepta con una probabilidad que sale de
   **ruido fBm** (grupos y claros) por las reglas del terreno (no hay hongos en
-  la lava ni monolitos en el hielo). La misma semilla da las mismas
+  la lava ni ojos en el fondo de los surcos). La misma semilla da las mismas
   posiciones; F6 la cambia.
 - **Posición y orientación**: cada objeto se guarda en el espacio de su
   planeta, con +Y sobre la normal radial y un giro al azar alrededor de ella;
@@ -382,7 +438,7 @@ nebulosa, Pira hirviendo y gas del disco.
   suelo en vez de desaparecer de golpe.
 - **Sombra del planeta por pixel**: el rayo hacia la estrella pasa a una
   distancia `d` del centro; si `d` es menor que el radio, el planeta lo tapa.
-  La punta de un monolito sigue iluminada cuando su base ya está de noche.
+  El sombrero de un hongo sigue iluminado cuando su base ya está de noche.
 
 ## 7. Navegación ([scene/ship.rs](src/scene/ship.rs))
 
@@ -507,6 +563,6 @@ Las bioluminiscencias emiten y aportan luces puntuales de alcance finito.
 | El radio de un planeta | Se crea un terreno nuevo con ese radio (los chunks se regeneran alrededor de la cámara), se recalcula la tabla de su atmósfera y se vuelven a repartir sus objetos. La gravedad en la superficie se conserva: `μ = g r²`. |
 | Su periodo orbital | Cambia la velocidad en la órbita sin que salte: la fase se corrige para que en este instante siga en el mismo ángulo. Si estaba acoplado por marea (Pira), su giro cambia con él. |
 | Su periodo de giro | Igual, con la fase del giro. |
-| La intensidad de su shader | Escala su efecto propio (la lava, la bioluminiscencia, el ojo y los cristales, el hielo y los glifos, la baliza y las luces de las naves). |
+| La intensidad de su shader | Escala su efecto propio (la lava, la bioluminiscencia, el ojo y los cristales, el iris de Argos, la baliza y las luces de las naves). |
 | La semilla | Otras posiciones para todos los objetos, siempre las mismas para esa semilla. |
 | El factor de LOD | Más o menos chunks (se ve en el contador de triángulos). |

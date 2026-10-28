@@ -32,7 +32,7 @@ impl System {
             let place = match body.name {
                 "Jardin" => props::garden_grove,
                 "Pira" => props::vent_field,
-                "Requiem" => props::monolith_field,
+                "Argos" => props::eye_nest,
                 "Cementerio" => props::beacon_site,
                 "Parpado" => props::mirror_shore,
                 _ => |_: &mut Vec<_>, _: f64, _: &dyn HeightField, _: u32, _: (DVec3, DVec3, DVec3)| {},
@@ -148,7 +148,7 @@ mod tests {
         assert_eq!(sys.sites.len(), 5);
         for (body, kind, count) in [
             ("Pira", PropKind::Vent, 12),
-            ("Requiem", PropKind::Monolith, 8),
+            ("Argos", PropKind::Eye, 16),
             ("Cementerio", PropKind::Beacon, 1),
             ("Parpado", PropKind::Crystal, 14),
         ] {
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn a_bigger_planet_keeps_its_surface_gravity_and_gets_new_objects() {
         let mut sys = system();
-        let i = sys.find("Requiem").unwrap();
+        let i = sys.find("Argos").unwrap();
         let g = sys.bodies[i].mu / sys.bodies[i].radius.powi(2);
         sys.set_radius(i, 240.0);
         let body = &sys.bodies[i];

@@ -8,9 +8,7 @@
 use super::{Fragment, Uniforms, detail, pbr, rings};
 use crate::math::blackbody::planckian_rgb;
 use crate::math::{Vec2, Vec3, smoothstep};
-use crate::scene::props::{
-    CORAL_TOP, CRYSTAL_TOP, GLYPH_HEIGHT, MONOLITH, PropKind, VENT_TOP, WRECK_UV_SIZE,
-};
+use crate::scene::props::{CORAL_TOP, CRYSTAL_TOP, EYE_CENTER, PropKind, VENT_TOP, WRECK_UV_SIZE};
 use std::f32::consts::TAU;
 
 /// Datos de una instancia para su shader.
@@ -75,10 +73,13 @@ pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
         sun: u.sun_light * (planet_shadow(style, f.pos, l) * rings),
     };
     match style.kind {
-        PropKind::Monolith => monolith(&c, GLYPH_HEIGHT),
-        // En las ruinas el glifo quedo abajo de la rotura.
-        PropKind::Ruin => monolith(&c, GLYPH_HEIGHT * 0.55),
-        PropKind::Crag => crag(&c),
+        PropKind::Eye => eye(
+            &Ctx {
+                sun: super::argos::light(c.sun),
+                ..c
+            },
+            style,
+        ),
         PropKind::Mushroom => mushroom(&c),
         PropKind::Coral => coral(&c),
         PropKind::Spike => spike(&c),
@@ -138,70 +139,49 @@ fn to_model(f: &Fragment, v: Vec3) -> Vec3 {
     )
 }
 
-/// Monolito de Requiem: piedra oscura gastada por el viento (vetas
-/// verticales), con grietas y escarcha en lo que mira arriba y al pie. En
-/// sus caras anchas, el glifo: un circulo cruzado por una linea, tallado y
-/// con una luz blanca y fria muy tenue que late con la estrella. Despierta
-/// con la nave cerca y despues del colapso se queda encendido: los
-/// monolitos apuntan a donde nacio Gargantua.
-fn monolith(c: &Ctx, glyph_height: f32) -> Vec3 {
+/// Un ojo de la carne de Argos. Los parpados son carne mojada. El globo
+/// mira a la nave: su direccion se lleva a los ejes del modelo y el iris se
+/// dibuja alrededor de ella (sin mirar hacia adentro de la carne). Cada ojo
+/// parpadea a su ritmo y cierra la pupila con la nave cerca.
+fn eye(c: &Ctx, style: &PropStyle) -> Vec3 {
     let (f, u) = (c.f, c.u);
-    let p = f.local;
-    let up = f.object_to_world.mul_vec(Vec3::Y);
-    let facing_up = f.normal.dot(up);
-    let grain = u.noise.fbm(Vec3::new(p.x * 1.2, p.y * 0.22, p.z * 1.2), 3) * 0.5 + 0.5;
-    let aa = (pixel_footprint(c) * 0.5).max(0.004);
-    let cells = u.noise.cells(Vec3::new(p.x * 0.5, p.y * 0.28, p.z * 0.5));
-    let crack = smoothstep(0.035 + aa, 0.0, cells.1 - cells.0);
-    // Escarcha arriba, al pie y en chorreaduras que bajan por las caras.
-    let streaks = smoothstep(0.55, 0.8, u.noise.noise(Vec3::new(p.x * 2.6, p.y * 0.15, p.z * 2.6)) * 0.5 + 0.5);
-    let frost = (smoothstep(0.4, 0.85, facing_up + 0.3 * (grain - 0.5))
-        + 0.35 * smoothstep(2.0, 0.0, p.y)
-        + 0.3 * streaks)
-        .min(1.0);
-    let stone = Vec3::new(0.05, 0.058, 0.074) * (0.6 + 0.8 * grain) * (1.0 - 0.65 * crack);
-    let albedo = stone.lerp(Vec3::new(0.55, 0.64, 0.78), frost * 0.85);
-    // El glifo, en las dos caras anchas.
-    let on_face = smoothstep(0.7, 0.9, to_model(f, f.normal).z.abs());
-    let (gx, gy) = (p.x, p.y - glyph_height);
-    let ring_radius = MONOLITH.0 * 0.62;
-    let width = 0.07 + aa;
-    let ring = smoothstep(width, width * 0.4, (gx.hypot(gy) - ring_radius).abs());
-    let line = smoothstep(width, width * 0.4, gx.abs())
-        * smoothstep(ring_radius * 1.45, ring_radius * 1.3, gy.abs());
-    let glyph = ring.max(line) * on_face;
-    let pulse = u.beat_at(0.3);
-    let after = (u.biolum - 1.0).max(0.0) * 0.5;
-    let awake = near_ship(u, f.pos, 220.0, 30.0);
-    let light = (0.06 + 0.1 * pulse + after + awake * (0.55 + 0.35 * pulse)) * u.gains.requiem;
-    let emission = Vec3::new(0.78, 0.88, 1.0) * (glyph * light);
-    let cold = Ctx {
-        sun: super::requiem::cold_light(c.sun),
-        ..*c
-    };
-    lit(&cold, albedo * (1.0 - 0.6 * glyph), f.normal, 0.55 + 0.3 * frost, 40.0, 0.0) + emission
-}
-
-/// Pico de roca de Requiem: piedra oscura y angulosa, con escarcha en lo
-/// que mira arriba, bajo la misma luz fria.
-fn crag(c: &Ctx) -> Vec3 {
-    let (f, u) = (c.f, c.u);
-    let tex = detail::rock(f, u, 0.3, pixel_footprint(c), 0.85);
-    let up = f.object_to_world.mul_vec(Vec3::Y);
-    let grain = u.noise.fbm(f.local * 0.8, 2) * 0.5 + 0.5;
-    let frost = smoothstep(0.45, 0.85, tex.normal.dot(up) + 0.25 * (grain - 0.5));
-    let rock = Vec3::new(0.03, 0.035, 0.046) * (0.6 + tex.color.luminance());
-    let albedo = rock.lerp(Vec3::new(0.6, 0.68, 0.8), frost * 0.8);
-    pbr::shade_light(
-        f,
-        u,
-        albedo,
-        0.75 - 0.3 * frost,
-        0.0,
-        tex.normal,
-        tex.ao,
-        super::requiem::cold_light(c.sun),
-    )
+    let flesh = |albedo: Vec3| pbr::shade_light(f, u, albedo, 0.24, 0.0, f.normal, 1.0, c.sun);
+    let grain = u.noise.fbm(f.local * 2.5, 2) * 0.5 + 0.5;
+    let skin = Vec3::new(0.2, 0.025, 0.04).lerp(Vec3::new(0.5, 0.12, 0.14), grain * grain);
+    if f.color.x < 0.5 {
+        return flesh(skin);
+    }
+    let q = (f.local - EYE_CENTER).normalize();
+    // Parpadeo: el parpado baja desde arriba, cada ojo a su ritmo.
+    let cycle = (u.time * (0.09 + 0.05 * style.seed) + style.seed * 13.0).fract();
+    let closed = smoothstep(0.0, 0.015, cycle) * smoothstep(0.045, 0.03, cycle);
+    if q.y > 1.0 - 2.2 * closed {
+        return flesh(skin * 1.2);
+    }
+    let center = f.pos - f.object_to_world.mul_vec((f.local - EYE_CENTER) * c.scale);
+    let mut gaze = to_model(f, u.ship - center).normalize();
+    gaze.y = gaze.y.max(0.3);
+    let gaze = gaze.normalize();
+    let angle = q.dot(gaze).clamp(-1.0, 1.0).acos();
+    let near = near_ship(u, center, 200.0, 25.0);
+    let pupil = 0.17 * (1.0 - 0.45 * near) * (1.0 + 0.15 * u.beat_at(0.2));
+    // Iris lila grisaceo con fibras, anillo oscuro alrededor.
+    let helper = if gaze.y.abs() < 0.95 { Vec3::Y } else { Vec3::X };
+    let a = helper.cross(gaze).normalize();
+    let phi = q.dot(gaze.cross(a)).atan2(q.dot(a));
+    let fibers = 1.0 - u.noise.noise(Vec3::new(phi.cos() * 9.0, phi.sin() * 9.0, angle * 6.0 + style.seed * 20.0)).abs();
+    let iris_color = Vec3::new(0.2, 0.14, 0.3).lerp(Vec3::new(0.48, 0.38, 0.62), fibers * fibers);
+    let iris = smoothstep(0.47, 0.43, angle);
+    let ring = smoothstep(0.36, 0.45, angle) * iris;
+    let pupil_mask = smoothstep(pupil + 0.02, pupil - 0.01, angle);
+    let veins = smoothstep(0.93, 0.98, 1.0 - u.noise.noise(f.local * 7.0).abs()) * smoothstep(0.6, 1.1, angle);
+    let sclera = Vec3::new(0.62, 0.46, 0.5).lerp(Vec3::new(0.35, 0.03, 0.05), veins * (0.6 + 0.4 * near));
+    let albedo = sclera
+        .lerp(iris_color * (1.0 - 0.75 * ring), iris)
+        .lerp(Vec3::new(0.004, 0.0, 0.006), pupil_mask);
+    let wet = pbr::shade_light(f, u, albedo, 0.08, 0.0, f.normal, 1.0, c.sun);
+    // Un poco de brillo propio en el iris, para que se vea en la sombra.
+    wet + iris_color * (iris * (1.0 - pupil_mask) * (0.04 + 0.12 * near) * u.gains.argos)
 }
 
 /// La baliza: metal oscuro y una lampara roja que destella cada 2.4 s,

@@ -194,10 +194,15 @@ pub fn transform_vertices(
         for global in lo..hi {
             let i = global - v.vert_offset;
             let mut position = mesh.positions[i];
-            // Deformacion del material (vertex shader): sobre la normal.
+            // Deformacion del material (vertex shader).
             if deforms {
-                let lift = shaders::displace(&draw.material, position + draw.local_offset, uniforms.time, uniforms.noise);
-                position += mesh.normals[i] * lift;
+                position += shaders::displace(
+                    &draw.material,
+                    position + draw.local_offset,
+                    mesh.normals[i],
+                    uniforms.time,
+                    uniforms.noise,
+                );
             }
             // Modelo: al mundo relativo a la camara. Vista y proyeccion: a clip.
             let world = draw.model.transform_affine(position);
