@@ -165,8 +165,76 @@ fn nebula(dir: Vec3, noise: &Perlin) -> Vec3 {
     color * (band * gas.powi(2) * (1.0 - 0.94 * dust) * lane * 0.16)
 }
 
-/// Resplandor alrededor del disco de la estrella: cae rapido junto al borde y
-/// deja una cola larga y tenue.
+/// Hasta donde llegan las nubes de gas alrededor de la estrella, en radios
+/// del disco.
+const CLOUD_REACH: f32 = 3.0;
+/// Raiz y punta de las llamas del borde.
+const FIRE_ROOT: Vec3 = Vec3::new(4.4, 1.7, 0.4);
+const FIRE_TIP: Vec3 = Vec3::new(2.2, 0.38, 0.08);
+/// Las dos tintas del gas que envuelve a la estrella.
+const CRIMSON: Vec3 = Vec3::new(0.7, 0.07, 0.04);
+const MAGENTA: Vec3 = Vec3::new(0.55, 0.08, 0.42);
+/// Angulos y anillos de la tabla de nubes.
+const CLOUD_ANGLES: usize = 640;
+const CLOUD_RINGS: usize = 80;
+
+/// Las nubes que envuelven a la estrella en una tabla polar (angulo
+/// alrededor del disco por distancia al centro en radios) que se llena una
+/// vez por frame. Son de baja frecuencia: cada pixel del cielo interpola en
+/// la tabla en vez de evaluar seis ruidos.
+#[derive(Default)]
+pub struct CoronaClouds {
+    texels: Vec<Vec3>,
+}
+
+impl CoronaClouds {
+    pub fn update(&mut self, time: f32, noise: &Perlin) {
+        self.texels.resize(CLOUD_ANGLES * CLOUD_RINGS, Vec3::ZERO);
+        parallel::chunks_mut(&mut self.texels, CLOUD_ANGLES, 4, |ring, row| {
+            let x = 1.0 + (CLOUD_REACH - 1.0) * ring as f32 / (CLOUD_RINGS - 1) as f32;
+            for (k, texel) in row.iter_mut().enumerate() {
+                let theta = k as f32 / CLOUD_ANGLES as f32 * std::f32::consts::TAU;
+                *texel = cloud(theta, x, time, noise);
+            }
+        });
+    }
+
+    /// Interpolacion bilineal; el angulo da la vuelta.
+    fn sample(&self, theta: f32, x: f32) -> Vec3 {
+        let fa = (theta / std::f32::consts::TAU).rem_euclid(1.0) * CLOUD_ANGLES as f32;
+        let last = (CLOUD_RINGS - 1) as f32;
+        let fr = ((x - 1.0) / (CLOUD_REACH - 1.0) * last).clamp(0.0, last);
+        let a0 = (fa as usize).min(CLOUD_ANGLES - 1);
+        let a1 = (a0 + 1) % CLOUD_ANGLES;
+        let r0 = (fr as usize).min(CLOUD_RINGS - 2);
+        let (ta, tr) = (fa - a0 as f32, fr - r0 as f32);
+        let at = |a: usize, r: usize| self.texels[r * CLOUD_ANGLES + a];
+        let near = at(a0, r0).lerp(at(a1, r0), ta);
+        let far = at(a0, r0 + 1).lerp(at(a1, r0 + 1), ta);
+        near.lerp(far, tr)
+    }
+}
+
+/// Gas alrededor de la estrella en el angulo `theta` y a `x` radios del
+/// centro, medido en el plano del disco (no nada al acercarse), con vetas
+/// que salen de la estrella.
+fn cloud(theta: f32, x: f32, t: f32, n: &Perlin) -> Vec3 {
+    let (s, c) = theta.sin_cos();
+    let q = Vec3::new(c * x, s * x, t * 0.01) * 1.1;
+    let warp = n.noise(q * 0.6 + Vec3::new(3.1, 7.7, 0.0));
+    let cloud = n.fbm(q + Vec3::splat(warp), 3) * 0.5 + 0.5;
+    let streak = n.noise(Vec3::new(c * 6.0, s * 6.0, x * 1.5 - t * 0.04)) * 0.5 + 0.5;
+    let hue = n.noise(q * 0.45 + Vec3::new(11.0, 2.0, 5.0)) * 0.5 + 0.5;
+    let fall = (-(x - 1.0) * 1.3).exp() * smoothstep(CLOUD_REACH, CLOUD_REACH - 0.8, x);
+    let density = (cloud * (0.5 + 0.5 * streak)).powi(2) * fall;
+    CRIMSON.lerp(MAGENTA, smoothstep(0.35, 0.65, hue)) * density
+}
+
+/// Resplandor alrededor del disco de la estrella: las llamas del borde (las
+/// mismas del limbo del disco, con el mismo angulo en `sun::eye_frame`),
+/// nubes de gas carmesi y magenta que la envuelven y se estiran hacia
+/// afuera, y un halo que cae rapido junto al borde y deja una cola larga y
+/// tenue.
 ///
 /// La distancia angular se mide con la cuerda, `sqrt(2 (1 - cos))`, en vez
 /// de `acos`: para angulos pequenos son casi iguales, y lejos del disco la
@@ -174,7 +242,7 @@ fn nebula(dir: Vec3, noise: &Perlin) -> Vec3 {
 pub fn corona(dir: Vec3, u: &Uniforms) -> Vec3 {
     let dist2 = u.sun_pos.length_squared();
     let r2 = u.sun_radius * u.sun_radius;
-    if dist2 <= r2 {
+    if dist2 <= r2 || u.star_glow <= 0.0 {
         return Vec3::ZERO;
     }
     let cos = dir.dot(u.sun_pos) / (dir.length_squared() * dist2).sqrt();
@@ -188,9 +256,27 @@ pub fn corona(dir: Vec3, u: &Uniforms) -> Vec3 {
         return Vec3::ZERO;
     }
     let x = x2.sqrt();
-    let rim = 0.24 * (-(x - 1.0) * 12.0).exp();
     let halo = 0.035 * (-(x - 1.0) * 3.5).exp() + 0.002 / x2;
-    u.sun_light * Vec3::new(1.0, 0.18, 0.045) * (rim + halo)
+    let mut light = u.sun_light * Vec3::new(1.0, 0.18, 0.045) * halo;
+    if x < CLOUD_REACH {
+        let (t, n) = (u.time, u.noise);
+        let h = x - 1.0;
+        // Las nubes y las llamas siguen el brillo de la estrella.
+        let strength = u.sun_light.luminance() / 1.5;
+        let (_, a, b) = super::sun::eye_frame(u.sun_pos);
+        let theta = dir.dot(b).atan2(dir.dot(a));
+        // Llamas: amarillas en la raiz, rojas en la punta.
+        if h < 0.45 {
+            let fire = super::sun::limb_fire(theta, h, t, n) + 0.12 * (-h * 14.0).exp();
+            light += FIRE_ROOT.lerp(FIRE_TIP, smoothstep(0.0, 0.3, h)) * (fire * strength);
+        }
+        let clouds = match u.clouds {
+            Some(table) => table.sample(theta, x),
+            None => cloud(theta, x, t, n),
+        };
+        light += clouds * strength;
+    }
+    light
 }
 
 /// Color de estrella: mas frias (rojizas) que calientes (azules).
@@ -297,6 +383,7 @@ mod tests {
             sky_view: None,
             biolum: 1.0,
             gains: Default::default(),
+            clouds: None,
             debug: Default::default(),
         };
         let n = 2_000_000;
