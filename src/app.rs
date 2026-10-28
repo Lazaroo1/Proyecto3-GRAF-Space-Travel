@@ -17,7 +17,7 @@ use crate::render::{Draw, Particle, Renderer, Ripple, Stats, View};
 use crate::scene::camera::{Camera, CameraMode};
 use crate::scene::cycle::{self, CycleState, Timeline};
 use crate::scene::effects::{self, EXHAUST_COUNT, SPORE_COUNT};
-use crate::scene::props::{self, Instance, PropKind, PropStats, PropView};
+use crate::scene::props::{self, Instance, PropKind, PropSet, PropStats, PropView};
 use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
 use crate::scene::trajectory::{self, Prediction};
 use crate::scene::{Mesh, System, nearest_surface, ribbon};
@@ -224,11 +224,11 @@ pub const PRESETS: [Preset; 33] = [
     },
     Preset {
         name: "10_ojos",
-        shot: Shot::Landmark {
+        shot: Shot::Site {
             body: "Argos",
-            kind: PropKind::Eye,
-            distance: 22.0,
-            sun: 0.42,
+            altitude: 40.0,
+            back: 45.0,
+            lift: 0.0,
         },
         time: 40.0,
         act: None,
@@ -613,7 +613,7 @@ impl App {
         let aim = DQuat::look_rotation(center - start, DVec3::Y);
         let ship = ShipState::new(&system.bodies, start, aim, t);
         let eye = eye_target(&system, start, t);
-        let stare = argos_target(&system, start, t, false);
+        let stare = argos_target(&system, start, aim.forward(), t, false);
         Ok(Self {
             eye,
             stare,
@@ -934,7 +934,7 @@ impl App {
         // tope: si la nave esta del otro lado, el ojo llega arrastrandose
         // bajo la carne. Cuando se abre Gargantua, la mira a ella.
         let fear = self.cycle.since_eye > 0.0;
-        let target = argos_target(&self.system, self.ship.world_pos, self.sim_time, fear);
+        let target = argos_target(&self.system, self.ship.world_pos, self.aim.forward(), self.sim_time, fear);
         if self.fixation.dot(target) < 0.05f64.cos() || self.sim_time >= self.next_saccade {
             self.fixation = target;
             self.saccades = self.saccades.wrapping_add(1);
@@ -1049,8 +1049,7 @@ impl App {
         }
         // El ojo de Argos: a donde mira, que tan cerca esta la nave y si
         // parpadea. En el silencio, antes de que se abra Gargantua, lo cierra.
-        // Si la nave baja a la carne el ojo se hunde y salen los ojos chicos
-        // a mirarla; al subir, vuelve a salir debajo de ella.
+        // Si la nave vuela bajo, el ojo va debajo de ella, un poco adelante.
         if let Some(i) = self.system.find("Argos") {
             let body = &self.system.bodies[i];
             let distance = (self.ship.world_pos - body.position(t)).length() / body.radius;
@@ -1064,7 +1063,6 @@ impl App {
                 radius: body.radius as f32,
                 near: smoothstep(4.0, 1.15, distance as f32),
                 blink,
-                presence: smoothstep(0.15, 0.32, (distance - 1.0) as f32),
             };
             self.system.bodies[i].material = Material::Argos(look);
         }
@@ -1980,7 +1978,7 @@ impl App {
         self.flight.nearest = nearest_surface(&self.system.bodies, pos, t).0;
         self.local_up = None;
         self.eye = eye_target(&self.system, pos, t);
-        self.stare = argos_target(&self.system, pos, t, false);
+        self.stare = argos_target(&self.system, pos, rot.forward(), t, false);
         self.fixation = self.stare;
     }
 }
@@ -2187,15 +2185,60 @@ fn beacon_lamp(system: &System, t: f64) -> Option<(DVec3, DVec3)> {
 /// Direccion de la nave vista desde el centro de Vigia, en su propio espacio:
 /// hacia ahi quiere mirar el ojo.
 /// A donde quiere mirar Argos, en su espacio: a la nave o, con `fear`, a
-/// Gargantua (donde estaba la estrella).
-fn argos_target(system: &System, ship_pos: DVec3, t: f64, fear: bool) -> DVec3 {
+/// Gargantua (donde estaba la estrella). Con la nave volando bajo mira un
+/// poco adelante de ella, hacia donde apunta (`ahead`): asi la pupila queda
+/// a la vista y no tapada por la nave.
+fn argos_target(system: &System, ship_pos: DVec3, ahead: DVec3, t: f64, fear: bool) -> DVec3 {
     let Some(i) = system.find("Argos") else {
         return DVec3::X;
     };
     let body = &system.bodies[i];
-    let goal = if fear { system.bodies[0].position(t) } else { ship_pos };
-    let toward = (goal - body.position(t)).normalize();
+    let center = body.position(t);
+    let goal = if fear {
+        system.bodies[0].position(t)
+    } else {
+        let rel = ship_pos - center;
+        let up = rel.normalize();
+        let altitude = rel.length() - body.radius;
+        let close = smoothstep(0.5, 0.1, (altitude / body.radius) as f32) as f64;
+        let level = ahead - up * ahead.dot(up);
+        if level.length_squared() > 1e-9 {
+            ship_pos + level.normalize() * (altitude.clamp(10.0, 60.0) * 1.3 * close)
+        } else {
+            ship_pos
+        }
+    };
+    let toward = (goal - center).normalize();
     body.rotation(t).conjugate().rotate(toward)
+}
+
+/// Ojos en la corona del ojo de Argos.
+const CROWN: usize = 28;
+
+/// La corona del ojo de Argos: ojos chicos sobre sus parpados que van con el
+/// y miran hacia adentro, a la nave. Se arman cada frame alrededor de a donde
+/// mira; los parpados (el vertex shader) los levantan con la carne.
+fn eye_crown(look: &ArgosLook, radius: f64, field: &dyn crate::terrain::HeightField) -> Vec<Instance> {
+    let eye = look.eye.as_dvec3();
+    (0..CROWN)
+        .map(|k| {
+            let h = hash_u32(k as u32 ^ 0xC40B);
+            let unit = |h: u32| (h >> 8) as f32 / 16_777_216.0;
+            let phi = (k as f32 + 0.6 * unit(h)) / CROWN as f32 * std::f32::consts::TAU;
+            let d = 1.06 + 0.12 * unit(hash_u32(h));
+            let dir = shaders::argos::rim_point(look, phi, d).as_dvec3().normalize();
+            let scale = 3.0 + 5.0 * unit(hash_u32(h ^ 7)).powi(2);
+            let ground = radius + field.sample(dir.as_vec3()).height as f64 - 0.2 * scale as f64;
+            // La cuenca (+z del modelo) hacia el centro del ojo.
+            let toward = (eye - dir * eye.dot(dir)).normalize();
+            Instance {
+                kind: PropKind::Eye,
+                position: dir * ground,
+                rotation: DQuat::from_mat3(&DMat3::from_cols(dir.cross(toward), dir, toward)),
+                scale,
+            }
+        })
+        .collect()
 }
 
 /// Gira `from` hacia `to` (unitarios) una fraccion del angulo entre ellos,
@@ -2342,64 +2385,67 @@ fn prop_draws<'a>(
             pixel_angle,
             visible: &visible,
         };
-        chosen.clear();
-        props::select(
-            set,
-            &system.prop_models,
-            &prop_view,
-            &mut stats,
-            &mut chosen,
-        );
-        // En Argos, los ojos chicos se hunden en la carne cuando el grande les
-        // pasa encima, y salen cuando el grande se hunde.
+        // Los objetos del planeta y, en Argos, la corona de su ojo. Los ojos
+        // del planeta se hunden en la carne cuando el grande les pasa encima;
+        // los de la corona no: van sobre sus parpados.
         let argos = match body.material {
             Material::Argos(look) => Some(look),
             _ => None,
         };
-        for pick in &chosen {
-            let instance = &set.instances[pick.index];
-            let mesh = &system.prop_models[instance.kind.index()].lods[pick.lod];
-            let mut grow = pick.grow;
-            if let Some(look) = argos {
-                let angle = instance.position.normalize().as_vec3().dot(look.eye).clamp(-1.0, 1.0).acos();
-                let clear = smoothstep(shaders::ARGOS_OPEN + 0.03, shaders::ARGOS_OPEN + 0.14, angle);
-                grow *= clear.max(1.0 - look.presence);
-                if grow <= 0.01 {
-                    continue;
+        let crown = argos.map(|look| PropSet::new(eye_crown(&look, body.radius, &**field), &system.prop_models));
+        for (group, sinks) in std::iter::once((set, true)).chain(crown.iter().map(|c| (c, false))) {
+            chosen.clear();
+            props::select(
+                group,
+                &system.prop_models,
+                &prop_view,
+                &mut stats,
+                &mut chosen,
+            );
+            for pick in &chosen {
+                let instance = &group.instances[pick.index];
+                let mesh = &system.prop_models[instance.kind.index()].lods[pick.lod];
+                let mut grow = pick.grow;
+                if let (Some(look), true) = (argos, sinks) {
+                    let rim = shaders::argos::rim_distance(&look, instance.position.normalize().as_vec3());
+                    grow *= smoothstep(0.92, 1.04, rim);
+                    if grow <= 0.01 {
+                        continue;
+                    }
                 }
+                // Los modelos nacen en su base: al encogerse se hunden en el suelo.
+                let scale = (instance.scale * grow) as f64;
+                let base = instance.position.as_vec3();
+                let lift = shaders::displace(&body.material, base, base.normalize(), t as f32, &system.noise);
+                let position = instance.position + lift.as_dvec3();
+                let rot = rotation.mul(&instance.rotation.to_mat3());
+                let linear = rot.scale(scale);
+                let offset = center + rotation.mul_vec(position);
+                let disc = (star_radius / (star_pos - body_pos).length())
+                    .min(1.0)
+                    .asin() as f32;
+                draws.push(Draw {
+                    mesh,
+                    indices: &mesh.indices,
+                    local_offset: Vec3::ZERO,
+                    model: DMat4::from_affine(&linear, offset).to_f32(),
+                    normal: rot.to_f32(),
+                    material: Material::Prop(PropStyle {
+                        kind: instance.kind,
+                        scale: scale as f32,
+                        planet: center.as_vec3(),
+                        // La esfera que hace sombra pasa por el suelo de este objeto:
+                        // el terreno de alrededor tapa la estrella a esa altura.
+                        occluder: instance.position.length() as f32,
+                        disc,
+                        seed: (hash_u32(pick.index as u32 ^ if sinks { 0x5EED } else { 0xC40B }) >> 8) as f32 / 16_777_216.0,
+                    }),
+                    bounds_center: (offset + linear.mul_vec(mesh.bounds_center.as_dvec3()))
+                        .as_vec3(),
+                    bounds_radius: mesh.bounds_radius * scale as f32,
+                    tag: pick.lod as u32 + 1,
+                });
             }
-            // Los modelos nacen en su base: al encogerse se hunden en el suelo.
-            let scale = (instance.scale * grow) as f64;
-            let base = instance.position.as_vec3();
-            let lift = shaders::displace(&body.material, base, base.normalize(), t as f32, &system.noise);
-            let position = instance.position + lift.as_dvec3();
-            let rot = rotation.mul(&instance.rotation.to_mat3());
-            let linear = rot.scale(scale);
-            let offset = center + rotation.mul_vec(position);
-            let disc = (star_radius / (star_pos - body_pos).length())
-                .min(1.0)
-                .asin() as f32;
-            draws.push(Draw {
-                mesh,
-                indices: &mesh.indices,
-                local_offset: Vec3::ZERO,
-                model: DMat4::from_affine(&linear, offset).to_f32(),
-                normal: rot.to_f32(),
-                material: Material::Prop(PropStyle {
-                    kind: instance.kind,
-                    scale: scale as f32,
-                    planet: center.as_vec3(),
-                    // La esfera que hace sombra pasa por el suelo de este objeto:
-                    // el terreno de alrededor tapa la estrella a esa altura.
-                    occluder: instance.position.length() as f32,
-                    disc,
-                    seed: (hash_u32(pick.index as u32 ^ 0x5EED) >> 8) as f32 / 16_777_216.0,
-                }),
-                bounds_center: (offset + linear.mul_vec(mesh.bounds_center.as_dvec3()))
-                    .as_vec3(),
-                bounds_radius: mesh.bounds_radius * scale as f32,
-                tag: pick.lod as u32 + 1,
-            });
         }
     }
     stats

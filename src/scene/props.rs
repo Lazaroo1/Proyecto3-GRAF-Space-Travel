@@ -134,26 +134,27 @@ fn tilted(angle: f32) -> [Vec3; 3] {
     [Vec3::new(c, s, 0.0), Vec3::new(-s, c, 0.0), Vec3::Z]
 }
 
-/// Un ojo de la carne de Argos: un globo de radio 1 medio hundido en un
-/// bulto de carne, entre parpados (un tubo cerrado en forma de almendra, con
-/// grumos). El globo lleva el color `EYEBALL`; la carne, `STONE`.
+/// Un ojo de la carne de Argos: un globo medio hundido en un bulto de carne
+/// y rodeado por un borde delgado y grumoso, la cuenca. Los parpados no son
+/// geometria: el shader tapa el globo con piel fuera de una almendra (y asi
+/// pueden parpadear). El globo lleva el color `EYEBALL`; la carne, `STONE`.
 fn eye(detail: usize) -> Mesh {
     let mut b = MeshBuilder::new();
-    let (rings, segments, around, tube) = [(4, 8, 10, 5), (6, 12, 16, 6), (9, 18, 26, 8)][detail];
+    let (rings, segments, around, tube) = [(4, 8, 10, 4), (6, 12, 16, 6), (9, 18, 26, 8)][detail];
     b.color(EYEBALL);
     b.ellipsoid(EYE_CENTER, Vec3::splat(0.95), rings, segments, true);
     b.color(STONE);
     // El bulto de carne donde se hunde.
-    b.ellipsoid(Vec3::new(0.0, -0.1, 0.0), Vec3::new(1.75, 0.65, 1.5), rings, segments, true);
-    // Los parpados: un anillo grueso, mas ancho que alto, con grumos.
+    b.ellipsoid(Vec3::new(0.0, -0.1, 0.0), Vec3::new(1.7, 0.6, 1.5), rings, segments, true);
+    // El borde de la cuenca, pegado al globo, con grumos.
     let mut path = Vec::with_capacity(around + 1);
     let mut radii = Vec::with_capacity(around + 1);
     for k in 0..=around {
         let a = k as f32 / around as f32 * TAU;
         let h = hash_u32(0xE7E5 ^ (k % around) as u32);
         let lump = ((h >> 8) & 0xFF) as f32 / 255.0;
-        path.push(Vec3::new(a.cos() * 1.12, EYE_CENTER.y + 0.12 + 0.08 * (2.0 * a).cos(), a.sin() * 0.8));
-        radii.push(0.3 + 0.12 * lump);
+        path.push(Vec3::new(a.cos() * 1.0, EYE_CENTER.y + 0.04, a.sin() * 1.0));
+        radii.push(0.15 + 0.1 * lump);
     }
     *radii.last_mut().unwrap() = radii[0];
     b.tube(&path, &radii, tube);
@@ -299,6 +300,10 @@ pub fn vent_field(
     }
 }
 
+/// Que tan adelante del lugar queda el centro del nido de Argos, en unidades
+/// del mundo.
+const NEST_AHEAD: f64 = 50.0;
+
 /// El nido de Argos: un ojo enorme en medio y un monton alrededor, de todos
 /// los tamanos, apretados en la carne. Todos miran a la nave.
 pub fn eye_nest(
@@ -309,7 +314,7 @@ pub fn eye_nest(
     frame: (DVec3, DVec3, DVec3),
 ) {
     clear_site(instances, radius, frame.0, 110.0);
-    let center = 50.0;
+    let center = NEST_AHEAD;
     instances.push(at_site(radius, field, frame, PropKind::Eye, 0.0, center, 9.0, 0.0, 0.25));
     for k in 0..22u32 {
         let h = hash_u32(seed ^ k.wrapping_mul(0x51ED) ^ 0xE7E5);

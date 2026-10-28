@@ -34,7 +34,7 @@ mod vigia;
 
 use crate::math::{Perlin, Vec2, Vec3, Vec4};
 
-pub use argos::{ArgosLook, OPEN as ARGOS_OPEN};
+pub use argos::ArgosLook;
 pub use atmosphere::{AtmosphereFrame, AtmosphereModel, AtmosphereParams, SkyView};
 pub use gargantua::BlackHole;
 pub use nebula::Nebula;
