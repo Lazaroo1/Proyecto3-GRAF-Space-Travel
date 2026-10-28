@@ -1,6 +1,6 @@
 //! Constructor de mallas procedurales.
 //!
-//! Los modelos de la superficie (monolitos, hongos, corales, naufragios) se
+//! Los modelos de la superficie (ojos, hongos, corales, naufragios) se
 //! arman con codigo a partir de primitivas: cajas, troncos de cono,
 //! elipsoides y tubos. Cada primitiva genera posiciones, normales, uv y
 //! tangentes; las tangentes apuntan hacia donde crece la `u` de la textura,

@@ -1,7 +1,6 @@
 //! Anillos: un disco analitico, no una malla. Los de Cementerio estan
 //! llenos de los restos de las naves del exodo que nunca escapo; los de
-//! Vigia son polvo fino en anillos delgados que brilla a contraluz; los de
-//! Requiem, bloques y puentes de sus ruinas.
+//! Vigia son polvo fino en anillos delgados que brilla a contraluz.
 //!
 //! Por cada pixel se intersecta el rayo de la camara con el plano de los
 //! anillos y se compara con la profundidad del visibility buffer: si el
@@ -30,8 +29,6 @@ pub enum RingStyle {
     Wrecks,
     /// Vigia: polvo fino en anillos delgados.
     Dust,
-    /// Requiem: bloques y puentes de las ruinas.
-    Ruins,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -55,8 +52,6 @@ const DARK_DUST: Vec3 = Vec3::new(0.30, 0.26, 0.24);
 const STEEL: Vec3 = Vec3::new(0.22, 0.24, 0.27);
 const LILAC: Vec3 = Vec3::new(0.62, 0.5, 0.78);
 const DARK_LILAC: Vec3 = Vec3::new(0.24, 0.17, 0.32);
-const STONE: Vec3 = Vec3::new(0.26, 0.28, 0.32);
-const FROST: Vec3 = Vec3::new(0.7, 0.76, 0.86);
 const RUST: Vec3 = Vec3::new(0.26, 0.13, 0.07);
 /// Tamano de un pedazo de casco, en unidades del mundo.
 const PIECE: f32 = 14.0;
@@ -180,47 +175,6 @@ fn debris(ring: &RingInfo, hit: Vec3, footprint: f32, time: f32, noise: &Perlin)
     )
 }
 
-/// Las ruinas de Requiem en un punto del anillo: cuanto tapan y su color.
-/// Cada celda puede tener un bloque (una caja girada) o, a veces, un
-/// puente: una viga larga y delgada; entre ellos, cascajo.
-fn ruins(ring: &RingInfo, hit: Vec3, footprint: f32, time: f32, noise: &Perlin) -> (f32, Vec3) {
-    let (x, y, period) = polar(ring, hit, time);
-    let clumps = smoothstep(
-        -0.35,
-        0.3,
-        noise.noise(Vec3::new(x * 0.3, (y * 0.25).sin() * 3.0, (y * 0.25).cos() * 3.0)),
-    );
-    let resolved = smoothstep(0.5, 0.15, footprint / PIECE);
-    let average = (0.12 + 0.25 * clumps, STONE * 0.8);
-    if resolved <= 0.0 {
-        return average;
-    }
-    let (_, _, id, center) = pieces(x, y, period, 0x5A1E);
-    let unit = |k: u32| (hash_u32(id ^ k) >> 8) as f32 / 16_777_216.0;
-    let (ox, oy) = ((x - center.0) * PIECE, (y - center.1) * PIECE * 2.4);
-    let (s, c) = ((unit(12) - 0.5) * 1.6).sin_cos();
-    let (bx, by) = (ox * c - oy * s, ox * s + oy * c);
-    let bridge = unit(11) < 0.12;
-    let (half_x, half_y) = if bridge {
-        (0.9 + 0.6 * unit(13), 8.0 + 6.0 * unit(14))
-    } else {
-        (1.8 + 3.2 * unit(13), 1.8 + 3.6 * unit(14))
-    };
-    let d = (bx.abs() - half_x).max(by.abs() - half_y);
-    let present = unit(15) < 0.45 * clumps + 0.15;
-    let block = if present { smoothstep(0.5 + footprint, -0.5, d) } else { 0.0 };
-    // Una cara de cada bloque tiene escarcha.
-    let frost = smoothstep(-half_x, half_x, bx) * 0.6 * unit(3);
-    let stone = STONE.lerp(FROST, frost) * (0.55 + 0.6 * unit(4));
-    let chips = scrap(x * 3.0, y * 3.0, period * 3, 0.45 * clumps);
-    let cover = block.max(chips * 0.7);
-    let color = if block >= chips { stone } else { STONE * 0.7 };
-    (
-        average.0 + (cover - average.0) * resolved,
-        average.1.lerp(color, resolved),
-    )
-}
-
 /// Densidad de los anillos (0 a ~0.9) a la distancia `r` del centro.
 pub fn density(ring: &RingInfo, r: f32, noise: &Perlin) -> f32 {
     let s = (r - ring.inner) / (ring.outer - ring.inner);
@@ -243,11 +197,6 @@ pub fn density(ring: &RingInfo, r: f32, noise: &Perlin) -> f32 {
             let ringlets = noise.noise(Vec3::new(s * 80.0, 0.5, 2.5)) * 0.5 + 0.5;
             let fine = noise.noise(Vec3::new(s * 260.0, 1.5, 2.5)) * 0.5 + 0.5;
             (edges * gaps * (0.015 + 0.3 * ringlets * ringlets * ringlets + 0.06 * fine)).min(0.38)
-        }
-        RingStyle::Ruins => {
-            let edges = smoothstep(0.0, 0.08, s) * smoothstep(1.0, 0.85, s);
-            let bands = noise.noise(Vec3::new(s * 14.0, 4.5, 0.5)) * 0.5 + 0.5;
-            (edges * (0.15 + 0.5 * bands)).min(0.75)
         }
     }
 }
@@ -320,20 +269,13 @@ pub fn composite(color: Vec3, dir: Vec3, depth: f32, ring: &RingInfo, u: &Unifor
             Vec3::ZERO,
             5.0,
         ),
-        RingStyle::Ruins => {
-            let dust = DARK_DUST.lerp(FROST * 0.6, smoothstep(0.1, 0.9, alpha));
-            let (cover, stone) = ruins(ring, local, footprint, u.time, u.noise);
-            (dust.lerp(stone, 0.8), (alpha * (0.2 + 1.1 * cover)).min(0.97), Vec3::ZERO, 1.0)
-        }
     };
     let forward = dir.dot(to_sun).max(0.0).powi(6) * scatter;
     let glint = (-dir).dot(ring.normal).abs() * 0.2;
     let light = 0.02 + (0.33 + forward + glint) * lit_part;
-    // El polvo de Vigia, como sus nubes, guarda su color con la luz roja;
-    // las ruinas de Requiem, tan lejos, la reciben fria como su planeta.
+    // El polvo de Vigia, como sus nubes, guarda su color con la luz roja.
     let sun = match ring.style {
         RingStyle::Dust => Vec3::splat(u.sun_light.luminance() * 1.3),
-        RingStyle::Ruins => super::requiem::cold_light(u.sun_light),
         RingStyle::Wrecks => u.sun_light,
     };
     color.lerp(albedo * sun * light, alpha) + glow

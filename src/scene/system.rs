@@ -15,12 +15,11 @@ use super::{Mesh, icosphere, load_obj};
 use crate::config;
 use crate::math::{DQuat, DVec3, Perlin, Vec3};
 use crate::shaders::{
-    AtmosphereModel, AtmosphereParams, Material, RingStyle, ShipStyle, SkyCube, SunStyle, Textures,
-    heartbeat,
+    ArgosLook, AtmosphereModel, AtmosphereParams, Material, RingStyle, ShipStyle, SkyCube,
+    SunStyle, Textures, heartbeat,
 };
 use crate::terrain::shapes::{
-    CementerioField, EpitafioField, JardinField, MIRROR_SHORE, ParpadoField, PiraField,
-    RequiemField,
+    ArgosField, CementerioField, JardinField, MIRROR_SHORE, ParpadoField, PiraField,
 };
 use crate::terrain::{HeightField, Smooth, Terrain};
 
@@ -386,9 +385,11 @@ impl System {
         .build();
         vigia.soi = vigia.radius * 4.0;
 
-        let (mut requiem, requiem_terrain, requiem_air) = PlanetSpec {
-            name: "Requiem",
-            radius: 160.0,
+        // Argos: carne con un ojo que sigue a la nave por todo el sistema. Su
+        // material lleva a donde mira el ojo; la app lo cambia cada frame.
+        let (argos, argos_terrain, argos_air) = PlanetSpec {
+            name: "Argos",
+            radius: 200.0,
             orbit: 4000.0,
             period: 2000.0,
             phase: 1.3,
@@ -396,18 +397,19 @@ impl System {
             spin: 240.0,
             tilt: 0.4,
             gravity: 4.0,
-            material: Material::Requiem,
-            surface: Arc::new(RequiemField::new(seed ^ 0x0E9)),
-            // Tenue y violeta.
+            material: Material::Argos(ArgosLook {
+                radius: 200.0,
+                ..ArgosLook::default()
+            }),
+            surface: Arc::new(ArgosField::new(seed ^ 0x0E9)),
+            // Una bruma humeda y rojiza, apenas: mas, y deslava la carne.
             atmosphere: Some(AtmosphereParams {
-                thickness: 10.0,
-                scale_height: 3.0,
-                // Aire helado: dispersa sobre todo el azul, asi que la luz
-                // roja de la estrella apenas lo tine y el horizonte queda frio.
-                rayleigh: Vec3::new(0.0015, 0.005, 0.03),
-                mie: 0.001,
+                thickness: 6.0,
+                scale_height: 2.0,
+                rayleigh: Vec3::new(0.012, 0.0025, 0.008),
+                mie: 0.003,
                 mie_g: 0.7,
-                intensity: 5.0,
+                intensity: 0.5,
             }),
         }
         .build();
@@ -432,12 +434,6 @@ impl System {
             inner: 1.7,
             outer: 3.1,
             style: RingStyle::Wrecks,
-        });
-        // Un anillo de escombros: lo que quedo de su civilizacion.
-        requiem.rings = Some(Rings {
-            inner: 1.8,
-            outer: 2.75,
-            style: RingStyle::Ruins,
         });
         // Anillos delgados de polvo, por dentro de la orbita de su luna.
         vigia.rings = Some(Rings {
@@ -477,46 +473,25 @@ impl System {
         // Su region no llega hasta Vigia.
         parpado.soi = parpado.radius * 2.5;
 
-        // Epitafio, la luna de Requiem: grande en su cielo.
-        let (mut epitafio, epitafio_terrain, _) = PlanetSpec {
-            name: "Epitafio",
-            radius: 55.0,
-            orbit: 620.0,
-            period: 300.0,
-            phase: 0.4,
-            inclination: 0.35,
-            spin: 300.0,
-            tilt: 0.0,
-            gravity: 2.0,
-            material: Material::Requiem,
-            surface: Arc::new(EpitafioField::new(seed ^ 0xE91)),
-            atmosphere: None,
-        }
-        .build();
-        epitafio.host = Some(Host::of(4, &requiem));
-        epitafio.soi = epitafio.radius * 2.5;
-
         let mut system = Self {
-            bodies: vec![star, pira, jardin, vigia, requiem, cementerio, parpado, epitafio],
+            bodies: vec![star, pira, jardin, vigia, argos, cementerio, parpado],
             terrains: vec![
                 None,
                 Some(pira_terrain),
                 Some(jardin_terrain),
                 Some(vigia_terrain),
-                Some(requiem_terrain),
+                Some(argos_terrain),
                 Some(cementerio_terrain),
                 Some(parpado_terrain),
-                Some(epitafio_terrain),
             ],
             atmospheres: vec![
                 None,
                 pira_air,
                 jardin_air,
                 vigia_air,
-                requiem_air,
+                argos_air,
                 None,
                 parpado_air,
-                None,
             ],
             meshes,
             ship_mesh: [1, 2, 3],
@@ -557,7 +532,7 @@ impl System {
     }
 
     /// Los lugares para visitar. En Pira (que le da siempre la misma cara a
-    /// la estrella) y en Requiem quedan cerca del terminador: la estrella baja
+    /// la estrella) y en Argos quedan cerca del terminador: la estrella baja
     /// en el horizonte marca el relieve. En Cementerio, al pie de la baliza.
     fn build_sites(&self) -> Vec<Site> {
         let t = 40.0;
@@ -582,10 +557,10 @@ impl System {
             let (normal, forward) = local(i, (to_star * 0.42 + side * 0.9 + up * 0.1).normalize(), to_star);
             sites.push(Site { body: i, name: "Los geiseres", normal, forward, view: Self::SITE_VIEW });
         }
-        if let Some(i) = self.find("Requiem") {
+        if let Some(i) = self.find("Argos") {
             let (to_star, side, up) = axes(i);
             let (normal, forward) = local(i, (to_star * 0.35 - side * 0.85 + up * 0.4).normalize(), to_star);
-            sites.push(Site { body: i, name: "Los monolitos", normal, forward, view: Self::SITE_VIEW });
+            sites.push(Site { body: i, name: "El nido", normal, forward, view: Self::SITE_VIEW });
         }
         if let Some(i) = self.find("Cementerio") {
             let normal = DVec3::new(0.32, 0.22, 0.92).normalize();

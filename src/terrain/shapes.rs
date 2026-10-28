@@ -92,71 +92,64 @@ fn unit(h: u32) -> f32 {
     (h >> 8) as f32 / 16_777_216.0
 }
 
-/// Requiem: mundo helado y muerto. Los mares se congelaron en llanuras
-/// planas; tierra adentro se levantan cordilleras de crestas afiladas y
-/// todo esta marcado por crateres.
+/// Argos: un planeta de carne con un ojo. Aqui solo esta la carne: pliegues
+/// gruesos y redondos (tubos donde un ruido torcido cruza por cero, como
+/// intestinos o tendones) en dos escalas sobre bultos grandes. El ojo no esta
+/// en el relieve: se mueve para mirar a la nave, asi que lo pone el vertex
+/// shader (`shaders::argos::lift`), que aplana la carne donde esta el ojo y
+/// levanta los parpados alrededor.
 ///
-/// Atributos: `x` hielo (llanuras congeladas), `y` nieve en las alturas,
-/// `z` borde de crater.
-pub struct RequiemField {
+/// Atributos: `x` cresta de los pliegues, `y` fondo de los surcos, `z`
+/// tendones (los pliegues finos).
+pub struct ArgosField {
     noise: Perlin,
-    craters: Craters,
-    small: Craters,
 }
 
-impl RequiemField {
+/// Lo mas que el vertex shader de Argos levanta la carne (los parpados), en
+/// unidades del mundo.
+pub const ARGOS_LID: f32 = 10.0;
+
+impl ArgosField {
     pub fn new(seed: u32) -> Self {
         Self {
             noise: Perlin::new(seed),
-            craters: Craters {
-                frequency: 7.0,
-                chance: 0.35,
-                min_radius: 0.2,
-                max_radius: 0.6,
-                depth: 4.0,
-                seed: seed ^ 0x51ED,
-            },
-            small: Craters {
-                frequency: 24.0,
-                chance: 0.25,
-                min_radius: 0.15,
-                max_radius: 0.5,
-                depth: 1.2,
-                seed: seed ^ 0xC0FE,
-            },
         }
     }
 }
 
-impl HeightField for RequiemField {
+/// Perfil de un tubo redondo de medio ancho `w` alrededor de donde `n`
+/// cruza por cero: 1 en el centro, 0 afuera. Es `(1 - x^2)^1.5`: redondo
+/// arriba y sin pared vertical al llegar al surco (una semicircunferencia
+/// tiene pendiente infinita en el borde y la malla la dibuja en dientes).
+#[inline]
+fn tube(n: f32, w: f32) -> f32 {
+    let x = (n.abs() / w).min(1.0);
+    let t = 1.0 - x * x;
+    t * t.sqrt()
+}
+
+impl HeightField for ArgosField {
     fn sample(&self, dir: Vec3) -> TerrainSample {
         let n = &self.noise;
-        let continent = n.fbm(dir * 1.3 + Vec3::new(3.1, -7.2, 1.7), 4);
-        let land = smoothstep(-0.02, 0.14, continent);
-        // Crestas al cubo: picos afilados y valles anchos, solo tierra adentro.
-        let ridges = n.ridged(dir * 3.4 + Vec3::new(-4.4, 2.2, 9.1), 5);
-        let mountains = ridges * ridges * ridges * smoothstep(0.08, 0.4, continent);
-        let detail = n.fbm(dir * 16.0 + Vec3::new(1.3, 5.5, -2.7), 3);
-        let (big, big_rim) = self.craters.sample(dir);
-        let (small, small_rim) = self.small.sample(dir);
-        let relief = land * (1.5 + 1.2 * detail) + mountains * 13.0;
-        // El hielo rellena a medias los crateres de las llanuras.
-        let craters = (big + small) * (0.35 + 0.65 * land);
-        let height = relief + craters + (1.0 - land) * 0.15 * detail;
+        let warp = Vec3::new(
+            n.noise(dir * 2.2 + Vec3::new(3.1, 0.0, 0.0)),
+            n.noise(dir * 2.2 + Vec3::new(0.0, 7.4, 0.0)),
+            n.noise(dir * 2.2 + Vec3::new(0.0, 0.0, 11.9)),
+        );
+        let q = dir + warp * 0.18;
+        let lumps = n.fbm(q * 2.5 + Vec3::new(5.0, 1.0, 2.0), 3);
+        let folds = tube(n.noise(q * 5.5), 0.22);
+        let tendons = tube(n.noise(q * 14.0 + Vec3::splat(9.0)), 0.16);
         TerrainSample {
-            height,
-            attrs: Vec3::new(
-                1.0 - land,
-                smoothstep(6.0, 10.0, relief),
-                big_rim.max(small_rim),
-            ),
+            height: 3.5 * lumps + 8.0 * folds + 2.5 * tendons,
+            attrs: Vec3::new(folds, 1.0 - folds.max(tendons), tendons),
         }
     }
 
     fn height_range(&self) -> (f32, f32) {
-        let (lo_a, hi_a) = self.craters.range();
-        let (lo_b, hi_b) = self.small.range();
-        (lo_a + lo_b - 0.3, 1.5 + 1.2 + 13.0 + hi_a + hi_b + 0.3)
+        // El fbm de tres octavas no pasa de 0.875; arriba, lo que levantan
+        // los parpados.
+        (-3.1, 3.1 + 8.0 + 2.5 + ARGOS_LID)
     }
 }
 
@@ -349,10 +342,7 @@ mod tests {
     #[test]
     fn every_planet_stays_inside_its_declared_range_and_is_deterministic() {
         let fields: Vec<(Box<dyn HeightField>, Box<dyn HeightField>)> = vec![
-            (
-                Box::new(RequiemField::new(7)),
-                Box::new(RequiemField::new(7)),
-            ),
+            (Box::new(ArgosField::new(7)), Box::new(ArgosField::new(7))),
             (Box::new(PiraField::new(7)), Box::new(PiraField::new(7))),
             (
                 Box::new(JardinField::new(7, 1)),
@@ -459,46 +449,5 @@ impl HeightField for ParpadoField {
 
     fn height_range(&self) -> (f32, f32) {
         (0.0, 1.6 + 1.5 + 26.0 + 0.5)
-    }
-}
-
-/// Epitafio, la luna de Requiem: hielo viejo lleno de crateres. Usa el
-/// mismo shader que Requiem (atributos: `x` hielo, que no tiene; `y` nieve
-/// en lo alto; `z` borde de crater).
-pub struct EpitafioField {
-    noise: Perlin,
-    craters: Craters,
-}
-
-impl EpitafioField {
-    pub fn new(seed: u32) -> Self {
-        Self {
-            noise: Perlin::new(seed),
-            craters: Craters {
-                frequency: 9.0,
-                chance: 0.45,
-                min_radius: 0.15,
-                max_radius: 0.6,
-                depth: 3.0,
-                seed: seed ^ 0xE91A,
-            },
-        }
-    }
-}
-
-impl HeightField for EpitafioField {
-    fn sample(&self, dir: Vec3) -> TerrainSample {
-        let relief = self.noise.fbm(dir * 3.5 + Vec3::new(1.9, -4.1, 2.7), 4);
-        let (craters, rim) = self.craters.sample(dir);
-        let height = 1.5 + 1.5 * relief + craters;
-        TerrainSample {
-            height,
-            attrs: Vec3::new(0.0, smoothstep(2.0, 3.5, height), rim),
-        }
-    }
-
-    fn height_range(&self) -> (f32, f32) {
-        let (lo, hi) = self.craters.range();
-        (lo, 3.0 + hi + 0.2)
     }
 }

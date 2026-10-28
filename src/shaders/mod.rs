@@ -11,6 +11,7 @@
 //! - **Volumenes**: lo que no es una superficie (anillos, atmosferas) se
 //!   calcula por pixel contra la profundidad ya resuelta (`volumes`).
 
+pub(crate) mod argos;
 pub mod atmosphere;
 mod cementerio;
 mod detail;
@@ -24,7 +25,6 @@ mod vapor;
 mod pbr;
 mod pira;
 mod props;
-pub(crate) mod requiem;
 pub mod rings;
 mod ship;
 mod sky;
@@ -34,6 +34,7 @@ mod vigia;
 
 use crate::math::{Perlin, Vec2, Vec3, Vec4};
 
+pub use argos::{ArgosLook, OPEN as ARGOS_OPEN};
 pub use atmosphere::{AtmosphereFrame, AtmosphereModel, AtmosphereParams, SkyView};
 pub use gargantua::BlackHole;
 pub use nebula::Nebula;
@@ -60,15 +61,15 @@ pub struct DebugView {
 
 /// Intensidad del efecto propio de cada shader, ajustable en vivo (1 es la
 /// de diseno): la lava de Pira, la bioluminiscencia de Jardin, el ojo de
-/// Vigia, el hielo y los glifos de Requiem, la chatarra de Cementerio y el
-/// brillo de la estrella.
+/// Vigia, el iris de Argos, la chatarra de Cementerio y el brillo de la
+/// estrella.
 #[derive(Clone, Copy, Debug)]
 pub struct Gains {
     pub sun: f32,
     pub pira: f32,
     pub jardin: f32,
     pub vigia: f32,
-    pub requiem: f32,
+    pub argos: f32,
     pub cementerio: f32,
 }
 
@@ -79,7 +80,7 @@ impl Default for Gains {
             pira: 1.0,
             jardin: 1.0,
             vigia: 1.0,
-            requiem: 1.0,
+            argos: 1.0,
             cementerio: 1.0,
         }
     }
@@ -93,7 +94,7 @@ impl Gains {
             Material::Pira => Some(&mut self.pira),
             Material::Jardin => Some(&mut self.jardin),
             Material::Vigia | Material::Parpado => Some(&mut self.vigia),
-            Material::Requiem => Some(&mut self.requiem),
+            Material::Argos(_) => Some(&mut self.argos),
             Material::Cementerio => Some(&mut self.cementerio),
             _ => None,
         }
@@ -169,6 +170,7 @@ pub struct Uniforms<'a> {
 }
 
 /// Atributos interpolados del pixel visible.
+#[derive(Clone, Copy)]
 pub struct Fragment {
     pub ao: f32,
     pub object_to_world: crate::math::Mat3,
@@ -241,7 +243,8 @@ pub enum Material {
     Pira,
     Jardin,
     Vigia,
-    Requiem,
+    /// El planeta-ojo, con lo que su ojo hace este frame.
+    Argos(ArgosLook),
     Cementerio,
     /// La luna de Vigia: cristal y lagos espejo.
     Parpado,
@@ -255,7 +258,7 @@ pub enum Material {
 impl Material {
     /// Si el material mueve sus vertices (y hay que llamar a `displace`).
     pub fn deforms(&self) -> bool {
-        matches!(self, Material::Jardin)
+        matches!(self, Material::Jardin | Material::Argos(_))
     }
 }
 
@@ -266,7 +269,7 @@ pub fn shade(material: &Material, f: &Fragment, u: &Uniforms) -> Vec3 {
         Material::Pira => pira::shade(f, u),
         Material::Jardin => jardin::shade(f, u),
         Material::Vigia => vigia::shade(f, u),
-        Material::Requiem => requiem::shade(f, u),
+        Material::Argos(look) => argos::shade(f, u, look),
         Material::Cementerio => cementerio::shade(f, u),
         Material::Parpado => parpado::shade(f, u),
         Material::Ship(style) => ship::shade(f, u, style),
@@ -284,14 +287,18 @@ fn line(f: &Fragment, color: Vec3) -> Vec3 {
     f.color * color * (core.sqrt() * (1.0 - 0.75 * f.uv.x))
 }
 
-/// Desplazamiento del vertice sobre su normal, en unidades del mundo. Solo
-/// depende del tiempo y del ruido: los objetos que se paran sobre una
-/// superficie que se mueve lo usan para moverse con ella.
+/// Cuanto se mueve el vertice `local` (con normal `normal`), en unidades del
+/// mundo y en el espacio del objeto. Depende del tiempo, del ruido y de lo
+/// que lleve el material (a donde mira el ojo de Argos): los objetos que se
+/// paran sobre una superficie que se mueve lo usan para moverse con ella.
+/// Jardin respira sobre la normal; Argos se mueve en la direccion radial,
+/// para que el globo de su ojo quede como una esfera exacta.
 #[inline]
-pub fn displace(material: &Material, local: Vec3, time: f32, noise: &Perlin) -> f32 {
+pub fn displace(material: &Material, local: Vec3, normal: Vec3, time: f32, noise: &Perlin) -> Vec3 {
     match material {
-        Material::Jardin => jardin::breathe(local, time, noise),
-        _ => 0.0,
+        Material::Jardin => normal * jardin::breathe(local, time, noise),
+        Material::Argos(look) => local.normalize() * argos::lift(local, look),
+        _ => Vec3::ZERO,
     }
 }
 

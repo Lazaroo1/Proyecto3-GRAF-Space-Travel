@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn a_circular_orbit_is_predicted_as_a_closed_ring() {
         let sys = system();
-        let i = sys.find("Requiem").unwrap();
+        let i = sys.find("Argos").unwrap();
         let planet = &sys.bodies[i];
         let t = 10.0;
         let r = planet.radius * 2.0;
