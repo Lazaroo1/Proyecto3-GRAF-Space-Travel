@@ -285,11 +285,18 @@ pub fn composite(color: Vec3, dir: Vec3, depth: f32, ring: &RingInfo, u: &Unifor
         return color;
     }
     let to_sun = (u.sun_pos - hit).normalize();
-    // Sombra del planeta: el rayo del punto hacia la estrella pega en la esfera.
+    // Sombra del planeta: el rayo del punto hacia la estrella pega en la
+    // esfera. La estrella es enorme, asi que el borde es una penumbra que se
+    // abre con la distancia detras del planeta.
     let oc = hit - ring.center;
     let b = oc.dot(to_sun);
-    let c = oc.length_squared() - ring.planet_radius * ring.planet_radius;
-    let shadowed = b < 0.0 && b * b - c > 0.0;
+    let lit_part = if b < 0.0 {
+        let miss = (oc.length_squared() - b * b).max(0.0).sqrt();
+        let penumbra = (-b * u.sun_radius / (u.sun_pos - hit).length()).max(1.0);
+        smoothstep(ring.planet_radius - penumbra, ring.planet_radius + penumbra, miss)
+    } else {
+        1.0
+    };
     let s = (r - ring.inner) / (ring.outer - ring.inner);
     // Lo que mide un pixel en el plano, visto de lado crece.
     let footprint = t * u.pixel_angle / denom.abs().max(0.05);
@@ -321,7 +328,7 @@ pub fn composite(color: Vec3, dir: Vec3, depth: f32, ring: &RingInfo, u: &Unifor
     };
     let forward = dir.dot(to_sun).max(0.0).powi(6) * scatter;
     let glint = (-dir).dot(ring.normal).abs() * 0.2;
-    let light = if shadowed { 0.02 } else { 0.35 + forward + glint };
+    let light = 0.02 + (0.33 + forward + glint) * lit_part;
     // El polvo de Vigia, como sus nubes, guarda su color con la luz roja;
     // las ruinas de Requiem, tan lejos, la reciben fria como su planeta.
     let sun = match ring.style {
