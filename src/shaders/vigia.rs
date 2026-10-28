@@ -18,6 +18,10 @@
 //!   corre su color del rosa al violeta.
 //! - **Relampagos**: destellos chicos dentro de las nubes del vortice, en
 //!   lugares que cambian cada fraccion de segundo; de noche se ven de lejos.
+//! - **De noche no se apaga**: las capas hondas del gas brillan violeta a
+//!   traves de las nubes, el iris alumbra el remolino a su alrededor y, a
+//!   contraluz, la bruma alta dispersa la estrella en un borde fino. Asi el
+//!   disco se lee entero desde cualquier lado y el ojo no queda flotando.
 
 use super::{Fragment, Uniforms, limb_haze};
 use crate::math::{Vec3, smoothstep};
@@ -32,6 +36,8 @@ const ROSE: Vec3 = Vec3::new(0.66, 0.4, 0.78);
 const IRIS_DEEP: Vec3 = Vec3::new(0.22, 0.02, 0.3);
 const IRIS_HOT: Vec3 = Vec3::new(1.0, 0.32, 0.72);
 const IRIS_COOL: Vec3 = Vec3::new(0.62, 0.22, 1.0);
+/// Tinte del brillo propio del gas en el lado de noche.
+const DEEP_GLOW: Vec3 = Vec3::new(0.75, 0.42, 1.25);
 
 /// Gira `p` un angulo `angle` alrededor del eje unitario `axis` (Rodrigues).
 #[inline]
@@ -83,6 +89,7 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
         (a, eye.cross(a))
     };
     let theta = p.dot(b).atan2(p.dot(a));
+    let iris_color = IRIS_COOL.lerp(IRIS_HOT, hue);
 
     let mut glow = Vec3::ZERO;
     // Brazos en espiral logaritmica que caen al ojo y giran con el: claros
@@ -106,7 +113,6 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
         );
         let filaments = (1.0 - gas.abs() * 2.2).max(0.0).powi(3);
         let heat = smoothstep(1.0, 0.25, r) * (0.55 + 0.45 * cycle);
-        let iris_color = IRIS_COOL.lerp(IRIS_HOT, hue);
         let iris = IRIS_DEEP.lerp(iris_color, (heat * (0.5 + 0.5 * gas) + filaments * 0.6).clamp(0.0, 1.0));
         albedo = albedo.lerp(iris * 0.5, inside * 0.85) * (1.0 - 0.85 * limbal);
         // La pupila: redonda, se dilata con el latido y se cierra con la
@@ -147,5 +153,19 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     let wrap = ((nl + 0.12) / 1.12).max(0.0);
     let light = Vec3::splat(u.sun_light.luminance()) * 1.45 + Vec3::new(0.02, 0.012, 0.05);
     let lit = albedo * light * (wrap * (0.55 + 0.45 * nv)) + albedo * 0.01;
-    lit + glow * u.gains.vigia + limb_haze(f, Vec3::new(0.36, 0.1, 0.5), 0.35, nl)
+
+    // El lado de noche: el gas hondo brilla a traves de las nubes (las
+    // bandas se siguen leyendo) y el iris alumbra el remolino que lo rodea.
+    let night = smoothstep(0.2, -0.3, nl);
+    let deep = albedo * DEEP_GLOW * (0.085 * night);
+    let around = smoothstep(0.85, 1.05, r) * (-(r - 1.0).powi(2) * 0.75).exp();
+    let eye_light = albedo * iris_color * (around * (0.2 + 0.8 * night) * (0.5 + 0.5 * cycle) * 1.1);
+    glow += deep + eye_light;
+    // A contraluz la bruma alta dispersa la estrella hacia adelante: un borde
+    // fino que cierra la silueta del lado oscuro.
+    let back = (-l).dot(v).max(0.0);
+    let backlit = (1.0 - nv).powi(5) * back * back * smoothstep(-0.6, 0.0, nl);
+    let rim = Vec3::new(0.7, 0.4, 0.95) * light * (backlit * 0.9);
+
+    lit + rim + glow * u.gains.vigia + limb_haze(f, Vec3::new(0.36, 0.1, 0.5), 0.35, nl)
 }

@@ -305,12 +305,17 @@ su color HDR. Algunos ejemplos de técnica:
 - **Vigía** ([vigia.rs](src/shaders/vigia.rs)): coordenadas giradas con la
   fórmula de Rodrigues para el vórtice; el iris en coordenadas polares
   alrededor del eje del ojo, con ruido que se retuerce y corre hacia adentro.
+  El lado de noche no se apaga: las capas hondas del gas brillan violeta a
+  través de las nubes, el iris alumbra el remolino con una caída gaussiana
+  y, a contraluz, un borde de dispersión hacia adelante cierra la silueta.
+  Sin eso, desde Párpado o desde atrás se veía medio planeta o el ojo solo.
 - **Párpado** ([parpado.rs](src/shaders/parpado.rs)): el agua refleja a
   Vigía intersectando el rayo reflejado con su esfera y llamando al shader de
   Vigía en ese punto.
 - **Anillos** ([rings.rs](src/shaders/rings.rs)): analíticos (intersección
   rayo-plano), con la sombra del planeta sobre ellos y la de ellos sobre el
-  planeta. Las naves son celdas de Voronoi en coordenadas polares (un número
+  planeta. La sombra del planeta tiene penumbra: su ancho es la distancia
+  detrás del planeta por el radio angular de la estrella. Las naves son celdas de Voronoi en coordenadas polares (un número
   entero por vuelta, para que no haya costura) con una silueta de nave por
   distancia con signo; giran en bloque (con la velocidad de Kepler de cada
   radio, en un minuto se estirarían en rayas).
