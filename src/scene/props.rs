@@ -50,10 +50,28 @@ pub enum PropKind {
     Beacon,
     Vent,
     Crystal,
+    // Version chapina (cada uno en su planeta, en `chapin/`).
+    /// El Arco de Santa Catalina y las casas de Antigua (Fuego).
+    Arco,
+    Casa,
+    /// El Templo del Gran Jaguar, ceibas y arboles de la selva (Peten).
+    Templo,
+    Ceiba,
+    Arbol,
+    /// Lanchas en el lago (Atitlan).
+    Lancha,
+    /// Estelas de Quirigua y pinos (Cuchumatanes).
+    Estela,
+    Pino,
+    /// Camionetas extraurbanas, la Torre del Reformador y edificios (la
+    /// capital).
+    Camioneta,
+    Torre,
+    Edificio,
 }
 
 impl PropKind {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 20] = [
         Self::Eye,
         Self::Mushroom,
         Self::Coral,
@@ -63,6 +81,17 @@ impl PropKind {
         Self::Beacon,
         Self::Vent,
         Self::Crystal,
+        Self::Arco,
+        Self::Casa,
+        Self::Templo,
+        Self::Ceiba,
+        Self::Arbol,
+        Self::Lancha,
+        Self::Estela,
+        Self::Pino,
+        Self::Camioneta,
+        Self::Torre,
+        Self::Edificio,
     ];
 
     /// Posicion en `ALL` (y en la lista de modelos).
@@ -77,7 +106,9 @@ impl PropKind {
     pub fn visibility(self) -> f32 {
         match self {
             Self::Wreck | Self::Boulder | Self::Beacon => 1.0,
-            Self::Eye => 0.75,
+            Self::Arco | Self::Templo | Self::Torre | Self::Edificio | Self::Camioneta => 1.0,
+            Self::Eye | Self::Casa | Self::Ceiba | Self::Estela | Self::Lancha => 0.75,
+            Self::Arbol | Self::Pino => 0.5,
             Self::Mushroom | Self::Coral | Self::Spike | Self::Vent | Self::Crystal => 0.5,
         }
     }
@@ -246,7 +277,7 @@ fn vent(detail: usize) -> Mesh {
 
 /// Una instancia en el lugar: a `x` a la derecha y `z` al frente del centro
 /// (unidades del mundo), sobre el terreno.
-fn at_site(
+pub(crate) fn at_site(
     radius: f64,
     field: &dyn HeightField,
     frame: (DVec3, DVec3, DVec3),
@@ -269,7 +300,7 @@ fn at_site(
 }
 
 /// Quita del lugar los objetos repartidos a menos de `clear` unidades.
-fn clear_site(instances: &mut Vec<Instance>, radius: f64, normal: DVec3, clear: f64) {
+pub(crate) fn clear_site(instances: &mut Vec<Instance>, radius: f64, normal: DVec3, clear: f64) {
     instances.retain(|p| (p.position.normalize() - normal).length() * radius > clear);
 }
 
@@ -737,6 +768,7 @@ pub fn build_models() -> Vec<PropModel> {
                 PropKind::Beacon => beacon(detail),
                 PropKind::Vent => vent(detail),
                 PropKind::Crystal => crystal(detail),
+                chapin => crate::chapin::mesh(chapin, detail),
             };
             let mut lods = [make(2), make(1), make(0)];
             if matches!(kind, PropKind::Mushroom | PropKind::Coral) {
@@ -871,7 +903,7 @@ pub fn scatter(
 }
 
 /// Orientacion con +Y sobre `up` y un giro `yaw` alrededor de el.
-fn upright_rotation(up: DVec3, yaw: f64) -> DQuat {
+pub(crate) fn upright_rotation(up: DVec3, yaw: f64) -> DQuat {
     let helper = if up.y.abs() < 0.9 { DVec3::Y } else { DVec3::X };
     let x = helper.cross(up).normalize();
     let z = x.cross(up);

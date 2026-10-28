@@ -14,7 +14,7 @@
 pub(crate) mod argos;
 pub mod atmosphere;
 mod cementerio;
-mod detail;
+pub(crate) mod detail;
 pub mod gargantua;
 mod images;
 mod jardin;
@@ -22,13 +22,13 @@ mod nebula;
 pub(crate) mod parpado;
 mod tail;
 mod vapor;
-mod pbr;
+pub(crate) mod pbr;
 mod pira;
 mod props;
 pub mod rings;
 mod ship;
 mod sky;
-mod sun;
+pub(crate) mod sun;
 pub mod textures;
 mod vigia;
 
@@ -95,6 +95,13 @@ impl Gains {
             Material::Jardin => Some(&mut self.jardin),
             Material::Vigia | Material::Parpado => Some(&mut self.vigia),
             Material::Argos(_) => Some(&mut self.argos),
+            Material::Chapin(c) => Some(match c {
+                crate::chapin::Chapin::Fuego => &mut self.pira,
+                crate::chapin::Chapin::Peten => &mut self.jardin,
+                crate::chapin::Chapin::Atitlan | crate::chapin::Chapin::Semuc => &mut self.vigia,
+                crate::chapin::Chapin::Cuchumatanes | crate::chapin::Chapin::Xela => &mut self.argos,
+                crate::chapin::Chapin::Capital => &mut self.cementerio,
+            }),
             Material::Cementerio => Some(&mut self.cementerio),
             _ => None,
         }
@@ -245,10 +252,14 @@ pub enum Material {
     Vigia,
     /// El planeta-ojo, con lo que su ojo hace este frame.
     Argos(ArgosLook),
+    /// Un cuerpo de la version chapina (V).
+    Chapin(crate::chapin::Chapin),
     Cementerio,
     /// La luna de Vigia: cristal y lagos espejo.
     Parpado,
     Ship(ShipStyle),
+    /// Una nave botella de la version chapina: el color de sus caras.
+    Bottle,
     /// Un objeto de la superficie, con los datos de su instancia.
     Prop(PropStyle),
     /// Una cinta de luz (la trayectoria predicha): solo emite su color.
@@ -258,14 +269,20 @@ pub enum Material {
 impl Material {
     /// Si el material mueve sus vertices (y hay que llamar a `displace`).
     pub fn deforms(&self) -> bool {
-        matches!(self, Material::Jardin | Material::Argos(_))
+        match self {
+            Material::Jardin | Material::Argos(_) => true,
+            Material::Chapin(c) => c.deforms(),
+            _ => false,
+        }
     }
 }
 
 #[inline]
 pub fn shade(material: &Material, f: &Fragment, u: &Uniforms) -> Vec3 {
     match material {
+        Material::Sun(style) if style.glyph => crate::chapin::kinich::shade(f, u, style),
         Material::Sun(style) => sun::shade(f, u, style),
+        Material::Chapin(c) => c.shade(f, u),
         Material::Pira => pira::shade(f, u),
         Material::Jardin => jardin::shade(f, u),
         Material::Vigia => vigia::shade(f, u),
@@ -273,6 +290,7 @@ pub fn shade(material: &Material, f: &Fragment, u: &Uniforms) -> Vec3 {
         Material::Cementerio => cementerio::shade(f, u),
         Material::Parpado => parpado::shade(f, u),
         Material::Ship(style) => ship::shade(f, u, style),
+        Material::Bottle => ship::bottle(f, u),
         Material::Prop(style) => props::shade(style, f, u),
         Material::Line(color) => line(f, *color),
     }
@@ -298,6 +316,7 @@ pub fn displace(material: &Material, local: Vec3, normal: Vec3, time: f32, noise
     match material {
         Material::Jardin => normal * jardin::breathe(local, time, noise),
         Material::Argos(look) => local.normalize() * argos::lift(local, look),
+        Material::Chapin(c) => c.displace(local, normal, time, noise),
         _ => Vec3::ZERO,
     }
 }

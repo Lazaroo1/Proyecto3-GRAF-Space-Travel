@@ -45,3 +45,15 @@ pub fn shade(f: &Fragment, u: &Uniforms, s: &ShipStyle) -> Vec3 {
     let _ = (s.specular, s.shininess);
     lit + emission
 }
+
+/// Las naves botella: el color de cada cara viene del `.mtl` (vidrio,
+/// etiquetas, chapa). Todo es liso y pulido: el vidrio refleja el cielo con
+/// Fresnel y la estrella deja un brillo fino.
+pub fn bottle(f: &Fragment, u: &Uniforms) -> Vec3 {
+    let albedo = f.color;
+    let lit = pbr::shade(f, u, albedo, 0.16, 0.0, f.normal, 1.0);
+    // Un borde claro de vidrio, aunque la estrella este atras.
+    let v = f.view_dir();
+    let rim = (1.0 - f.normal.dot(v).abs()).powi(4);
+    lit + (albedo * 0.5 + Vec3::splat(0.04)) * rim * 0.25
+}

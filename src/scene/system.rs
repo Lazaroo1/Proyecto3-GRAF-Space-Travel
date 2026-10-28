@@ -10,6 +10,8 @@ use std::f64::consts::TAU;
 use std::path::Path;
 use std::sync::Arc;
 
+use super::effects::Exhaust;
+use crate::chapin::{self, Chapin};
 use super::props::{self, PropModel, PropSet};
 use super::{Mesh, icosphere, load_obj};
 use crate::config;
@@ -24,7 +26,11 @@ use crate::terrain::shapes::{
 use crate::terrain::{HeightField, Smooth, Terrain};
 
 pub struct Body {
+    /// Nombre interno: el codigo busca los cuerpos por el (no cambia con la
+    /// version).
     pub name: &'static str,
+    /// Nombre en el HUD, el de la version que se esta viendo.
+    pub label: &'static str,
     pub radius: f64,
     /// Amplitud del latido del radio (fraccion del radio); 0 no late.
     pub pulse: f64,
@@ -52,8 +58,12 @@ pub struct Body {
     pub surface: Option<Arc<dyn HeightField>>,
     /// Anillos, si tiene.
     pub rings: Option<Rings>,
-    /// Ya no existe (Gargantua se la comio): no se choca con ella.
+    /// Ya no existe (Gargantua se la comio, o no es de esta version): no se
+    /// dibuja ni se choca con ella.
     pub hidden: bool,
+    /// No existe en la version que se esta viendo (la Luna de Xelaju solo
+    /// esta en la chapina).
+    pub absent: bool,
     /// Si es una luna, el planeta alrededor del que gira: su orbita (la de
     /// arriba) es alrededor de el.
     pub host: Option<Host>,
@@ -203,6 +213,7 @@ impl PlanetSpec {
             .map(|p| AtmosphereModel::new(self.radius as f32, p));
         let body = Body {
             name: self.name,
+            label: self.name,
             radius: self.radius,
             pulse: 0.0,
             orbit_radius: self.orbit,
@@ -219,6 +230,7 @@ impl PlanetSpec {
             surface: Some(self.surface),
             rings: None,
             hidden: false,
+            absent: false,
             host: None,
         };
         (body, terrain, atmosphere)
@@ -252,6 +264,72 @@ pub struct System {
     pub eye_body: usize,
     /// Un lugar para visitar en cada planeta con superficie.
     pub sites: Vec<Site>,
+    /// La version que se esta viendo; `other` guarda lo de la otra (V las
+    /// intercambia).
+    pub version: Version,
+    other: Vec<Look>,
+    other_sites: Vec<Site>,
+    /// Semilla con la que se colocaron los objetos de la otra version.
+    other_seed: u32,
+    /// Las naves botella de la version chapina.
+    pub bottles: Vec<Bottle>,
+}
+
+/// La version del sistema.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Version {
+    Ocaso,
+    /// Guatemala: los mismos cuerpos y orbitas con otra piel (`chapin/`).
+    Chapin,
+}
+
+/// Una nave botella: su nombre, su malla y lo que echa por detras.
+#[derive(Clone, Copy, Debug)]
+pub struct Bottle {
+    pub name: &'static str,
+    pub mesh: usize,
+    pub exhaust: Exhaust,
+}
+
+/// Las naves botella: nombre, archivo en `assets/botellas` y su escape.
+const BOTTLES: [(&str, &str, Exhaust); 6] = [
+    ("Gallo", "06-gallo", Exhaust::Foam),
+    ("Cabro Reserva", "01-cabro-reserva", Exhaust::Foam),
+    (
+        "Jagermeister",
+        "02-jagermeister",
+        Exhaust::Flame(Vec3::new(0.35, 1.2, 0.25), Vec3::new(0.05, 0.4, 0.08)),
+    ),
+    (
+        "Blue Label",
+        "03-johnnie-walker-blue",
+        Exhaust::Flame(Vec3::new(0.2, 0.55, 1.4), Vec3::new(0.05, 0.12, 0.6)),
+    ),
+    (
+        "Cubata Uva",
+        "04-cubata-uva",
+        Exhaust::Flame(Vec3::new(0.9, 0.3, 1.4), Vec3::new(0.3, 0.05, 0.55)),
+    ),
+    ("Four Loko", "05-four-loko-white", Exhaust::Sparks),
+];
+
+/// Un numero por nombre, para mezclar la semilla de cada cuerpo.
+fn hash_name(name: &str) -> u32 {
+    name.bytes().fold(0x811C_9DC5u32, |h, b| (h ^ b as u32).wrapping_mul(0x0100_0193))
+}
+
+/// Lo que cambia de un cuerpo entre versiones. La version que no se esta
+/// viendo vive aqui; `System::toggle_version` lo intercambia con lo del
+/// cuerpo.
+struct Look {
+    label: &'static str,
+    material: Material,
+    surface: Option<Arc<dyn HeightField>>,
+    rings: Option<Rings>,
+    absent: bool,
+    terrain: Option<Terrain>,
+    atmosphere: Option<AtmosphereModel>,
+    props: PropSet,
 }
 
 /// Un lugar para visitar en la superficie de un planeta, en el espacio del
@@ -282,11 +360,27 @@ impl System {
         let mut low = load_obj(&assets.join("OCASO-1-low.obj"))?;
         medium.normalize_size(config::SHIP_LENGTH as f32);
         low.normalize_size(config::SHIP_LENGTH as f32);
-        let meshes = vec![icosphere(5), ship, medium, low];
+        let mut meshes = vec![icosphere(5), ship, medium, low];
+        // Las naves botella: en los OBJ la botella esta parada sobre +Z con la
+        // etiqueta hacia +Y. Vuelan con el pico adelante (-Z) y la etiqueta
+        // arriba (+Y): media vuelta alrededor de Y.
+        let mut bottles = Vec::new();
+        for &(name, file, exhaust) in &BOTTLES {
+            let mut mesh = load_obj(&assets.join("botellas").join(format!("{file}-low.obj")))?;
+            mesh.deform(|p| Vec3::new(-p.x, p.y, -p.z));
+            mesh.normalize_size(config::SHIP_LENGTH as f32 * 1.15);
+            bottles.push(Bottle {
+                name,
+                mesh: meshes.len(),
+                exhaust,
+            });
+            meshes.push(mesh);
+        }
         let seed = config::NOISE_SEED;
 
         let star = Body {
             name: "Ocaso",
+            label: "Ocaso",
             radius: 320.0,
             pulse: 0.012,
             orbit_radius: 0.0,
@@ -302,10 +396,12 @@ impl System {
             material: Material::Sun(SunStyle {
                 temperature: 3400.0,
                 intensity: 3.0,
+                glyph: false,
             }),
             surface: None,
             rings: None,
             hidden: false,
+            absent: false,
             host: None,
         };
 
@@ -473,8 +569,31 @@ impl System {
         // Su region no llega hasta Vigia.
         parpado.soi = parpado.radius * 2.5;
 
+        // La Luna de Xelaju: solo existe en la version chapina, alrededor de
+        // los Cuchumatanes (donde esta Argos).
+        let (mut xela, xela_terrain, _) = PlanetSpec {
+            name: "Xela",
+            radius: 48.0,
+            orbit: 560.0,
+            period: 260.0,
+            phase: 2.0,
+            inclination: 0.25,
+            spin: 260.0,
+            tilt: 0.0,
+            gravity: 2.0,
+            material: Material::Chapin(Chapin::Xela),
+            surface: chapin::field("Xela", seed ^ 0x3E1A).unwrap(),
+            atmosphere: None,
+        }
+        .build();
+        xela.host = Some(Host::of(4, &argos));
+        xela.soi = xela.radius * 2.5;
+        xela.label = "Luna de Xelaju";
+        xela.absent = true;
+        xela.hidden = true;
+
         let mut system = Self {
-            bodies: vec![star, pira, jardin, vigia, argos, cementerio, parpado],
+            bodies: vec![star, pira, jardin, vigia, argos, cementerio, parpado, xela],
             terrains: vec![
                 None,
                 Some(pira_terrain),
@@ -483,6 +602,7 @@ impl System {
                 Some(argos_terrain),
                 Some(cementerio_terrain),
                 Some(parpado_terrain),
+                Some(xela_terrain),
             ],
             atmospheres: vec![
                 None,
@@ -492,6 +612,7 @@ impl System {
                 argos_air,
                 None,
                 parpado_air,
+                None,
             ],
             meshes,
             ship_mesh: [1, 2, 3],
@@ -510,10 +631,135 @@ impl System {
             star_base: 320.0,
             eye_body: 3,
             sites: Vec::new(),
+            version: Version::Ocaso,
+            other: Vec::new(),
+            other_sites: Vec::new(),
+            other_seed: config::PROP_SEED,
+            bottles,
         };
         system.sites = system.build_sites();
         system.scatter_props(config::PROP_SEED);
+        system.build_chapin(seed);
         Ok(system)
+    }
+
+    /// Arma la version chapina de cada cuerpo (queda guardada en `other`).
+    fn build_chapin(&mut self, seed: u32) {
+        let looks: Vec<Look> = (0..self.bodies.len())
+            .map(|i| {
+                let body = &self.bodies[i];
+                let Some(spec) = chapin::spec(body.name) else {
+                    // La estrella: su material lo arma la app cada frame.
+                    return Look {
+                        label: if i == 0 { chapin::STAR_LABEL } else { body.label },
+                        material: body.material,
+                        surface: body.surface.clone(),
+                        rings: body.rings,
+                        absent: false,
+                        terrain: None,
+                        atmosphere: None,
+                        props: PropSet::default(),
+                    };
+                };
+                let surface = chapin::field(body.name, seed ^ hash_name(body.name));
+                let terrain = surface
+                    .clone()
+                    .map(|field| Terrain::new(body.radius, field, config::TERRAIN_FINEST));
+                Look {
+                    label: spec.label,
+                    material: Material::Chapin(spec.material),
+                    surface,
+                    rings: spec.rings,
+                    absent: false,
+                    terrain,
+                    atmosphere: spec.atmosphere.map(|p| AtmosphereModel::new(body.radius as f32, p)),
+                    props: PropSet::default(),
+                }
+            })
+            .collect();
+        self.other = looks;
+        self.other_sites = self.chapin_sites();
+        // Los objetos de la version chapina, con su relieve y sus lugares.
+        let props: Vec<PropSet> = (0..self.bodies.len())
+            .map(|i| match &self.other[i].surface {
+                Some(field) => self.scatter_with(i, self.prop_seed, &**field, Version::Chapin, &self.other_sites),
+                None => PropSet::default(),
+            })
+            .collect();
+        for (look, set) in self.other.iter_mut().zip(props) {
+            look.props = set;
+        }
+        self.other_seed = self.prop_seed;
+    }
+
+    /// Los lugares de la version chapina: donde estan los de OCASO (o, si el
+    /// cuerpo no tiene, cerca del terminador), con su nombre y sus objetos.
+    fn chapin_sites(&self) -> Vec<Site> {
+        let t = 40.0;
+        let mut sites = Vec::new();
+        for (i, body) in self.bodies.iter().enumerate() {
+            let default = match self.sites.iter().find(|s| s.body == i) {
+                Some(site) => (site.normal, site.forward),
+                None => {
+                    let center = body.position(t);
+                    let to_star = (self.bodies[0].position(t) - center).normalize();
+                    let side = to_star.cross(DVec3::Y).normalize();
+                    let up = side.cross(to_star).normalize();
+                    let normal = (to_star * 0.35 - side * 0.85 + up * 0.4).normalize();
+                    let forward = (to_star - normal * to_star.dot(normal)).normalize();
+                    let inv = body.rotation(t).conjugate();
+                    (inv.rotate(normal), inv.rotate(forward))
+                }
+            };
+            if let Some((name, normal, forward, _)) = chapin::site(body.name, default) {
+                sites.push(Site {
+                    body: i,
+                    name,
+                    normal,
+                    forward,
+                    view: Self::SITE_VIEW,
+                });
+            }
+        }
+        sites
+    }
+
+    /// Cambia a la otra version: intercambia el nombre, el material, el
+    /// relieve, los anillos, el terreno, la atmosfera, los objetos y los
+    /// lugares de cada cuerpo con los guardados. Las orbitas, los radios y
+    /// la gravedad no cambian, asi que la nave sigue donde estaba.
+    pub fn toggle_version(&mut self) {
+        for (i, look) in self.other.iter_mut().enumerate() {
+            let body = &mut self.bodies[i];
+            std::mem::swap(&mut body.label, &mut look.label);
+            std::mem::swap(&mut body.material, &mut look.material);
+            std::mem::swap(&mut body.surface, &mut look.surface);
+            std::mem::swap(&mut body.rings, &mut look.rings);
+            std::mem::swap(&mut body.absent, &mut look.absent);
+            body.hidden = body.absent;
+            std::mem::swap(&mut self.terrains[i], &mut look.terrain);
+            std::mem::swap(&mut self.atmospheres[i], &mut look.atmosphere);
+            std::mem::swap(&mut self.props[i], &mut look.props);
+        }
+        std::mem::swap(&mut self.sites, &mut self.other_sites);
+        std::mem::swap(&mut self.prop_seed, &mut self.other_seed);
+        self.version = match self.version {
+            Version::Ocaso => Version::Chapin,
+            Version::Chapin => Version::Ocaso,
+        };
+        // Si en la otra version se cambio un radio o la semilla, lo que se
+        // guardo quedo viejo: se rehace.
+        for i in 0..self.bodies.len() {
+            let stale = self.terrains[i]
+                .as_ref()
+                .is_some_and(|terrain| terrain.radius != self.bodies[i].radius);
+            if stale {
+                self.set_radius(i, self.bodies[i].radius);
+            }
+        }
+        if self.prop_seed != self.other_seed {
+            self.scatter_props(self.other_seed);
+        }
     }
 
     /// Coloca (o vuelve a colocar) los objetos de todos los planetas con

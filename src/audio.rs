@@ -35,6 +35,8 @@ pub struct AudioParams {
     /// Tono del fondo en Hz y su volumen.
     pub drone_hz: f32,
     pub drone: f32,
+    /// Volumen de la marimba de la version chapina (0 apagada).
+    pub marimba: f32,
     pub master: f32,
 }
 
@@ -48,6 +50,7 @@ impl Default for AudioParams {
             wind: 0.0,
             drone_hz: 55.0,
             drone: 0.0,
+            marimba: 0.0,
             master: 0.8,
         }
     }
@@ -99,6 +102,8 @@ pub struct Synth {
     wind_lp: LowPass,
     wind_hp: LowPass,
     click_lp: LowPass,
+    marimba: crate::marimba::Marimba,
+    marimba_level: f32,
 }
 
 impl Default for Synth {
@@ -129,6 +134,8 @@ impl Synth {
             wind_lp: LowPass::default(),
             wind_hp: LowPass::default(),
             click_lp: LowPass::default(),
+            marimba: crate::marimba::Marimba::new(),
+            marimba_level: 0.0,
         }
     }
 
@@ -238,7 +245,15 @@ impl Synth {
             }
             let drone = drone * self.drone * 0.25;
 
-            let mix = (heart * 0.9 + engine + wind + drone) * target.master;
+            // Marimba de la version chapina: entra y sale suave.
+            self.marimba_level += (target.marimba - self.marimba_level) * smooth * 0.1;
+            let marimba = if self.marimba_level > 0.001 {
+                self.marimba.next(SAMPLE_RATE as f32) * self.marimba_level
+            } else {
+                0.0
+            };
+
+            let mix = (heart * 0.9 + engine + wind + drone + marimba) * target.master;
             // Saturacion suave: nunca sale de [-1, 1].
             *sample = mix / (1.0 + mix.abs());
         }

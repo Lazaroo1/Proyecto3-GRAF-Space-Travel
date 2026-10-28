@@ -9,7 +9,7 @@
 
 use std::f64::consts::TAU;
 
-use super::System;
+use super::system::{Site, System, Version};
 use super::props::{self, PropSet};
 use crate::config;
 use crate::math::{DVec3, hash_u32};
@@ -20,24 +20,46 @@ impl System {
     /// Los objetos del cuerpo `index` con la semilla `seed`. Cada cuerpo
     /// mezcla la semilla con su indice para no repetir el mismo patron.
     pub fn scatter_body(&self, index: usize, seed: u32) -> PropSet {
+        match &self.bodies[index].surface {
+            Some(field) => self.scatter_with(index, seed, &**field, self.version, &self.sites),
+            None => PropSet::default(),
+        }
+    }
+
+    /// Los objetos del cuerpo `index` sobre el relieve `field`, con las
+    /// reglas y los lugares de la version `version`.
+    pub(super) fn scatter_with(
+        &self,
+        index: usize,
+        seed: u32,
+        field: &dyn HeightField,
+        version: Version,
+        sites: &[Site],
+    ) -> PropSet {
         let body = &self.bodies[index];
-        let Some(field) = &body.surface else {
-            return PropSet::default();
+        let rules = match version {
+            Version::Ocaso => props::rules_for(body.name),
+            Version::Chapin => crate::chapin::rules_for(body.name),
         };
-        let rules = props::rules_for(body.name);
         let planet_seed = hash_u32(seed ^ hash_u32(index as u32 + 1));
-        let mut instances = props::scatter(body.radius, &**field, &rules, planet_seed);
-        if let Some(site) = self.sites.iter().find(|s| s.body == index) {
+        let mut instances = props::scatter(body.radius, field, &rules, planet_seed);
+        if let Some(site) = sites.iter().find(|s| s.body == index) {
             let frame = site.frame();
-            let place = match body.name {
-                "Jardin" => props::garden_grove,
-                "Pira" => props::vent_field,
-                "Argos" => props::eye_nest,
-                "Cementerio" => props::beacon_site,
-                "Parpado" => props::mirror_shore,
-                _ => |_: &mut Vec<_>, _: f64, _: &dyn HeightField, _: u32, _: (DVec3, DVec3, DVec3)| {},
+            let nothing: crate::chapin::Placer =
+                |_: &mut Vec<_>, _: f64, _: &dyn HeightField, _: u32, _: (DVec3, DVec3, DVec3)| {};
+            let place = match version {
+                Version::Ocaso => match body.name {
+                    "Jardin" => props::garden_grove,
+                    "Pira" => props::vent_field,
+                    "Argos" => props::eye_nest,
+                    "Cementerio" => props::beacon_site,
+                    "Parpado" => props::mirror_shore,
+                    _ => nothing,
+                },
+                Version::Chapin => crate::chapin::site(body.name, (site.normal, site.forward))
+                    .map_or(nothing, |(_, _, _, place)| place),
             };
-            place(&mut instances, body.radius, &**field, planet_seed, frame);
+            place(&mut instances, body.radius, field, planet_seed, frame);
         }
         PropSet::new(instances, &self.prop_models)
     }

@@ -29,6 +29,10 @@ pub enum RingStyle {
     Wrecks,
     /// Vigia: polvo fino en anillos delgados.
     Dust,
+    /// La capital (version chapina): camionetas y tuc-tucs dando vueltas.
+    Buses,
+    /// Los Cuchumatanes (version chapina): los barriletes de Sumpango.
+    Kites,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -198,6 +202,8 @@ pub fn density(ring: &RingInfo, r: f32, noise: &Perlin) -> f32 {
             let fine = noise.noise(Vec3::new(s * 260.0, 1.5, 2.5)) * 0.5 + 0.5;
             (edges * gaps * (0.015 + 0.3 * ringlets * ringlets * ringlets + 0.06 * fine)).min(0.38)
         }
+        RingStyle::Buses => crate::chapin::capital::ring_density(s, noise),
+        RingStyle::Kites => crate::chapin::cuchumatanes::ring_density(s, noise),
     }
 }
 
@@ -269,6 +275,8 @@ pub fn composite(color: Vec3, dir: Vec3, depth: f32, ring: &RingInfo, u: &Unifor
             Vec3::ZERO,
             5.0,
         ),
+        RingStyle::Buses => crate::chapin::capital::ring(ring, local, alpha, s, footprint, u),
+        RingStyle::Kites => crate::chapin::cuchumatanes::ring(ring, local, alpha, s, footprint, u),
     };
     let forward = dir.dot(to_sun).max(0.0).powi(6) * scatter;
     let glint = (-dir).dot(ring.normal).abs() * 0.2;
@@ -276,7 +284,7 @@ pub fn composite(color: Vec3, dir: Vec3, depth: f32, ring: &RingInfo, u: &Unifor
     // El polvo de Vigia, como sus nubes, guarda su color con la luz roja.
     let sun = match ring.style {
         RingStyle::Dust => Vec3::splat(u.sun_light.luminance() * 1.3),
-        RingStyle::Wrecks => u.sun_light,
+        RingStyle::Wrecks | RingStyle::Buses | RingStyle::Kites => u.sun_light,
     };
     color.lerp(albedo * sun * light, alpha) + glow
 }
