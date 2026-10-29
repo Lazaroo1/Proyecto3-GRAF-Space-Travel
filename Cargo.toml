@@ -1,0 +1,22 @@
+[package]
+name = "ocaso"
+version = "0.1.0"
+edition = "2024"
+description = "OCASO: sistema solar explorable con un renderer por software en CPU - Proyecto 3, Graficas por Computadora"
+
+[dependencies]
+# Solo ventana, entrada y mostrar el framebuffer como textura. Nada de 3D.
+raylib = { version = "6.0.0", features = ["SUPPORT_IMAGE_GENERATION"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+# El render es propio y pesado: optimizarlo tambien en desarrollo.
+# Para medir rendimiento y presentar el proyecto, usar siempre --release.
+[profile.dev]
+opt-level = 2
+
+[profile.dev.package."*"]
+opt-level = 3
