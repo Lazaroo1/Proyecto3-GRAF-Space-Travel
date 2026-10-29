@@ -1050,24 +1050,24 @@ pub fn mesh(kind: PropKind, detail: usize) -> Mesh {
     }
 }
 
-/// Alto del fuste de la torre, de la plataforma y de la punta del mastil.
+/// Alto del fuste de la torre, de sus dos plataformas y de la punta del
+/// faro. La de verdad mide unos 72 m: aqui una unidad son unos 3 m.
 const SHAFT: f32 = 19.5;
-const PLATFORM: f32 = 5.2;
-const TOWER_TOP: f32 = 23.5;
+const PLATFORM: f32 = 5.0;
+const PLATFORM_2: f32 = 11.5;
+const TOWER_TOP: f32 = 22.3;
 
-/// Media anchura de la torre a la altura `y`: abajo se abre en curva y de
-/// la plataforma para arriba se cierra derecha.
+/// Media anchura de la torre a la altura `y`. Como la torre Eiffel, en la
+/// que se inspira: una curva exponencial que se abre mucho abajo (las patas
+/// quedan a los lados de la 7a Avenida y los arcos pasan sobre ella) y se
+/// cierra despacio hacia arriba.
 fn tower_half(y: f32) -> f32 {
-    if y < PLATFORM {
-        1.9 + 1.7 * (1.0 - y / PLATFORM).powf(1.8)
-    } else {
-        1.9 + (0.55 - 1.9) * (y - PLATFORM) / (SHAFT - PLATFORM)
-    }
+    0.5 + 3.7 * (-y / 5.0).exp()
 }
 
-/// La Torre del Reformador: cuatro patas que se abren abajo en arcos sobre
-/// la avenida y la calle, la plataforma, el fuste de celosia con diagonales
-/// en cruz, el campanario con su campana y el mastil con la luz.
+/// La Torre del Reformador: cuatro patas de acero que se abren abajo en
+/// arcos sobre la avenida y la calle, dos plataformas, el fuste de celosia
+/// con diagonales en cruz, el campanario con su campana y el faro arriba.
 fn tower(detail: usize) -> Mesh {
     let mut b = MeshBuilder::new();
     b.color(Vec3::new(IRON, 0.0, 0.0));
@@ -1076,13 +1076,11 @@ fn tower(detail: usize) -> Mesh {
         let r = tower_half(y);
         Vec3::new(corners[k].0 * r, y, corners[k].1 * r)
     };
-    // Las patas: vigas que siguen la curva.
-    let steps = [5, 8, 12][detail];
+    // Las patas: vigas que siguen la curva, con mas tramos abajo, donde
+    // mas se dobla.
+    let steps = [6, 10, 16][detail];
     let heights: Vec<f32> = (0..=steps)
-        .map(|i| {
-            let t = i as f32 / steps as f32;
-            if t < 0.5 { PLATFORM * t * 2.0 } else { PLATFORM + (SHAFT - PLATFORM) * (t - 0.5) * 2.0 }
-        })
+        .map(|i| SHAFT * (i as f32 / steps as f32).powf(1.6))
         .collect();
     for k in 0..4 {
         for w in heights.windows(2) {
@@ -1116,14 +1114,16 @@ fn tower(detail: usize) -> Mesh {
             }
         }
     }
-    // La plataforma: un marco cuadrado con baranda.
-    for k in 0..4 {
-        let (a, c) = (leg(k, PLATFORM), leg((k + 1) % 4, PLATFORM));
-        let out = (a + c) * 0.5;
-        let push = Vec3::new(out.x, 0.0, out.z).normalize() * 0.25;
-        beam(&mut b, a + push, c + push, 0.18);
-        if detail >= 1 {
-            beam(&mut b, a + push * 1.6 + Vec3::Y * 0.7, c + push * 1.6 + Vec3::Y * 0.7, 0.05);
+    // Las plataformas: marcos cuadrados con baranda.
+    for (level, thick) in [(PLATFORM, 0.18), (PLATFORM_2, 0.12)] {
+        for k in 0..4 {
+            let (a, c) = (leg(k, level), leg((k + 1) % 4, level));
+            let out = (a + c) * 0.5;
+            let push = Vec3::new(out.x, 0.0, out.z).normalize() * 0.25;
+            beam(&mut b, a + push, c + push, thick);
+            if detail >= 1 {
+                beam(&mut b, a + push * 1.6 + Vec3::Y * 0.6, c + push * 1.6 + Vec3::Y * 0.6, 0.04);
+            }
         }
     }
     // El fuste: travesanos en cada piso y diagonales en cruz.
@@ -1304,8 +1304,9 @@ pub fn shade_prop(kind: PropKind, f: &Fragment, u: &Uniforms, style: &PropStyle,
     }
 }
 
-/// La torre: hierro pintado de rojo oxido, con chorreones; la campana de
-/// bronce y la luz de arriba que destella. De noche, reflectores desde abajo.
+/// La torre: acero galvanizado gris, mas oscuro donde la intemperie lo
+/// mancha; la campana de bronce y el faro de arriba que destella. De noche,
+/// reflectores desde abajo.
 fn tower_shade(f: &Fragment, u: &Uniforms, _style: &PropStyle, sun: Vec3) -> Vec3 {
     let p = f.local;
     match material(f) {
@@ -1316,8 +1317,8 @@ fn tower_shade(f: &Fragment, u: &Uniforms, _style: &PropStyle, sun: Vec3) -> Vec
         }
         _ => {
             let weather = u.noise.fbm(p * Vec3::new(1.5, 0.4, 1.5), 3) * 0.5 + 0.5;
-            let paint = Vec3::new(0.3, 0.06, 0.035).lerp(Vec3::new(0.16, 0.05, 0.03), smoothstep(0.45, 0.75, weather));
-            let lit = pbr::shade_light(f, u, paint, 0.5, 0.25, f.normal, 1.0, sun);
+            let paint = Vec3::new(0.36, 0.37, 0.39).lerp(Vec3::new(0.2, 0.21, 0.22), smoothstep(0.45, 0.75, weather));
+            let lit = pbr::shade_light(f, u, paint, 0.45, 0.6, f.normal, 1.0, sun);
             let night = prop_night(f, u);
             let flood = (1.0 - p.y / TOWER_TOP).max(0.0).powf(1.5);
             lit + paint * Vec3::new(1.0, 0.8, 0.6) * (night * flood * 3.0 * u.gains.cementerio)

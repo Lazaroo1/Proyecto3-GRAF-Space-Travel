@@ -37,9 +37,21 @@
   filas en paralelo sobre la imagen ya terminada. La V también quita el
   título del principio para que no se encime con el de la transición.
 - **Las naves botella**: OBJ de Blender (Z arriba, etiqueta hacia +Y)
-  girados al cargar para volar con el pico adelante; su shader usa el color
-  de cada cara (`Kd`) con vidrio pulido y un borde de Fresnel. Cada una tiene
-  su escape (`effects::Exhaust`).
+  girados al cargar para volar con el pico adelante, y dibujados con la boca
+  22 grados hacia arriba (`System::ship_fix`): la cámara va atrás y arriba,
+  y así ve la etiqueta y no solo el fondo. Su shader usa el color de cada
+  cara (`Kd`) con vidrio pulido, un borde de Fresnel y la luz que pasa por
+  el vidrio a contraluz. Cada una tiene su escape (`effects::Exhaust`), que
+  sale del fondo de la botella inclinada.
+- **Los lugares de día**: cada lugar está fijo en su planeta y el planeta
+  gira, así que en la versión chapina N busca hacia adelante el primer
+  momento (hasta dos vueltas y media del planeta) en que el sol está entre
+  unos 27 y 53 grados sobre el lugar, y llega ahí (`daylight_at`).
+- **La Torre del Reformador** ([chapin/capital.rs](src/chapin/capital.rs)):
+  como la Eiffel, en la que se inspira, la media anchura de la torre a cada
+  altura es una exponencial (`0.5 + 3.7 e^(-y/5)`): las patas se abren abajo,
+  a los lados de la 7a Avenida, con arcos que pasan sobre ella, y se cierran
+  despacio hacia el faro. Acero galvanizado gris.
 - **El reproductor** ([player.rs](src/player.rs)): raylib solo decodifica y
   reproduce. Los archivos se leen con Rust y se le pasan desde memoria,
   porque en Windows raylib abre rutas con la página de códigos ANSI y una
