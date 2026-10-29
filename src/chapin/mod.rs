@@ -30,6 +30,7 @@ pub mod cuchumatanes;
 pub mod fuego;
 pub mod kinich;
 pub mod peten;
+pub mod plume;
 pub mod semuc;
 pub mod xela;
 
@@ -176,8 +177,8 @@ pub fn mesh(kind: PropKind, detail: usize) -> Mesh {
         PropKind::Arco | PropKind::Casa => fuego::mesh(kind, detail),
         PropKind::Templo | PropKind::Ceiba | PropKind::Arbol => peten::mesh(kind, detail),
         PropKind::Lancha => atitlan::mesh(kind, detail),
-        PropKind::Iglesia | PropKind::Pino => cuchumatanes::mesh(kind, detail),
-        PropKind::Camioneta | PropKind::Torre | PropKind::Edificio => capital::mesh(kind, detail),
+        PropKind::Iglesia | PropKind::Pino | PropKind::Puesto => cuchumatanes::mesh(kind, detail),
+        PropKind::Camioneta | PropKind::Torre | PropKind::Edificio | PropKind::Rascacielos => capital::mesh(kind, detail),
         _ => unreachable!("{kind:?} no es un objeto chapin"),
     }
 }
@@ -189,8 +190,8 @@ pub fn shade_prop(kind: PropKind, f: &Fragment, u: &Uniforms, style: &PropStyle,
         PropKind::Arco | PropKind::Casa => fuego::shade_prop(kind, f, u, style, sun),
         PropKind::Templo | PropKind::Ceiba | PropKind::Arbol => peten::shade_prop(kind, f, u, style, sun),
         PropKind::Lancha => atitlan::shade_prop(kind, f, u, style, sun),
-        PropKind::Iglesia | PropKind::Pino => cuchumatanes::shade_prop(kind, f, u, style, sun),
-        PropKind::Camioneta | PropKind::Torre | PropKind::Edificio => {
+        PropKind::Iglesia | PropKind::Pino | PropKind::Puesto => cuchumatanes::shade_prop(kind, f, u, style, sun),
+        PropKind::Camioneta | PropKind::Torre | PropKind::Edificio | PropKind::Rascacielos => {
             capital::shade_prop(kind, f, u, style, sun)
         }
         _ => Vec3::ZERO,

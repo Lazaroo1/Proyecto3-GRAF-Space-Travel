@@ -336,9 +336,11 @@ pub fn draw(
         lines_panel(d, fonts, 12.0, 12.0, &lines, None);
     }
 
-    let panel_bottom = flight_panel(d, fonts, app, width);
+    let flight = flight_panel(d, fonts, app, width);
+    let panel_bottom = flight.y + flight.height;
 
-    // Nombres de los cuerpos sobre su posicion en pantalla.
+    // Nombres de los cuerpos sobre su posicion en pantalla; los que caen
+    // bajo el panel de vuelo no se dibujan (se enciman con su texto).
     for m in &app.markers {
         let name = pretty(m.name);
         let distance = if m.distance >= 1000.0 {
@@ -350,8 +352,12 @@ pub fn draw(
         let dw = fonts.width(&distance, Style::Small);
         let w = nw + 8.0 + dw + 20.0;
         let (x, y) = (m.x, m.y);
-        triangle(d, Vector2::new(x, y - 3.0), Vector2::new(x + 5.0, y - 10.0), Vector2::new(x - 5.0, y - 10.0), ACCENT);
         let rect = Rectangle::new((x - w * 0.5).round(), y - 40.0, w.round(), 26.0);
+        let below = Rectangle::new(rect.x, rect.y, rect.width, 40.0);
+        if below.check_collision_recs(flight) {
+            continue;
+        }
+        triangle(d, Vector2::new(x, y - 3.0), Vector2::new(x + 5.0, y - 10.0), Vector2::new(x - 5.0, y - 10.0), ACCENT);
         pill(d, rect, Color::new(10, 10, 14, 140), None);
         fonts.draw(d, name, rect.x + 10.0, rect.y + 2.0, Style::Bold, ACCENT);
         fonts.draw(d, &distance, rect.x + 18.0 + nw, rect.y + 5.0, Style::Small, DIM);
@@ -421,8 +427,8 @@ pub fn draw(
 
 /// El panel de vuelo, arriba a la derecha: un encabezado con la fase o la
 /// version, las filas (etiqueta, tecla, valor) y una linea con las teclas
-/// de emergencia. Devuelve donde termina abajo.
-fn flight_panel(d: &mut RaylibDrawHandle, fonts: &Fonts, app: &App, width: f32) -> f32 {
+/// de emergencia. Devuelve el rectangulo que ocupa.
+fn flight_panel(d: &mut RaylibDrawHandle, fonts: &Fonts, app: &App, width: f32) -> Rectangle {
     let f = &app.flight;
     let c = &app.cycle;
     let clock = |seconds: f64| format!("{:02}:{:02}", (seconds / 60.0) as u32, (seconds % 60.0) as u32);
@@ -511,7 +517,7 @@ fn flight_panel(d: &mut RaylibDrawHandle, fonts: &Fonts, app: &App, width: f32) 
     cy += 6.0;
     d.draw_rectangle(x as i32 + pad as i32, cy as i32, (w - pad * 2.0) as i32, 1, EDGE);
     fonts.draw(d, footer, x + pad, cy + 6.0, Style::Small, footer_color);
-    y + h
+    Rectangle::new(x, y, w, h)
 }
 
 /// Tamano y lugar del reproductor: abajo a la derecha.

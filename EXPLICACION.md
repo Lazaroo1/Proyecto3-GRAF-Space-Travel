@@ -70,6 +70,40 @@
   dormidos el bosque sube más. En Atitlán se quitó la franja de nubes
   pintada en las cimas, que se leía como nieve: el bosque sube casi hasta la
   punta y solo esta es pedregal.
+- **La columna de ceniza** ([chapin/plume.rs](src/chapin/plume.rs)): un
+  volumen en la pasada de volúmenes, como el vapor de Pira. Cada explosión
+  del Fuego (las mismas que encienden el cráter y tiran bombas) suelta una
+  bocanada que sube rápido, se frena, se infla y el viento se la lleva de
+  lado; abajo, un tallo de gas une el cráter con ellas. La densidad es la
+  de la bocanada más cercana, con el borde comido por un fbm que sube con
+  ella (la coliflor), y la luz es la de la estrella sobre el lado que le da,
+  más el cielo; recién salida, la base brilla al rojo. Las bocanadas y la
+  esfera que las envuelve se calculan una vez por frame, y cada rayo
+  primero ve qué bocanadas cruza y solo marcha ese tramo: así cuesta unos
+  9 ms cuando llena media pantalla y casi nada en lo demás.
+- **La lava** ([chapin/fuego.rs](src/chapin/fuego.rs) `fire`): una costra
+  negra que se resquebraja en placas (celdas de Worley que bajan con la
+  colada) y, por las grietas y por el canal abierto junto a la boca, la
+  lava al rojo con su temperatura de cuerpo negro. Ladera abajo se enfría:
+  placas más grandes, grietas más finas y rojas. La costra es suelo
+  iluminado, no luz, y la colada tiene cuerpo en el relieve (rellena el
+  fondo de su barranca).
+- **Los pueblos**: Antigua tiene árboles en los patios, cafetales afuera,
+  camionetas y un mercado; en los valles del Fuego se reparten aldeas y
+  árboles de sombra. Xecul es un pueblo: plaza empedrada y calles de tierra
+  pintadas por el shader en los mismos ejes con que se colocan las casas
+  (las hileras de Antigua, `fuego::row`), el mercado frente a la iglesia,
+  pinos y camionetas. Los **puestos** son un objeto nuevo: postes, mesa con
+  un corte típico, montones de fruta y verdura y un toldo de lona que deja
+  pasar la luz; el shader pone a cada uno su lona y lo que vende.
+- **La capital**: la Torre del Reformador mide ahora 37.5 (con más tramos
+  en el fuste) y es lo más alto del centro. Alrededor hay más cuadras y, en
+  algunas, **torres de oficinas** (otro objeto nuevo): basamento de concreto
+  con vitrinas y un muro cortina de vidrio con antepechos y parteluces que
+  refleja un cielo de día con Fresnel; de noche, oficinas encendidas. Las
+  cuadras de la 7a Avenida quedan sin torres para no tapar la vista, y no
+  se construye donde un barranco cruza la cuadra (ahí la cuenta que pone
+  cada objeto en la cuadrícula no converge).
 - **El HUD** ([hud.rs](src/hud.rs)): la letra es Segoe UI (la de Windows)
   cargada desde memoria con las tildes, un atlas por tamaño, dibujada sin
   escalar y en pixeles enteros para que se vea nítida; si no está, usa la de
@@ -79,6 +113,8 @@
   reproductor dibuja sus botones con triángulos, una barra con perilla y una
   portada con un ecualizador que se mueve mientras suena. H vuelve junto a
   Pira (además de Inicio) y la fila de Y dice qué hace: la ruta predicha.
+  Los nombres de los planetas que caen bajo el panel de vuelo no se
+  dibujan.
 - **El reproductor** ([player.rs](src/player.rs)): raylib solo decodifica y
   reproduce. Los archivos se leen con Rust y se le pasan desde memoria,
   porque en Windows raylib abre rutas con la página de códigos ANSI y una

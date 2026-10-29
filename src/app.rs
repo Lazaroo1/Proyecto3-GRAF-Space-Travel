@@ -135,7 +135,7 @@ pub struct Preset {
     pub chapin: bool,
 }
 
-pub const PRESETS: [Preset; 48] = [
+pub const PRESETS: [Preset; 51] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
@@ -627,6 +627,42 @@ pub const PRESETS: [Preset; 48] = [
     Preset {
         name: "55_botella",
         shot: Shot::Ship { body: "Pira" },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "56_columna_de_ceniza",
+        shot: Shot::Site {
+            body: "Pira",
+            altitude: 40.0,
+            back: 75.0,
+            lift: 0.0,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "57_mercado_de_xecul",
+        shot: Shot::Site {
+            body: "Argos",
+            altitude: 22.0,
+            back: 45.0,
+            lift: 0.0,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "58_torres_de_la_capital",
+        shot: Shot::Site {
+            body: "Cementerio",
+            altitude: 30.0,
+            back: 80.0,
+            lift: 0.0,
+        },
         time: 40.0,
         act: None,
         chapin: true,
@@ -1177,6 +1213,28 @@ impl App {
         };
     }
 
+    /// La columna de ceniza del Volcan de Fuego en `t`, vista desde `eye`:
+    /// la boca del crater gira con el planeta.
+    fn fuego_plume(&self, t: f64, eye: DVec3, star: DVec3, sun_light: Vec3) -> Option<crate::chapin::plume::Plume> {
+        let body = &self.system.bodies[self.system.find("Pira")?];
+        let rotation = body.rotation(t);
+        let (crater, wind) = crate::chapin::fuego::plume_frame();
+        let up = rotation.rotate(crater.as_dvec3());
+        let center = body.position(t);
+        let mouth = center + up * (body.radius + body.surface_height(up, t) + 0.5);
+        let sun_dir = (star - mouth).normalize().as_vec3();
+        // Del lado de la noche la estrella no la alumbra.
+        let day = smoothstep(-0.25, 0.15, up.as_vec3().dot(sun_dir));
+        Some(crate::chapin::plume::Plume::new(
+            (mouth - eye).as_vec3(),
+            up.as_vec3(),
+            rotation.rotate(wind.as_dvec3()).as_vec3(),
+            sun_dir,
+            sun_light * day,
+            t as f32,
+        ))
+    }
+
     /// Recuperacion del piloto: vuelve junto a Pira, conserva el tiempo y el
     /// estado del sistema. No se usa para el recorrido continuo evaluado.
     pub fn return_to_system(&mut self) {
@@ -1713,6 +1771,7 @@ impl App {
                     sun_light,
                 )
             }),
+            plume: if ocaso { None } else { self.fuego_plume(t, camera.pos, star_pos, sun_light) },
             nebula: shaders::Nebula::at(
                 state.shell_age,
                 (star_pos - camera.pos).as_vec3(),
