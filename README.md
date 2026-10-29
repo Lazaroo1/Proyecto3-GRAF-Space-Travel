@@ -79,8 +79,8 @@ la siguiente y **1** a **6** eligen una; cada una echa algo distinto (espuma
 la cerveza, fuego verde el Jäger, azul el Blue Label, morado la Cubata,
 chispas de colores el Four Loko).
 
-**La música**: las canciones van en la carpeta [`musica/`](musica/LEEME.txt)
-(mp3, ogg, wav) y suenan en orden aleatorio, con un **crossfade** de 3.5 s
+**La música**: las canciones van en una carpeta `musica/` junto al proyecto
+(mp3, ogg, wav; no se suben al repositorio) y suenan en orden aleatorio, con un **crossfade** de 3.5 s
 entre una y otra; un `primera.txt` con el nombre de una canción (o un
 pedazo) hace que siempre empiece con esa. Al final de cada vuelta está una
 **marimba procedural** escrita en código (síntesis modal de las teclas
