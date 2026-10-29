@@ -2006,7 +2006,6 @@ impl App {
                 ("Pira", effects::Motes::Embers, 120.0),
                 ("Argos", effects::Motes::Drops, 120.0),
                 ("Cementerio", effects::Motes::Dust, 100.0),
-                ("Vigia", effects::Motes::Mist, 260.0),
                 ("Parpado", effects::Motes::Glints, 90.0),
             ],
             Version::Chapin => system
