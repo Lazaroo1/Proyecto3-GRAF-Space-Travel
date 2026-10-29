@@ -59,17 +59,19 @@ las sombras tienen más relleno.
 | ![Tikal: el Templo del Gran Jaguar sobre la selva](media/44_tikal.png) | ![Panajachel y los volcanes de Atitlán](media/46_panajachel.png) |
 | ![Semuc Champey: pozas turquesa](media/47_semuc.png) | ![San Andrés Xecul y la Luna de Xelajú](media/49_xecul.png) |
 | ![La capital y su anillo de camionetas](media/51_capital.png) | ![La Torre del Reformador](media/52_reformador.png) |
+| ![La columna de ceniza del Fuego sobre Antigua](media/56_columna_de_ceniza.png) | ![El mercado frente a la iglesia de San Andrés Xecul](media/57_mercado_de_xecul.png) |
+| ![Torres de oficinas alrededor del Reformador](media/58_torres_de_la_capital.png) | |
 
 | OCASO | Versión chapina | Lugar (N) |
 | --- | --- | --- |
 | La estrella | **Kinich Ajaw**, el sol maya: fuego dorado con el glifo k'in (la flor de cuatro pétalos) fijo en su superficie, corona dorada con rayos | — |
-| Pira | **Volcán de Fuego**: el Fuego con la cumbre de ceniza oscura llena de surcos, barrancas de ceniza gris que bajan entre el bosque, coladas de lava que laten y un cráter encendido; a su lado el Acatenango, dormido, con bosque hasta arriba; en el valle, Antigua | **Antigua**: el Arco de Santa Catalina con su reloj (las agujas avanzan), casas coloniales y alfombras de aserrín en la calle |
+| Pira | **Volcán de Fuego**: el Fuego con la cumbre de ceniza oscura llena de surcos, barrancas de ceniza gris que bajan entre el bosque, coladas de lava con costra negra que se resquebraja y brilla por las grietas, y una **columna de ceniza** que sale con cada explosión y se la lleva el viento; a su lado el Acatenango, dormido, con bosque hasta arriba; en los valles, aldeas y cafetales | **Antigua**: el Arco de Santa Catalina con su reloj (las agujas avanzan), casas coloniales, alfombras de aserrín en la calle, árboles en los patios, camionetas en las avenidas y un mercado en la calle que cruza |
 | Jardín | **Petén**: selva, ríos y lagos | **Tikal**: el Templo del Gran Jaguar saliendo sobre la selva, ceibas y luciérnagas |
 | Vigía | **Atitlán**: un mundo lago con los volcanes Atitlán, Tolimán y San Pedro, con bosque casi hasta la punta y barrancos; el agua refleja y en las tardes el Xocomil la pica | **Panajachel**: el muelle y las lanchas que se mecen con las olas |
 | Párpado | **Semuc Champey**: pozas turquesa en terrazas de caliza entre la selva | **Las pozas** |
-| Argos | **Los Cuchumatanes**: sierra con helada al amanecer y pinos; en su anillo, los barriletes gigantes de Sumpango | **San Andrés Xecul**: la iglesia amarilla con sus columnas de colores, ángeles, enredaderas y cúpulas de gajos (todo pintado por el shader) |
+| Argos | **Los Cuchumatanes**: sierra con helada al amanecer y pinos; en su anillo, los barriletes gigantes de Sumpango | **San Andrés Xecul**: la iglesia amarilla con sus columnas de colores, ángeles, enredaderas y cúpulas de gajos (todo pintado por el shader), en un pueblo con plaza empedrada, mercado de puestos con toldos de colores, casas y camionetas |
 | — | **La Luna de Xelajú**, luna de los Cuchumatanes, con un tejido de huipil que brilla de noche | — |
-| Cementerio | **La capital**: barrancos, cuadras y luces; en su anillo, camionetas y tuc-tucs dando vueltas | **El Reformador**: la torre de celosía como la de la foto (patas abiertas con arcos sobre la 7a Avenida, alas con círculos, torrecitas en el primer nivel, un círculo en cada tramo del fuste, campana y faro), camionetas extraurbanas pasando abajo y edificios |
+| Cementerio | **La capital**: barrancos, cuadras y luces; en su anillo, camionetas y tuc-tucs dando vueltas | **El Reformador**: la torre de celosía como la de la foto (patas abiertas con arcos sobre la 7a Avenida, alas con círculos, torrecitas en el primer nivel, un círculo en cada tramo del fuste, campana y faro), lo más alto del centro; camionetas extraurbanas pasando abajo, edificios y torres de oficinas de vidrio |
 
 **Las naves botella** (modeladas en Blender para este proyecto): Gallo,
 Cabro Reserva, Jägermeister, Blue Label, Cubata Uva y Four Loko. **B** pasa a

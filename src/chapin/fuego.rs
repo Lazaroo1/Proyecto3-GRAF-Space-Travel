@@ -291,7 +291,9 @@ fn cone(v: &Volcano, d: f32, phi: f32, noise: &Perlin) -> (f32, f32) {
     // Surcos entre las barrancas: angostos, mas hondos a media ladera.
     let scour = 1.0 - smoothstep(0.0, 0.3, furrow(noise, v, d, phi, RIDGES, 0.04));
     h -= scour * v.height * 0.045 * smoothstep(v.crater, v.crater * 2.5, d) * smoothstep(1.0, 0.6, s);
+    // La colada tiene cuerpo: rellena el fondo de su barranca.
     let (molten, _) = flow(v, k, d, side, 0.2);
+    h += molten * (0.3 + 0.012 * d);
     (h.max(0.0), lava.max(molten))
 }
 
@@ -442,6 +444,8 @@ const HAZE: Vec3 = Vec3::new(0.32, 0.36, 0.45);
 /// gris que rellena surcos y barrancas, pedregal de las cumbres dormidas,
 /// zacate, y el verde de las copas del bosque (en sombra y al sol).
 const ASH_DARK: Vec3 = Vec3::new(0.0048, 0.0045, 0.0043);
+/// La costra de la lava recien enfriada: casi negra.
+const LAVA_CRUST: Vec3 = Vec3::new(0.0032, 0.003, 0.0029);
 const ASH_GREY: Vec3 = Vec3::new(0.013, 0.0125, 0.012);
 const SCREE: Vec3 = Vec3::new(0.016, 0.012, 0.009);
 const SCRUB: Vec3 = Vec3::new(0.017, 0.016, 0.008);
@@ -535,7 +539,9 @@ fn land(f: &Fragment, u: &Uniforms, dir: Vec3, footprint: f32) -> Vec3 {
         let rocky = (rock.normal - f.normal) * (0.15 + 0.6 * steep);
         normal = normal.lerp(slope_normal + rocky, on_cone).normalize();
     }
-    let (glow, molten) = fire(f, u, dir, footprint);
+    let (glow, molten, crust) = fire(f, u, dir, footprint);
+    let clinker = 0.7 + 0.6 * (u.noise.noise(p * 2.3) * 0.5 + 0.5);
+    albedo = albedo.lerp(LAVA_CRUST * clinker, crust);
     let lit = pbr::shade(f, u, albedo * (1.0 - molten), 0.92, 0.0, normal, rock.ao);
     lit + glow
 }
@@ -553,7 +559,7 @@ fn flank(f: &Fragment, u: &Uniforms, v: &Volcano, d: f32, phi: f32, footprint: f
     // Hasta donde llega lo pelon y desde donde hay bosque, torcidos con
     // ruido: el bosque sube mas en los dormidos.
     let around = Vec3::new(phi.cos(), phi.sin(), v.spin);
-    let wobble = 0.06 * n.noise(around * 3.0) + 0.03 * n.noise(f.local * 0.35);
+    let wobble = 0.07 * n.noise(around * 3.0 + f.local * 0.05);
     let bare_line = if active { 0.36 } else { 0.22 } + wobble;
     let bare = smoothstep(bare_line + 0.05, bare_line - 0.03, s);
     let woods = smoothstep(bare_line + 0.08, bare_line + 0.2, s);
@@ -570,9 +576,10 @@ fn flank(f: &Fragment, u: &Uniforms, v: &Volcano, d: f32, phi: f32, footprint: f
     if fine > 0.0 {
         let profile = |phi: f32| smoothstep(0.0, 0.3, furrow(n, v, d, phi, RILLS, 0.09));
         let e = 0.004;
-        rill = (1.0 - profile(phi)) * fine;
+        let here = profile(phi);
+        rill = (1.0 - here) * fine;
         let depth = 0.25 + 0.012 * d;
-        tilt = (profile(phi + e) - profile(phi - e)) / (2.0 * e * d.max(1.0)) * depth * fine;
+        tilt = (profile(phi + e) - here) / (e * d.max(1.0)) * depth * fine;
     }
     // El fondo de las barrancas grandes.
     let (side, _) = nearest_channel(v, d, phi);
@@ -600,8 +607,9 @@ fn flank(f: &Fragment, u: &Uniforms, v: &Volcano, d: f32, phi: f32, footprint: f
     (albedo, normal)
 }
 
-/// Copas de arboles: celdas de Worley, oscuras en el borde, con verdes
-/// distintos por manchas. De lejos, el promedio.
+/// Copas de arboles: un ruido del tamano de una copa (claras arriba y
+/// oscuras entre ellas), con verdes distintos por manchas. De lejos, el
+/// promedio.
 fn canopy(f: &Fragment, n: &Perlin, footprint: f32, patch: f32) -> Vec3 {
     const CROWN: f32 = 1.8;
     let average = CANOPY.lerp(CANOPY_LIGHT, 0.2 + 0.4 * patch);
@@ -609,11 +617,9 @@ fn canopy(f: &Fragment, n: &Perlin, footprint: f32, patch: f32) -> Vec3 {
     if near <= 0.0 {
         return average;
     }
-    let (f1, f2) = n.cells(f.local / CROWN);
-    let tone = n.noise(f.local * 0.9) * 0.5 + 0.5;
-    let leaf = CANOPY.lerp(CANOPY_LIGHT, (0.1 + 0.7 * tone + 0.3 * (patch - 0.5)).clamp(0.0, 1.0));
-    let gap = 1.0 - 0.3 * smoothstep(0.2, 0.0, f2 - f1) - 0.2 * f1.min(1.0);
-    average.lerp(leaf * gap, near)
+    let crowns = n.noise(f.local / CROWN) * 0.5 + 0.5;
+    let leaf = CANOPY.lerp(CANOPY_LIGHT, (0.15 + 0.6 * crowns + 0.3 * (patch - 0.5)).clamp(0.0, 1.0));
+    average.lerp(leaf * (0.75 + 0.35 * crowns), near)
 }
 
 /// Una explosion del Fuego: cada `BURST` segundos mas o menos (con azar),
@@ -628,19 +634,48 @@ fn last_burst(t: f32) -> (f32, f32) {
     (t - at(k), 0.4 + 0.6 * unit(hash_u32(k as i32 as u32 ^ 0x5EED)))
 }
 
+/// El Fuego va adelantado en su reloj de explosiones (`fire` le suma
+/// `spin * 3`).
+const FUEGO_LAG: f32 = 0.75 * 3.0;
+
+/// La explosion numero `k` del Fuego: cuando fue (en el tiempo del juego) y
+/// su fuerza. Las mismas de `fire`: la columna de ceniza sale con ellas.
+pub(super) fn burst(k: f32) -> (f32, f32) {
+    let at = (k + 0.7 * unit(hash_u32(k as i32 as u32 ^ 0xB0B))) * BURST - FUEGO_LAG;
+    (at, 0.4 + 0.6 * unit(hash_u32(k as i32 as u32 ^ 0x5EED)))
+}
+
+/// El numero de la ultima explosion del Fuego en `t`.
+pub(super) fn burst_index(t: f32) -> f32 {
+    let k = ((t + FUEGO_LAG) / BURST).floor();
+    if burst(k).0 > t { k - 1.0 } else { k }
+}
+
+/// Donde esta la boca del Fuego (direccion en el planeta) y hacia donde
+/// sopla el viento ahi: de lado y un poco hacia atras visto desde Antigua,
+/// para que la columna se vea entera desde el pueblo.
+pub fn plume_frame() -> (Vec3, Vec3) {
+    let up = VOLCANOES[0].center.normalize();
+    let away = up - ANTIGUA;
+    let away = (away - up * away.dot(up)).normalize();
+    let side = up.cross(away);
+    (up, (side + away * 0.35).normalize())
+}
+
 #[inline]
 fn unit(h: u32) -> f32 {
     (h >> 8) as f32 / 16_777_216.0
 }
 
 /// La luz de la lava: el lago del crater, las coladas en las barrancas y las
-/// bombas incandescentes de cada explosion. Devuelve la luz que emite y
-/// cuanto del suelo es lava.
-fn fire(f: &Fragment, u: &Uniforms, dir: Vec3, footprint: f32) -> (Vec3, f32) {
+/// bombas incandescentes de cada explosion. Devuelve la luz que emite,
+/// cuanto del suelo es lava al rojo y cuanto es costra.
+fn fire(f: &Fragment, u: &Uniforms, dir: Vec3, footprint: f32) -> (Vec3, f32, f32) {
     let t = u.time;
     let n = u.noise;
     let mut glow = Vec3::ZERO;
     let mut molten = 0.0f32;
+    let mut crust = 0.0f32;
     for v in VOLCANOES.iter().filter(|v| v.fire > 0.0) {
         let (d, phi) = polar(v, dir);
         if d > v.base {
@@ -661,26 +696,35 @@ fn fire(f: &Fragment, u: &Uniforms, dir: Vec3, footprint: f32) -> (Vec3, f32) {
             let wall = smoothstep(v.crater * 1.6, v.crater * 0.8, d) * (1.0 - lake);
             glow += planckian_rgb(1000.0 + 300.0 * flash) * (wall * (0.4 + 3.0 * flash));
         }
-        // Las coladas: balsas de costra que bajan con la lava y, entre ellas,
-        // la lava al rojo; mas fria (y mas costra) en las orillas y el frente.
+        // Las coladas: una costra negra que se resquebraja en placas (celdas
+        // de Worley que bajan con la lava) y, por las grietas y por el canal
+        // abierto en medio, cerca de la boca, la lava al rojo. Ladera abajo
+        // se enfria: placas mas grandes, grietas mas finas y mas rojas, y el
+        // frente es casi todo costra.
         let (side, k) = nearest_channel(v, d, phi);
         let aa = footprint.max(0.02);
         let (cover, along) = flow(v, k, d, side, aa);
         if cover > 0.0 {
             let w = flow_width(d);
             let x = (side / w).min(1.0);
-            let downhill = d - t * (1.4 - 0.8 * along);
-            let rafts = n.noise(Vec3::new(side * 1.8, downhill * 0.5, k as f32 * 7.1));
-            let fine = smoothstep(0.6, 0.15, footprint);
-            let crust = (smoothstep(0.0, 0.4, rafts) * fine * (0.4 + 0.6 * along) + x * x * 0.7).min(1.0);
-            let temperature = 1380.0 - 430.0 * along - 300.0 * crust;
+            let downhill = d - t * (1.2 - 0.9 * along);
+            let open = smoothstep(0.5, 0.05, x) * (1.0 - along).powf(1.5) * smoothstep(0.85, 0.3, along);
+            let plate = 0.45 + 0.6 * along;
+            let (f1, f2) = n.cells(Vec3::new(side / plate, downhill / (plate * 1.6), k as f32 * 7.1));
+            let gap = 0.24 - 0.17 * along;
+            // De lejos las grietas miden menos que un pixel: su fraccion.
+            let fine = smoothstep(plate * 0.6, plate * 0.15, aa);
+            let crack = smoothstep(gap, gap * 0.25, f2 - f1) * fine + gap * 1.4 * (1.0 - fine);
+            let hot = open.max(crack * (1.0 - 0.55 * along));
+            let temperature = 1120.0 + 260.0 * open - 220.0 * along + 80.0 * (1.0 - f1).max(0.0) * fine;
             // El brillo baja con la cuarta potencia de la temperatura; de
             // lejos la colada es mas delgada que un pixel y se reparte en el.
-            let bright = (temperature / 1380.0).powi(4) * (1.0 - 0.8 * crust);
+            let bright = (temperature / 1380.0).powi(4);
             let amount = cover * (w / aa.max(w));
             let surge = 1.0 + 1.5 * flash * smoothstep(18.0, 4.0, d);
-            glow += planckian_rgb(temperature) * (amount * bright * 7.0 * pulse * surge);
-            molten = molten.max(cover);
+            glow += planckian_rgb(temperature) * (amount * hot * bright * 9.0 * pulse * surge);
+            molten = molten.max(cover * hot);
+            crust = crust.max(cover * (1.0 - hot));
         }
         // Bombas: puntos incandescentes que ruedan ladera abajo despues de
         // cada explosion y se enfrian.
@@ -697,7 +741,7 @@ fn fire(f: &Fragment, u: &Uniforms, dir: Vec3, footprint: f32) -> (Vec3, f32) {
         let near = smoothstep(v.base * 0.5, 0.0, d) * (0.06 + 0.5 * flash);
         glow += planckian_rgb(1000.0) * (near * 0.05 * pulse);
     }
-    (glow * u.gains.pira, molten)
+    (glow * u.gains.pira, molten, crust)
 }
 
 // Antigua --------------------------------------------------------------------
@@ -875,24 +919,42 @@ pub fn displace(_local: Vec3, _normal: Vec3, _time: f32, _noise: &Perlin) -> Vec
 
 // Los objetos -----------------------------------------------------------------
 
-/// Casas sueltas en los valles verdes y planos: nunca en la lava, la ceniza
-/// ni el cono.
+/// Casas sueltas en los valles verdes y planos (aldeas alrededor de
+/// Antigua) y arboles de sombra de los cafetales: nunca en la lava, la
+/// ceniza ni el cono.
 pub fn rules() -> Vec<Scatter> {
-    vec![Scatter {
-        kind: PropKind::Casa,
-        cells: 36,
-        scale: (0.8, 1.1),
-        sink: 0.3,
-        upright: true,
-        accept: |density, s, slope| {
-            smoothstep(0.55, 0.85, s.attrs.z)
-                * smoothstep(0.3, 0.12, slope)
-                * (1.0 - s.attrs.y)
-                * (1.0 - s.attrs.x)
-                * smoothstep(0.6, 0.8, density)
-                * 0.5
+    vec![
+        Scatter {
+            kind: PropKind::Casa,
+            cells: 56,
+            scale: (0.8, 1.1),
+            sink: 0.3,
+            upright: true,
+            accept: |density, s, slope| {
+                smoothstep(0.55, 0.85, s.attrs.z)
+                    * smoothstep(0.3, 0.12, slope)
+                    * (1.0 - s.attrs.y)
+                    * (1.0 - s.attrs.x)
+                    * smoothstep(0.55, 0.75, density)
+                    * 0.85
+            },
         },
-    }]
+        Scatter {
+            kind: PropKind::Arbol,
+            cells: 80,
+            scale: (0.22, 0.36),
+            sink: 0.3,
+            upright: true,
+            accept: |density, s, slope| {
+                smoothstep(0.5, 0.8, s.attrs.z)
+                    * smoothstep(0.45, 0.2, slope)
+                    * (1.0 - s.attrs.y)
+                    * (1.0 - s.attrs.x)
+                    * smoothstep(0.35, 0.6, density)
+                    * 0.7
+            },
+        },
+    ]
 }
 
 pub fn site(_default: (DVec3, DVec3)) -> Option<(&'static str, DVec3, DVec3, Placer)> {
@@ -900,19 +962,19 @@ pub fn site(_default: (DVec3, DVec3)) -> Option<(&'static str, DVec3, DVec3, Pla
     Some(("Antigua", up.as_dvec3().normalize(), forward.as_dvec3().normalize(), place))
 }
 
-/// Una casa o el Arco por colocar: posicion en el plano del lugar, escala y
-/// hacia donde mira su fachada (en el plano).
-struct Lot {
-    kind: PropKind,
-    x: f64,
-    z: f64,
-    scale: f32,
-    facing: (f64, f64),
+/// Algo por colocar en un lugar (una casa, el Arco, un arbol...): posicion
+/// en el plano del lugar, escala y hacia donde mira su frente (en el plano).
+pub(super) struct Lot {
+    pub kind: PropKind,
+    pub x: f64,
+    pub z: f64,
+    pub scale: f32,
+    pub facing: (f64, f64),
 }
 
 /// Una hilera de casas pegadas: sus fachadas en la linea de `a` a `b` y
 /// mirando hacia `facing`.
-fn row(lots: &mut Vec<Lot>, a: (f64, f64), b: (f64, f64), facing: (f64, f64), seed: u32) {
+pub(super) fn row(lots: &mut Vec<Lot>, a: (f64, f64), b: (f64, f64), facing: (f64, f64), seed: u32) {
     let length = (b.0 - a.0).hypot(b.1 - a.1);
     let along = ((b.0 - a.0) / length, (b.1 - a.1) / length);
     let width = 2.0 * HOUSE.x as f64;
@@ -942,9 +1004,34 @@ fn row(lots: &mut Vec<Lot>, a: (f64, f64), b: (f64, f64), facing: (f64, f64), se
     }
 }
 
-/// Antigua: el Arco sobre la calle y manzanas de casas alrededor.
-fn place(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField, seed: u32, frame: (DVec3, DVec3, DVec3)) {
+/// Pone los lotes en el lugar `frame`, con las medidas multiplicadas por
+/// `k`.
+pub(super) fn place_lots(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField, frame: (DVec3, DVec3, DVec3), lots: &[Lot], k: f64) {
     let (n, forward, right) = frame;
+    for lot in lots {
+        let (x, z) = (lot.x * k, lot.z * k);
+        let dir = (n + (right * x + forward * z) / radius).normalize();
+        // El frente hacia `facing`: el giro que lleva +Z del modelo ahi.
+        let base = upright_rotation(dir, 0.0);
+        let (x0, z0) = (base.rotate(DVec3::X), base.rotate(DVec3::Z));
+        let want = right * lot.facing.0 + forward * lot.facing.1;
+        let want = (want - dir * want.dot(dir)).normalize();
+        let yaw = want.dot(x0).atan2(want.dot(z0));
+        instances.push(at_site(radius, field, frame, lot.kind, x, z, lot.scale, yaw, 0.05));
+    }
+}
+
+/// Un numero de 0 a 1 para el elemento `k` de algo con semilla `seed`.
+#[inline]
+fn chance(seed: u32, k: u32) -> f64 {
+    unit(hash_u32(seed ^ k.wrapping_mul(0x9E37_79B9))) as f64
+}
+
+/// Antigua: el Arco sobre la calle y manzanas de casas alrededor; arboles
+/// en los patios y en los cafetales de la orilla, camionetas en las avenidas
+/// y un mercado en la calle que cruza.
+fn place(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField, seed: u32, frame: (DVec3, DVec3, DVec3)) {
+    let n = frame.0;
     // El pueblo esta medido para el radio de Pira; con otro radio conserva
     // sus angulos (y queda alineado con lo que pinta el shader).
     let k = radius / RADIUS as f64;
@@ -983,17 +1070,60 @@ fn place(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField, se
     for side in [-1.0, 1.0] {
         row(&mut lots, (side * main, arch1), (side * main, calles[1] - lane), (-side, 0.0), seed ^ 0x66);
     }
-    for lot in lots {
-        let (x, z) = (lot.x * k, lot.z * k);
-        let dir = (n + (right * x + forward * z) / radius).normalize();
-        // La fachada hacia `facing`: el giro que lleva +Z del modelo ahi.
-        let base = upright_rotation(dir, 0.0);
-        let (x0, z0) = (base.rotate(DVec3::X), base.rotate(DVec3::Z));
-        let want = right * lot.facing.0 + forward * lot.facing.1;
-        let want = (want - dir * want.dot(dir)).normalize();
-        let yaw = want.dot(x0).atan2(want.dot(z0));
-        instances.push(at_site(radius, field, frame, lot.kind, x, z, lot.scale, yaw, 0.05));
+    let any_way = |h: f64| ((h * TAU as f64).cos(), (h * TAU as f64).sin());
+    for side in [-1.0, 1.0] {
+        // Arboles en los patios, entre las casas de la calle del Arco y las
+        // de la avenida.
+        let middle = (main + depth + av - lane - depth) * 0.5;
+        for (b, &(z0, z1)) in blocks.iter().enumerate() {
+            let count = ((z1 - z0) / 5.5) as u32;
+            for i in 0..count {
+                let s = seed ^ 0x7EE ^ (b as u32) << 8 ^ (side > 0.0) as u32 * 0x55 ^ i << 12;
+                if chance(s, 0) < 0.3 {
+                    continue;
+                }
+                let z = z0 + (i as f64 + 0.5) * (z1 - z0) / count as f64 + (chance(s, 1) - 0.5) * 2.0;
+                let x = side * (middle + (chance(s, 2) - 0.5) * 2.0);
+                lots.push(Lot { kind: PropKind::Arbol, x, z, scale: (0.26 + 0.1 * chance(s, 3)) as f32, facing: any_way(chance(s, 4)) });
+            }
+        }
+        // Cafetales con sus arboles de sombra afuera de la ultima hilera.
+        for i in 0..26u32 {
+            let s = seed ^ 0xCAFE ^ (side > 0.0) as u32 * 0x77 ^ i << 10;
+            let x = side * (av + lane + depth + 2.0 + 14.0 * chance(s, 0));
+            let z = TOWN.1 as f64 + 6.0 + (TOWN.2 - TOWN.1 - 8.0) as f64 * chance(s, 1);
+            lots.push(Lot { kind: PropKind::Arbol, x, z, scale: (0.24 + 0.12 * chance(s, 2)) as f32, facing: any_way(chance(s, 3)) });
+        }
+        // Camionetas estacionadas en las avenidas, unas de ida y otras de
+        // vuelta.
+        for i in 0..3u32 {
+            let s = seed ^ 0xB05 ^ (side > 0.0) as u32 * 0x99 ^ i << 6;
+            let way = if chance(s, 0) < 0.5 { 1.0 } else { -1.0 };
+            let z = TOWN.1 as f64 + 12.0 + 18.0 * i as f64 + 6.0 * chance(s, 1);
+            lots.push(Lot { kind: PropKind::Camioneta, x: side * av + way * 1.3, z, scale: 2.0, facing: (0.0, way) });
+        }
+        // El mercado: puestos a las dos orillas de la calle que cruza, de
+        // frente a la calle.
+        for edge in [-1.0, 1.0] {
+            let mut x = main + 1.8;
+            let mut i = 0u32;
+            while x < av - lane - 1.5 {
+                let s = seed ^ 0x3E2C ^ (side > 0.0) as u32 * 0x11 ^ (edge > 0.0) as u32 * 0x22 ^ i << 7;
+                if chance(s, 0) > 0.15 {
+                    lots.push(Lot {
+                        kind: PropKind::Puesto,
+                        x: side * x,
+                        z: calles[0] + edge * (LANE as f64 - 0.9),
+                        scale: 1.15,
+                        facing: (0.0, -edge),
+                    });
+                }
+                x += 2.9;
+                i += 1;
+            }
+        }
     }
+    place_lots(instances, radius, field, frame, &lots, k);
 }
 
 // Los modelos -----------------------------------------------------------------
