@@ -608,8 +608,18 @@ nebulosa, Pira hirviendo y gas del disco.
   que gira (`ω × r`); la mira se nivela con la vertical del planeta y se
   transporta con la curvatura (el giro mínimo que lleva la vertical anterior
   a la nueva), así avanzar derecho rodea el planeta por un círculo máximo; la
-  altura sobre el terreno se sostiene sola mirando el suelo que viene en
-  medio segundo y en un segundo. El crucero (O) empuja hacia adelante solo.
+  altura sobre el terreno se sostiene sola mirando el suelo que viene en un
+  cuarto, medio y un segundo (a la velocidad pedida y a la real), y para no
+  raspar el terreno puede subir más rápido que el límite. Mirando hacia
+  arriba o hacia abajo más de unos 11 grados, W sube o baja por donde se
+  mira; bajando, solo tan rápido como para frenar antes del suelo. Antes W
+  solo movía a la misma altura y la nave se sentía atascada. Si cambia el
+  planeta de abajo (de un planeta a su luna), la mira no se transporta, solo
+  se nivela. El crucero (O) empuja hacia adelante solo.
+- **Cuerpos ocultos**: no cuentan como marco ni como suelo. Antes, en
+  OCASO, la Luna de Xelajú (que solo existe en la versión chapina) seguía
+  en la física: cerca de Argos la nave se enganchaba a una luna invisible y
+  chocaba con su terreno.
 - **Colisión**: contra la misma función de altura que se dibuja; se empuja la
   nave afuera y se quita la velocidad hacia adentro con un rebote pequeño.
 

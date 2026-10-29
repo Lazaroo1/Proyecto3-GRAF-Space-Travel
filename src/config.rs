@@ -106,6 +106,12 @@ pub const RESTITUTION: f64 = 0.25;
 pub const LOCAL_RANGE: f64 = 1.5;
 /// Ganancia (1/s) con la que el modo local recupera la altura que sostiene.
 pub const HOLD_GAIN: f64 = 1.5;
+/// En el modo local, cuanto hay que mirar hacia arriba o hacia abajo (el
+/// seno del angulo, unos 11 grados) para que W suba o baje por donde se
+/// mira; menos que eso cuenta como vuelo nivelado y la altura se sostiene.
+pub const LOCAL_LEVEL: f64 = 0.2;
+/// Bajando en el modo local, lo mas cerca del suelo que deja llegar.
+pub const LOCAL_FLOOR: f64 = 3.5;
 /// Empuje hacia adelante del crucero (fraccion de la velocidad maxima).
 pub const CRUISE_THRUST: f64 = 0.6;
 

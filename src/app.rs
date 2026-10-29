@@ -728,7 +728,7 @@ pub struct App {
     throttle: f32,
     /// Vertical del modo local en el frame anterior: al moverse sobre la
     /// curvatura, la mira se transporta con ella.
-    local_up: Option<DVec3>,
+    local_up: Option<(usize, DVec3)>,
     ship: ShipState,
     /// Estado del paso anterior: el render interpola entre los dos.
     ship_prev: ShipState,
@@ -1380,12 +1380,16 @@ impl App {
         let body = &self.system.bodies[self.ship.frame];
         let up = (self.ship.world_pos - body.position(self.sim_time)).normalize();
         // El suelo gira: la mira gira con el (asi el rumbo no se desliza
-        // respecto al terreno) y despues sigue la curvatura.
+        // respecto al terreno) y despues sigue la curvatura. Si cambio el
+        // planeta de abajo (de un planeta a su luna), la vertical salta: no se
+        // transporta la mira, solo se nivela.
         let spin = DQuat::from_scaled_axis(ship::angular_velocity(body) * dt);
-        if let Some(previous) = self.local_up {
-            self.aim = DQuat::from_rotation_arc(spin.rotate(previous), up) * spin * self.aim;
+        if let Some((frame, previous)) = self.local_up {
+            if frame == self.ship.frame {
+                self.aim = DQuat::from_rotation_arc(spin.rotate(previous), up) * spin * self.aim;
+            }
         }
-        self.local_up = Some(up);
+        self.local_up = Some((self.ship.frame, up));
         let yaw = DQuat::from_axis_angle(up, -dx);
         let mut aim = yaw * self.aim * DQuat::from_axis_angle(DVec3::X, -dy);
         // Cabeceo de 75 grados como maximo. Si se paso (se entro al modo

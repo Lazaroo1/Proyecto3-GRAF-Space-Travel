@@ -27,10 +27,17 @@
 //!
 //! # Modo local
 //! Cerca de un planeta el vuelo se mide contra su **superficie**, que gira:
-//! quedarse quieto es flotar sobre el mismo punto del suelo. Las teclas
-//! mueven sobre el plano tangente siguiendo la curvatura, y la nave sostiene
-//! sola su altura sobre el terreno (mirando el suelo que viene adelante).
-//! Rodear un planeta es mantener W presionada; el crucero lo hace solo.
+//! quedarse quieto es flotar sobre el mismo punto del suelo. Con la mira casi
+//! nivelada las teclas mueven sobre el plano tangente siguiendo la
+//! curvatura, y la nave sostiene sola su altura sobre el terreno (mirando el
+//! suelo que viene adelante): rodear un planeta es mantener W presionada; el
+//! crucero lo hace solo. Mirando hacia arriba o hacia abajo, W sube o baja
+//! por donde se mira (antes solo se movia a la misma altura y la nave se
+//! sentia atascada), sin dejar que baje hasta chocar.
+//!
+//! Los cuerpos ocultos (la Luna de Xelaju en OCASO, Pira tragada por
+//! Gargantua) no cuentan como marco: antes la nave se enganchaba a una luna
+//! invisible y chocaba con su terreno.
 
 use std::f64::consts::TAU;
 
@@ -167,6 +174,7 @@ pub fn dominant_body(bodies: &[Body], p: DVec3, t: f64) -> usize {
         .iter()
         .enumerate()
         .skip(1)
+        .filter(|(_, body)| !body.hidden)
         .filter_map(|(i, body)| {
             let normalized = (p - body.position(t)).length() / body.radius;
             (normalized < 1.0 + LOCAL_RANGE * 1.15).then_some((i, normalized))
@@ -177,7 +185,7 @@ pub fn dominant_body(bodies: &[Body], p: DVec3, t: f64) -> usize {
     }
     let mut best = 0;
     let mut best_soi = f64::INFINITY;
-    for (i, body) in bodies.iter().enumerate() {
+    for (i, body) in bodies.iter().enumerate().filter(|(_, body)| !body.hidden) {
         if body.soi < best_soi && (p - body.position(t)).length() < body.soi {
             best = i;
             best_soi = body.soi;
@@ -359,22 +367,43 @@ fn local_engine(
     let omega = angular_velocity(body);
     let surface = omega.cross(s.rel_pos);
     let (forward, right) = heading(aim, up);
+    // Cuanto se mira hacia arriba (positivo) o hacia abajo, pasado el margen
+    // de vuelo nivelado: W sube o baja por ahi.
+    let slope = aim.forward().dot(up);
+    let tilt = (slope.abs() - LOCAL_LEVEL).max(0.0) / (1.0 - LOCAL_LEVEL) * slope.signum();
     // Empuje en ejes de la nave: x derecha, z atras.
-    let horizontal = (right * thrust.x - forward * thrust.z) * max_speed;
+    let ahead = -thrust.z;
+    let climb = ahead * tilt;
+    let horizontal = (right * thrust.x + forward * (ahead * (1.0 - tilt * tilt).max(0.0).sqrt())) * max_speed;
     let altitude_at = |p: DVec3| p.length() - body.radius - body.surface_height(p, t);
+    let now = altitude_at(s.rel_pos);
+    // Lo que importa es el suelo mas alto entre el de ahora y el que se
+    // tendra debajo en un cuarto, medio y un segundo, a la velocidad pedida
+    // y a la que de verdad lleva (frenando o en una curva no son la misma).
+    let moving = s.rel_vel - surface;
+    let moving = moving - up * moving.dot(up);
+    let lowest = [0.25, 0.5, 1.0]
+        .iter()
+        .flat_map(|&secs| [horizontal * secs, moving * secs])
+        .map(|ahead| altitude_at(s.rel_pos + ahead))
+        .fold(now, f64::min);
+    // Para no raspar el terreno puede subir mas rapido que su limite.
+    let rise = max_speed * 2.0 + 10.0;
     let vertical = if thrust.y != 0.0 {
         s.hold = None;
         thrust.y * max_speed
+    } else if climb != 0.0 {
+        // Por donde se mira; bajando, nunca hasta chocar. Al nivelar la mira
+        // se sostiene la altura nueva.
+        s.hold = None;
+        // Bajando, solo tan rapido como para alcanzar a frenar antes del
+        // piso (con la mitad de la aceleracion).
+        let room = (lowest - LOCAL_FLOOR).max(0.0);
+        let safe = -(max_accel * room).sqrt();
+        (climb * max_speed).max(safe).max(((LOCAL_FLOOR - lowest) * HOLD_GAIN).min(rise))
     } else {
-        let now = altitude_at(s.rel_pos);
         let target = *s.hold.get_or_insert(now);
-        // Lo que importa es el suelo mas alto entre el de ahora y el que se
-        // tendra debajo en medio segundo y en un segundo.
-        let lowest = [0.5, 1.0]
-            .iter()
-            .map(|&secs| altitude_at(s.rel_pos + horizontal * secs))
-            .fold(now, f64::min);
-        ((target - lowest) * HOLD_GAIN).clamp(-max_speed, max_speed)
+        ((target - lowest) * HOLD_GAIN).clamp(-max_speed, rise)
     };
     let desired = surface + horizontal + up * vertical;
     let follow = omega.cross(surface);
@@ -568,7 +597,7 @@ mod tests {
             cruise: true,
             ..FlightSettings::default()
         };
-        let controls = Controls {
+        let mut controls = Controls {
             aim,
             ..Controls::default()
         };
@@ -576,6 +605,10 @@ mod tests {
         let mut info = FlightInfo::default();
         let (mut low, mut high) = (f64::MAX, f64::MIN);
         for k in 0..(20.0 * PHYSICS_HZ) as usize {
+            // El juego lleva la mira nivelada con la curvatura.
+            let up = (ship.world_pos - planet.position(t)).normalize();
+            let (ahead, _) = heading(controls.aim, up);
+            controls.aim = DQuat::look_rotation(ahead, up);
             info = step(&mut ship, &controls, &settings, &sys.bodies, t, PHYSICS_DT);
             t += PHYSICS_DT;
             if k > (2.0 * PHYSICS_HZ) as usize {
@@ -590,6 +623,46 @@ mod tests {
         // Avanzo sobre la superficie: el angulo recorrido es grande.
         let rel = (ship.world_pos - planet.position(t)).normalize();
         assert!(rel.dot(dir) < 0.95, "avance {}", rel.dot(dir).acos());
+    }
+
+    /// En el modo local, mirar hacia arriba y mantener W sube; mirar hacia
+    /// abajo baja, pero sin chocar con el suelo.
+    #[test]
+    fn local_mode_climbs_and_dives_where_the_aim_points() {
+        let sys = system();
+        let planet = &sys.bodies[2];
+        let t0 = 20.0;
+        let dir = DVec3::new(0.3, 0.8, 0.5).normalize();
+        let ground = planet.surface_height(dir, t0);
+        let start = planet.radius + ground + 25.0;
+        let tangent = dir.cross(DVec3::X).normalize();
+        let settings = FlightSettings::default();
+        let fly = |pitch: f64| {
+            let look = tangent * pitch.cos() + dir * pitch.sin();
+            let aim = DQuat::look_rotation(look, dir);
+            let mut ship = ShipState::new(&sys.bodies, planet.position(t0) + dir * start, aim, t0);
+            let controls = Controls {
+                thrust: -DVec3::Z,
+                aim,
+                ..Controls::default()
+            };
+            let mut t = t0;
+            let mut lowest = f64::MAX;
+            for _ in 0..(4.0 * PHYSICS_HZ) as usize {
+                let info = step(&mut ship, &controls, &settings, &sys.bodies, t, PHYSICS_DT);
+                t += PHYSICS_DT;
+                assert!(!info.contact, "choco con el suelo mirando a {pitch}");
+                let rel = ship.world_pos - planet.position(t);
+                lowest = lowest.min(rel.length() - planet.radius - planet.surface_height(rel, t));
+            }
+            let rel = ship.world_pos - planet.position(t);
+            (rel.length() - planet.radius - planet.surface_height(rel, t), lowest)
+        };
+        let (up, _) = fly(0.6);
+        assert!(up > 25.0 + 20.0, "mirando arriba quedo a {up}");
+        let (down, lowest) = fly(-0.6);
+        assert!(down < 25.0 - 10.0, "mirando abajo quedo a {down}");
+        assert!(lowest > LOCAL_FLOOR - 1.0, "bajo hasta {lowest}");
     }
 
     #[test]
