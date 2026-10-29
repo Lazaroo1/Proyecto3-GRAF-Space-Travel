@@ -8,11 +8,18 @@
 //!   Saturno). El mapa del Hubble de Jupiter (NASA) solo da el detalle fino
 //!   de las nubes, por su luminancia. Cerca del ojo las bandas se enroscan
 //!   hacia el (se calculan en el punto ya girado por el vortice).
-//! - **Ojos chicos**: ocho tormentas que viajan con su banda, cada una con
-//!   su remolino. De lejos son una rendija cerrada entre las nubes; con la
-//!   nave cerca se abren (una almendra en los ejes de la tormenta) y su
-//!   pupila se corre hacia donde esta la nave (`Uniforms::eye_dir`
-//!   proyectada en el plano de la tormenta).
+//! - **Ojos chicos**: ocho tormentas como la Gran Mancha Roja de Jupiter,
+//!   que viajan con su banda: ovaladas (mas anchas de este a oeste) y hechas
+//!   de gas que gira. Las bandas de afuera se doblan a su alrededor; adentro,
+//!   un collar claro, el cuerpo del color de la tormenta con vetas en espiral
+//!   (ruido en polares con un giro que crece hacia el centro, y que gira
+//!   entero con el tiempo, cada tormenta en su sentido) y un centro oscuro,
+//!   la pupila, que se corre hacia donde esta la nave (`Uniforms::eye_dir`
+//!   proyectada en el plano de la tormenta) y se dilata con ella cerca.
+//! - **Tormentas electricas**: cinco cumulos de nubes claras y esponjadas en
+//!   las bandas de latitudes medias; adentro, rayos que destellan rapido en
+//!   puntos que cambian (celdas con su hora). Se ven de dia y mucho mas de
+//!   noche.
 //! - **Auroras**: un ovalo alrededor de cada polo con cortinas que se mueven
 //!   (ruido estirado a lo largo de la longitud), verdes abajo y magenta
 //!   arriba; laten con la estrella y se ven sobre todo de noche y en el
@@ -69,24 +76,36 @@ const BANDS: [Vec3; 8] = [
 const BAND_DENSITY: f32 = 11.0;
 
 /// Un ojo chico: latitud y longitud al empezar (radianes), lo que corre en
-/// longitud por segundo, su radio angular y el color del iris.
+/// longitud por segundo, su radio angular y su color.
 struct Storm {
     lat: f32,
     lon: f32,
     speed: f32,
     size: f32,
-    iris: Vec3,
+    tint: Vec3,
 }
 
+/// Color de cada tormenta: rojo oxido, salmon, blanca, ambar, rosa, verde
+/// agua, azul y violeta.
 const STORMS: [Storm; 8] = [
-    Storm { lat: 0.42, lon: 0.6, speed: 0.012, size: 0.12, iris: Vec3::new(0.3, 0.95, 0.75) },
-    Storm { lat: -0.55, lon: 2.4, speed: -0.009, size: 0.13, iris: Vec3::new(1.0, 0.55, 0.15) },
-    Storm { lat: 0.08, lon: 4.1, speed: 0.016, size: 0.1, iris: Vec3::new(0.95, 0.25, 0.6) },
-    Storm { lat: -0.2, lon: 5.4, speed: -0.013, size: 0.11, iris: Vec3::new(0.45, 0.6, 1.0) },
-    Storm { lat: 0.78, lon: 3.3, speed: 0.008, size: 0.1, iris: Vec3::new(0.9, 0.9, 0.35) },
-    Storm { lat: -0.85, lon: 0.2, speed: 0.01, size: 0.1, iris: Vec3::new(0.35, 1.0, 0.4) },
-    Storm { lat: 0.25, lon: 2.0, speed: -0.011, size: 0.12, iris: Vec3::new(1.0, 0.35, 0.3) },
-    Storm { lat: -0.4, lon: 3.8, speed: 0.014, size: 0.11, iris: Vec3::new(0.6, 0.4, 1.0) },
+    Storm { lat: 0.42, lon: 0.6, speed: 0.012, size: 0.12, tint: Vec3::new(0.62, 0.2, 0.14) },
+    Storm { lat: -0.55, lon: 2.4, speed: -0.009, size: 0.13, tint: Vec3::new(0.7, 0.4, 0.3) },
+    Storm { lat: 0.08, lon: 4.1, speed: 0.016, size: 0.1, tint: Vec3::new(0.72, 0.68, 0.74) },
+    Storm { lat: -0.2, lon: 5.4, speed: -0.013, size: 0.11, tint: Vec3::new(0.7, 0.48, 0.16) },
+    Storm { lat: 0.78, lon: 3.3, speed: 0.008, size: 0.1, tint: Vec3::new(0.68, 0.24, 0.42) },
+    Storm { lat: -0.85, lon: 0.2, speed: 0.01, size: 0.1, tint: Vec3::new(0.2, 0.5, 0.45) },
+    Storm { lat: 0.25, lon: 2.0, speed: -0.011, size: 0.12, tint: Vec3::new(0.3, 0.38, 0.7) },
+    Storm { lat: -0.4, lon: 3.8, speed: 0.014, size: 0.11, tint: Vec3::new(0.42, 0.22, 0.66) },
+];
+
+/// Las tormentas electricas: latitud, longitud al empezar, lo que corren
+/// por segundo y su radio angular.
+const THUNDER: [(f32, f32, f32, f32); 5] = [
+    (0.6, 1.2, -0.01, 0.07),
+    (-0.32, 2.9, 0.012, 0.06),
+    (0.33, 4.6, -0.008, 0.065),
+    (-0.68, 5.6, 0.009, 0.055),
+    (0.16, 0.1, 0.011, 0.06),
 ];
 
 #[inline]
@@ -199,6 +218,7 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     let warm = smoothstep(0.0, 0.08, clouds.x - clouds.z);
     let old = palette(lum).lerp(ORCHID * (0.5 + lum), warm * 0.35);
     let mut albedo = if r < 0.88 { old } else { bands(qb, t, lum, footprint, u).lerp(old, 0.3) };
+    let dark = smoothstep(0.2, -0.3, f.normal.dot(f.light_dir(u)));
 
     // Ejes alrededor del ojo, para las coordenadas polares.
     let (a, b) = {
@@ -249,32 +269,77 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
             + iris_color * (rim * (0.6 + 1.2 * u.eye_near));
     }
 
-    // Los ojos chicos: una rendija de lejos; con la nave cerca se abren y
-    // miran hacia ella.
-    if let Some((i, d)) = near_storm.filter(|&(_, d)| d < 1.4) {
+    // Los ojos chicos: tormentas ovaladas de gas que gira, como la Gran
+    // Mancha Roja: collar claro, cuerpo con vetas en espiral y un centro
+    // oscuro que se corre hacia la nave.
+    if let Some((i, _)) = near_storm {
         let s = &STORMS[i];
         let (c, east, north) = storm_frame(s, t);
         let (x, y) = (p.dot(east) / s.size, p.dot(north) / s.size);
-        let open = 0.12 + 0.88 * smoothstep(0.15, 0.75, u.eye_near);
-        // Una almendra: mas abierta en medio.
-        let lid = (1.0 - x * x).max(0.0) * open;
-        let inside = smoothstep(0.03, -0.03, y.abs() - lid) * smoothstep(1.02, 0.95, x.abs());
-        // El borde de los parpados, oscuro.
-        let rim = smoothstep(0.12, 0.0, (y.abs() - lid).abs()) * smoothstep(1.1, 0.9, x.abs()) * (1.0 - inside);
-        // La pupila se corre hacia la nave.
-        let look = eye - c * eye.dot(c);
-        let (lx, ly) = (look.dot(east), look.dot(north));
-        let reach = (lx * lx + ly * ly).sqrt().max(1e-4);
-        let shift = (reach * 4.0).min(1.0) * 0.4 * open;
-        let (px, py) = (x - lx / reach * shift, y - ly / reach * shift * open);
-        let pr = (px * px + py * py).sqrt();
-        let fibers = u.noise.noise(Vec3::new(py.atan2(px) * 3.0, pr * 4.0, i as f32 * 7.0)) * 0.5 + 0.5;
-        let iris = s.iris * (0.35 + 0.65 * fibers) * smoothstep(0.75, 0.3, pr);
-        let pupil = smoothstep(0.26, 0.2, pr);
-        let eyeball = Vec3::new(0.08, 0.03, 0.1).lerp(iris, smoothstep(0.75, 0.65, pr)) * (1.0 - 0.95 * pupil);
-        albedo = albedo.lerp(eyeball, inside).lerp(INDIGO, rim * 0.9);
-        glow += s.iris * (inside * (1.0 - pupil) * smoothstep(0.7, 0.2, pr) * (0.25 + 0.6 * u.eye_near) * 0.6);
-        let _ = d;
+        let (ex, ey) = (x / 1.45, y / 0.9);
+        let e = (ex * ex + ey * ey).sqrt();
+        if e < 1.15 {
+            // Las vetas: ruido en polares (periodico en el angulo) con un giro
+            // que crece hacia el centro; la forma de la espiral no cambia y
+            // gira entera, cada tormenta en su sentido.
+            let spin = s.speed.signum();
+            let a = ey.atan2(ex) + spin * (t * 0.3 + 2.8 * (1.0 - e).max(0.0));
+            let gas = u.noise.fbm(Vec3::new(a.cos() * 2.2, a.sin() * 2.2, e * 4.5 + i as f32 * 3.1), 3) * 0.5 + 0.5;
+            // El centro, corrido hacia la nave; se dilata con ella cerca.
+            let look = eye - c * eye.dot(c);
+            let (lx, ly) = (look.dot(east), look.dot(north));
+            let reach = (lx * lx + ly * ly).sqrt().max(1e-4);
+            let shift = (reach * 4.0).min(1.0) * 0.3;
+            let (cx, cy) = ((x - lx / reach * shift) / 1.45, (y - ly / reach * shift) / 0.9);
+            let pupil = 0.2 + 0.1 * u.eye_near;
+            let core = smoothstep(pupil + 0.08, pupil - 0.04, (cx * cx + cy * cy).sqrt());
+            let collar = smoothstep(0.68, 0.86, e) * smoothstep(1.1, 0.9, e);
+            let body = s.tint * (0.45 + 0.75 * gas);
+            let cream = Vec3::new(0.6, 0.5, 0.64) * (0.8 + 0.3 * gas);
+            let center = s.tint * 0.15 + Vec3::new(0.03, 0.006, 0.04);
+            let storm = body.lerp(cream, collar).lerp(center, core);
+            let cover = smoothstep(1.12, 0.95, e);
+            albedo = albedo.lerp(storm, cover);
+            glow += s.tint * (cover * (1.0 - core) * gas * (0.04 + 0.3 * dark) * (0.6 + 0.4 * u.eye_near));
+        }
+    }
+
+    // Las tormentas electricas: cumulos claros con rayos adentro.
+    for (k, &(lat, lon, speed, size)) in THUNDER.iter().enumerate() {
+        if (here - lat).abs() > 1.6 * size {
+            continue;
+        }
+        let storm = Storm { lat, lon, speed, size, tint: Vec3::ZERO };
+        let (c, east, north) = storm_frame(&storm, t);
+        let d = p.dot(c).clamp(-1.0, 1.0).acos() / size;
+        if d > 1.6 {
+            continue;
+        }
+        // Copos esponjados: mas claros arriba de cada uno.
+        let puffs = u.noise.fbm(p * 70.0 + Vec3::splat(k as f32 * 9.1), 3) * 0.5 + 0.5;
+        let cloud = smoothstep(1.25, 0.55, d + 0.5 * (puffs - 0.5));
+        albedo = albedo.lerp(Vec3::new(0.62, 0.56, 0.74) * (0.65 + 0.6 * puffs), cloud * 0.85);
+        // Rayos: celdas dentro de la tormenta, cada una con su hora.
+        let (gx, gy) = (p.dot(east) / size * 2.5, p.dot(north) / size * 2.5);
+        let (fx, fy) = (gx.floor(), gy.floor());
+        let id = hash_u32((fx as i32 as u32).wrapping_mul(0x8DA6_B343) ^ (fy as i32 as u32).wrapping_mul(0xD816_3841) ^ k as u32);
+        let clock = t * 5.0 + unit(id) * 13.0;
+        let slot = clock.floor();
+        if unit(hash_u32(id ^ slot as i32 as u32)) < 0.22 {
+            let (ox, oy) = (0.3 + 0.4 * unit(id >> 5), 0.3 + 0.4 * unit(id >> 11));
+            let spot = (gx - fx - ox).powi(2) + (gy - fy - oy).powi(2);
+            let age = clock - slot;
+            let flicker = (1.0 - age).max(0.0).powi(2) * (0.5 + 0.5 * (age * 47.0).sin().abs());
+            let flash = (-spot * 30.0).exp() * flicker * cloud;
+            glow += Vec3::new(0.75, 0.8, 1.0) * (flash * (0.5 + 2.5 * dark));
+        }
+        // A ratos un rayo grande alumbra toda la nube desde adentro.
+        let beat = t * 2.3 + k as f32 * 3.7;
+        if unit(hash_u32(k as u32 ^ 0x7A11 ^ beat.floor() as i32 as u32)) < 0.3 {
+            let age = beat - beat.floor();
+            let flicker = (1.0 - age).max(0.0).powi(3) * (0.6 + 0.4 * (age * 31.0).sin().abs());
+            glow += Vec3::new(0.6, 0.62, 0.95) * (cloud * puffs * flicker * (0.15 + 0.9 * dark));
+        }
     }
 
     // Relampagos chicos en las nubes del vortice, cada uno dura una
