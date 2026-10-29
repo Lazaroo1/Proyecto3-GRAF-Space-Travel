@@ -8,14 +8,6 @@
 //!   Saturno). El mapa del Hubble de Jupiter (NASA) solo da el detalle fino
 //!   de las nubes, por su luminancia. Cerca del ojo las bandas se enroscan
 //!   hacia el (se calculan en el punto ya girado por el vortice).
-//! - **Ojos chicos**: ocho tormentas como la Gran Mancha Roja de Jupiter,
-//!   que viajan con su banda: ovaladas (mas anchas de este a oeste) y hechas
-//!   de gas que gira. Las bandas de afuera se doblan a su alrededor; adentro,
-//!   un collar claro, el cuerpo del color de la tormenta con vetas en espiral
-//!   (ruido en polares con un giro que crece hacia el centro, y que gira
-//!   entero con el tiempo, cada tormenta en su sentido) y un centro oscuro,
-//!   la pupila, que se corre hacia donde esta la nave (`Uniforms::eye_dir`
-//!   proyectada en el plano de la tormenta) y se dilata con ella cerca.
 //! - **Tormentas electricas**: cinco cumulos de nubes claras y esponjadas en
 //!   las bandas de latitudes medias; adentro, rayos que destellan rapido en
 //!   puntos que cambian (celdas con su hora). Se ven de dia y mucho mas de
@@ -75,29 +67,6 @@ const BANDS: [Vec3; 8] = [
 /// Bandas por radian de latitud.
 const BAND_DENSITY: f32 = 11.0;
 
-/// Un ojo chico: latitud y longitud al empezar (radianes), lo que corre en
-/// longitud por segundo, su radio angular y su color.
-struct Storm {
-    lat: f32,
-    lon: f32,
-    speed: f32,
-    size: f32,
-    tint: Vec3,
-}
-
-/// Color de cada tormenta: rojo oxido, salmon, blanca, ambar, rosa, verde
-/// agua, azul y violeta.
-const STORMS: [Storm; 8] = [
-    Storm { lat: 0.42, lon: 0.6, speed: 0.012, size: 0.12, tint: Vec3::new(0.62, 0.2, 0.14) },
-    Storm { lat: -0.55, lon: 2.4, speed: -0.009, size: 0.13, tint: Vec3::new(0.7, 0.4, 0.3) },
-    Storm { lat: 0.08, lon: 4.1, speed: 0.016, size: 0.1, tint: Vec3::new(0.72, 0.68, 0.74) },
-    Storm { lat: -0.2, lon: 5.4, speed: -0.013, size: 0.11, tint: Vec3::new(0.7, 0.48, 0.16) },
-    Storm { lat: 0.78, lon: 3.3, speed: 0.008, size: 0.1, tint: Vec3::new(0.68, 0.24, 0.42) },
-    Storm { lat: -0.85, lon: 0.2, speed: 0.01, size: 0.1, tint: Vec3::new(0.2, 0.5, 0.45) },
-    Storm { lat: 0.25, lon: 2.0, speed: -0.011, size: 0.12, tint: Vec3::new(0.3, 0.38, 0.7) },
-    Storm { lat: -0.4, lon: 3.8, speed: 0.014, size: 0.11, tint: Vec3::new(0.42, 0.22, 0.66) },
-];
-
 /// Las tormentas electricas: latitud, longitud al empezar, lo que corren
 /// por segundo y su radio angular.
 const THUNDER: [(f32, f32, f32, f32); 5] = [
@@ -113,12 +82,13 @@ fn unit(h: u32) -> f32 {
     (h >> 8) as f32 / 16_777_216.0
 }
 
-/// Donde esta el ojo chico `s` en `t` (direccion en el espacio de Vigia) y
+/// Donde esta en `t` algo que va a la latitud `lat` y corre en longitud
+/// desde `lon` a `speed` por segundo (direccion en el espacio de Vigia), y
 /// sus ejes: al este y al norte.
 #[inline]
-fn storm_frame(s: &Storm, t: f32) -> (Vec3, Vec3, Vec3) {
-    let lon = s.lon + s.speed * t;
-    let c = Vec3::new(s.lat.cos() * lon.cos(), s.lat.sin(), s.lat.cos() * lon.sin());
+fn drifting(lat: f32, lon: f32, speed: f32, t: f32) -> (Vec3, Vec3, Vec3) {
+    let lon = lon + speed * t;
+    let c = Vec3::new(lat.cos() * lon.cos(), lat.sin(), lat.cos() * lon.sin());
     let east = Vec3::Y.cross(c).normalize();
     (c, east, c.cross(east))
 }
@@ -182,31 +152,11 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     // Vortice que gira y enrosca las bandas hacia el ojo.
     let falloff = (-r * r * 0.45).exp();
     let swirl = (2.6 + 0.8 * cycle) * falloff + t * 0.12 * (-r * r * 1.4).exp();
-    let mut q = rotate(p, eye, swirl);
+    let q = rotate(p, eye, swirl);
     // Las bandas se doblan alrededor del ojo, pero menos que el detalle: con
     // todo el giro el disco entero quedaba como una paleta de dulce.
-    let mut qb = rotate(p, eye, swirl * 0.4);
-    // Los ojos chicos tambien enroscan las nubes a su alrededor. El ojo
-    // grande se los traga si pasa encima.
-    let mut near_storm: Option<(usize, f32)> = None;
+    let qb = rotate(p, eye, swirl * 0.4);
     let here = p.y.clamp(-1.0, 1.0).asin();
-    for (i, s) in STORMS.iter().enumerate() {
-        // Primero por la latitud, que no cuesta: casi todos quedan lejos.
-        if (here - s.lat).abs() > 3.0 * s.size {
-            continue;
-        }
-        let (c, _, _) = storm_frame(s, t);
-        let d = p.dot(c).clamp(-1.0, 1.0).acos() / s.size;
-        if d < 3.0 {
-            let away = smoothstep(1.4, 2.2, c.dot(eye).clamp(-1.0, 1.0).acos() / EYE_RADIUS);
-            let turn = 2.2 * (-d * d * 0.5).exp() * away * s.speed.signum();
-            q = rotate(q, c, turn);
-            qb = rotate(qb, c, turn);
-            if near_storm.is_none_or(|(_, best)| d < best) && away > 0.0 {
-                near_storm = Some((i, d));
-            }
-        }
-    }
     // Rotacion diferencial: cada banda corre a su ritmo.
     let drift = t * 0.003 * (q.y * 9.0).sin();
     let (s, c) = drift.sin_cos();
@@ -269,48 +219,12 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
             + iris_color * (rim * (0.6 + 1.2 * u.eye_near));
     }
 
-    // Los ojos chicos: tormentas ovaladas de gas que gira, como la Gran
-    // Mancha Roja: collar claro, cuerpo con vetas en espiral y un centro
-    // oscuro que se corre hacia la nave.
-    if let Some((i, _)) = near_storm {
-        let s = &STORMS[i];
-        let (c, east, north) = storm_frame(s, t);
-        let (x, y) = (p.dot(east) / s.size, p.dot(north) / s.size);
-        let (ex, ey) = (x / 1.45, y / 0.9);
-        let e = (ex * ex + ey * ey).sqrt();
-        if e < 1.15 {
-            // Las vetas: ruido en polares (periodico en el angulo) con un giro
-            // que crece hacia el centro; la forma de la espiral no cambia y
-            // gira entera, cada tormenta en su sentido.
-            let spin = s.speed.signum();
-            let a = ey.atan2(ex) + spin * (t * 0.3 + 2.8 * (1.0 - e).max(0.0));
-            let gas = u.noise.fbm(Vec3::new(a.cos() * 2.2, a.sin() * 2.2, e * 4.5 + i as f32 * 3.1), 3) * 0.5 + 0.5;
-            // El centro, corrido hacia la nave; se dilata con ella cerca.
-            let look = eye - c * eye.dot(c);
-            let (lx, ly) = (look.dot(east), look.dot(north));
-            let reach = (lx * lx + ly * ly).sqrt().max(1e-4);
-            let shift = (reach * 4.0).min(1.0) * 0.3;
-            let (cx, cy) = ((x - lx / reach * shift) / 1.45, (y - ly / reach * shift) / 0.9);
-            let pupil = 0.2 + 0.1 * u.eye_near;
-            let core = smoothstep(pupil + 0.08, pupil - 0.04, (cx * cx + cy * cy).sqrt());
-            let collar = smoothstep(0.68, 0.86, e) * smoothstep(1.1, 0.9, e);
-            let body = s.tint * (0.45 + 0.75 * gas);
-            let cream = Vec3::new(0.6, 0.5, 0.64) * (0.8 + 0.3 * gas);
-            let center = s.tint * 0.15 + Vec3::new(0.03, 0.006, 0.04);
-            let storm = body.lerp(cream, collar).lerp(center, core);
-            let cover = smoothstep(1.12, 0.95, e);
-            albedo = albedo.lerp(storm, cover);
-            glow += s.tint * (cover * (1.0 - core) * gas * (0.04 + 0.3 * dark) * (0.6 + 0.4 * u.eye_near));
-        }
-    }
-
     // Las tormentas electricas: cumulos claros con rayos adentro.
     for (k, &(lat, lon, speed, size)) in THUNDER.iter().enumerate() {
         if (here - lat).abs() > 1.6 * size {
             continue;
         }
-        let storm = Storm { lat, lon, speed, size, tint: Vec3::ZERO };
-        let (c, east, north) = storm_frame(&storm, t);
+        let (c, east, north) = drifting(lat, lon, speed, t);
         let d = p.dot(c).clamp(-1.0, 1.0).acos() / size;
         if d > 1.6 {
             continue;
