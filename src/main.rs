@@ -181,6 +181,7 @@ fn run_window(options: &Options) -> Result<(), String> {
         hidden: false,
         preset: None,
         banner: None,
+        banner_where: None,
         intro_over: false,
     };
     let mut preset_index: Option<usize> = None;
@@ -255,6 +256,7 @@ fn run_window(options: &Options) -> Result<(), String> {
         }
         if let Some(text) = app.banner.take() {
             hud.banner = Some((text, hud.age));
+            hud.banner_where = app.banner_where.take();
         }
         // El reproductor solo existe en la version chapina.
         let chapin = app.system.version == scene::Version::Chapin;

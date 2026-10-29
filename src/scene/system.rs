@@ -370,7 +370,7 @@ impl System {
         for &(name, file, exhaust) in &BOTTLES {
             let mut mesh = load_obj(&assets.join("botellas").join(format!("{file}-low.obj")))?;
             mesh.deform(|p| Vec3::new(-p.x, p.y, -p.z));
-            mesh.normalize_size(config::SHIP_LENGTH as f32 * 1.15);
+            mesh.normalize_size(config::BOTTLE_LENGTH as f32);
             bottles.push(Bottle {
                 name,
                 mesh: meshes.len(),

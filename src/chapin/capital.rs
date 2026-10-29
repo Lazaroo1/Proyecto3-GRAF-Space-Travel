@@ -200,7 +200,7 @@ pub fn field(seed: u32) -> Arc<dyn HeightField> {
 /// Lado de la celda de las zonas, en unidades del mundo.
 const ZONE: f32 = 46.0;
 /// Hasta donde manda la zona del Reformador (el peso de su punto).
-const SITE_ZONE: f32 = 70.0;
+const SITE_ZONE: f32 = 92.0;
 /// Numero de la zona del Reformador.
 const SITE_ID: u32 = 0x7A09;
 /// Cuadras del Reformador, ancho de sus calles y de la 7a Avenida.
@@ -893,13 +893,21 @@ fn on_grid(field: &dyn HeightField, x: f64, y: f64) -> (DVec3, f64) {
     let (up, right, forward) = (UP.as_dvec3(), RIGHT.as_dvec3(), FORWARD.as_dvec3());
     let mut height = 0.0;
     let mut dir = up;
-    for _ in 0..3 {
+    for _ in 0..6 {
         let r = RADIUS as f64 + height;
         let (a, b) = (x / r, y / r);
         dir = (up * (1.0 - a * a - b * b).max(0.0).sqrt() + right * a + forward * b).normalize();
         height = field.sample(dir.as_vec3()).height as f64;
     }
     (dir, height)
+}
+
+/// Si el suelo en `(x, y)` cae de verdad ahi: junto a un barranco la cuenta
+/// de `on_grid` no converge y el objeto quedaria corrido.
+fn settled(field: &dyn HeightField, x: f64, y: f64) -> bool {
+    let (dir, height) = on_grid(field, x, y);
+    let p = dir * (RADIUS as f64 + height);
+    (p.dot(RIGHT.as_dvec3()) - x).abs() < 0.1 && (p.dot(FORWARD.as_dvec3()) - y).abs() < 0.1
 }
 
 /// Un objeto en `(x, y)` de la cuadricula, con su frente (+Z del modelo)
@@ -920,14 +928,16 @@ fn put(field: &dyn HeightField, radius: f64, kind: PropKind, x: f64, y: f64, fac
 }
 
 /// Hasta donde hay edificios de verdad alrededor del Reformador.
-const DOWNTOWN: f64 = 62.0;
+const DOWNTOWN: f64 = 84.0;
 /// La cuadra de la terminal de camionetas y el tamano de las camionetas.
 const TERMINAL: (i32, i32) = (-2, 1);
 const BUS_SCALE: f32 = 1.1;
 
 /// El Reformador: la torre en el cruce de la 7a Avenida, edificios pegados
-/// uno al otro en las orillas de las cuadras, una terminal de camionetas y
-/// camionetas haciendo cola por la avenida y por las calles.
+/// uno al otro en las orillas de las cuadras, algunas cuadras con una torre
+/// de oficinas, una terminal de camionetas y camionetas haciendo cola por la
+/// avenida y por las calles. Solo se llena lo que cae en la cuadricula del
+/// Reformador (lejos de la orilla con otra zona).
 fn place(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField, seed: u32, frame: (DVec3, DVec3, DVec3)) {
     clear_site(instances, radius, frame.0, DOWNTOWN + 10.0);
     instances.push(put(field, radius, PropKind::Torre, 0.0, 0.0, (0.0, 1.0), 1.0, 0.05));
@@ -943,10 +953,33 @@ fn place(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField, se
             let right = x0 + block - if i + 1 == 0 { AVENIDA as f64 * 0.5 } else { half_street };
             let (bottom, top) = (y0 + half_street, y0 + block - half_street);
             let center = ((left + right) * 0.5, (bottom + top) * 0.5);
-            if center.0.hypot(center.1) > DOWNTOWN {
+            let far = center.0.hypot(center.1);
+            if far > DOWNTOWN {
+                continue;
+            }
+            let (dir, height) = on_grid(field, center.0, center.1);
+            let z = zone((dir * (RADIUS as f64 + height)).as_vec3());
+            if z.id != SITE_ID || z.edge < block as f32 {
+                continue;
+            }
+            // En los barrancos no se construye.
+            let corners = [(left, bottom), (right, bottom), (left, top), (right, top)].map(|(x, y)| on_grid(field, x, y).1);
+            let (lo, hi) = corners.iter().fold((height, height), |(lo, hi), &h| (lo.min(h), hi.max(h)));
+            if hi - lo > 1.2 {
                 continue;
             }
             let h = hash_u32(seed ^ (i as u32).wrapping_mul(0x9E37_79B9) ^ (j as u32).wrapping_mul(0x85EB_CA6B));
+            // Algunas cuadras, lejos de la plaza, son una torre de oficinas
+            // con su basamento.
+            // Ni en las cuadras de la 7a Avenida: taparian la torre.
+            if far > 24.0 && i != 0 && i != -1 && (i, j) != TERMINAL && unit(hash_u32(h ^ 0x70E2)) < 0.2 {
+                let s = 0.85 + 0.55 * unit(hash_u32(h ^ 0x70E3));
+                let facing = if h & 2 == 0 { (0.0, -1.0) } else { (0.0, 1.0) };
+                if settled(field, center.0, center.1) {
+                    instances.push(put(field, radius, PropKind::Rascacielos, center.0, center.1, facing, s, 0.05));
+                }
+                continue;
+            }
             if (i, j) == TERMINAL {
                 // La terminal: camionetas estacionadas en bateria.
                 for k in 0..5 {
@@ -978,7 +1011,7 @@ fn place(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField, se
             }
             for (k, &(x, y, facing, s)) in lots.iter().enumerate() {
                 // La plaza de la torre queda libre y falta uno que otro.
-                if x.hypot(y) < 12.0 || unit(hash_u32(h ^ k as u32 ^ 0xE1)) < 0.06 {
+                if x.hypot(y) < 12.0 || unit(hash_u32(h ^ k as u32 ^ 0xE1)) < 0.06 || !settled(field, x, y) {
                     continue;
                 }
                 instances.push(put(field, radius, PropKind::Edificio, x, y, facing, s, 0.05));
@@ -1046,19 +1079,21 @@ pub fn mesh(kind: PropKind, detail: usize) -> Mesh {
     match kind {
         PropKind::Torre => tower(detail),
         PropKind::Camioneta => bus(detail),
+        PropKind::Rascacielos => office(detail),
         _ => building(detail),
     }
 }
 
 /// La Torre del Reformador, en unidades del modelo (una unidad son unos
-/// 3 m; la de verdad mide unos 72 m). Medio ancho de la base y del primer
-/// nivel, alto del primer nivel, medio ancho y alto del fuste arriba.
+/// 2 m; la de verdad mide unos 75 m y es de lo mas alto del centro). Medio
+/// ancho de la base y del primer nivel, alto del primer nivel, medio ancho
+/// y alto del fuste arriba.
 const BASE: f32 = 6.0;
 const LEVEL_HALF: f32 = 2.0;
-const LEVEL: f32 = 8.0;
+const LEVEL: f32 = 10.0;
 const SHAFT_TOP_HALF: f32 = 0.42;
-const SHAFT_TOP: f32 = 22.8;
-const TOWER_TOP: f32 = 24.3;
+const SHAFT_TOP: f32 = 36.0;
+const TOWER_TOP: f32 = 37.5;
 
 /// Medio ancho de las patas a la altura `y` (del suelo al primer nivel): se
 /// abren mucho abajo y suben casi rectas al final, como en la Eiffel.
@@ -1211,7 +1246,7 @@ fn tower(detail: usize) -> Mesh {
     }
     // El fuste: las cuatro esquinas, un marco en cada tramo y un circulo en
     // cada cara de cada tramo.
-    let bays = [8, 12, 14][detail];
+    let bays = [10, 16, 20][detail];
     let level = |i: usize| LEVEL + (SHAFT_TOP - LEVEL) * i as f32 / bays as f32;
     for i in 0..bays {
         let (y0, y1) = (level(i), level(i + 1));
@@ -1348,6 +1383,31 @@ fn building(detail: usize) -> Mesh {
     b.build()
 }
 
+/// Torre de oficinas, como las de las zonas 9, 10 y 4: un basamento de
+/// concreto con vitrinas, el fuste de vidrio y un remate con antena. Mide
+/// `OFFICE_TOP` de alto y `2 OFFICE_HALF` de lado; mira hacia +Z.
+const OFFICE_HALF: f32 = 2.0;
+const OFFICE_TOP: f32 = 17.0;
+const PODIUM: f32 = 1.8;
+
+fn office(detail: usize) -> Mesh {
+    let mut b = MeshBuilder::new();
+    b.color(Vec3::new(WALL, 0.0, 0.0));
+    bx(&mut b, Vec3::new(0.0, PODIUM * 0.5, 0.0), Vec3::new(OFFICE_HALF + 0.6, PODIUM * 0.5, OFFICE_HALF + 0.6));
+    b.color(Vec3::new(CHROME, 0.0, 0.0));
+    let shaft = OFFICE_TOP - PODIUM;
+    bx(&mut b, Vec3::new(0.0, PODIUM + shaft * 0.5, 0.0), Vec3::new(OFFICE_HALF, shaft * 0.5, OFFICE_HALF));
+    if detail >= 1 {
+        b.color(Vec3::new(WALL, 0.0, 0.0));
+        bx(&mut b, Vec3::new(0.0, OFFICE_TOP + 0.35, 0.0), Vec3::new(OFFICE_HALF * 0.7, 0.35, OFFICE_HALF * 0.7));
+    }
+    if detail >= 2 {
+        b.color(Vec3::new(IRON, 0.0, 0.0));
+        beam(&mut b, Vec3::new(0.6, OFFICE_TOP + 0.7, 0.3), Vec3::new(0.6, OFFICE_TOP + 3.2, 0.3), 0.04);
+    }
+    b.build()
+}
+
 /// Una direccion del mundo en los ejes del modelo.
 #[inline]
 fn to_model(f: &Fragment, v: Vec3) -> Vec3 {
@@ -1372,6 +1432,7 @@ pub fn shade_prop(kind: PropKind, f: &Fragment, u: &Uniforms, style: &PropStyle,
     match kind {
         PropKind::Torre => tower_shade(f, u, style, sun),
         PropKind::Camioneta => bus_shade(f, u, style, sun),
+        PropKind::Rascacielos => office_shade(f, u, style, sun),
         _ => building_shade(f, u, style, sun),
     }
 }
@@ -1602,6 +1663,70 @@ fn building_shade(f: &Fragment, u: &Uniforms, style: &PropStyle, sun: Vec3) -> V
     // Tierra al pie de la pared.
     albedo = albedo * (0.7 + 0.3 * smoothstep(0.0, 0.3, p.y));
     pbr::shade_light(f, u, albedo, rough, 0.0, f.normal, 1.0, sun) + glow * u.gains.cementerio
+}
+
+/// Vidrios de las torres: verde azulado, bronce, gris azul y verde.
+const OFFICE_GLASS: [Vec3; 4] = [
+    Vec3::new(0.02, 0.05, 0.055),
+    Vec3::new(0.05, 0.035, 0.02),
+    Vec3::new(0.035, 0.045, 0.06),
+    Vec3::new(0.015, 0.04, 0.03),
+];
+
+/// Torre de oficinas: muro cortina de vidrio con un antepecho opaco en cada
+/// piso y parteluces de aluminio. El vidrio refleja un cielo de dia (mas
+/// claro hacia el horizonte) con Fresnel; de noche, unas oficinas
+/// encendidas. El basamento es de concreto con vitrinas.
+fn office_shade(f: &Fragment, u: &Uniforms, style: &PropStyle, sun: Vec3) -> Vec3 {
+    let p = f.local;
+    let id = hash_u32((style.seed * 16_777_216.0) as u32 ^ 0x0FF1);
+    let fp = model_footprint(f, u, style.scale);
+    let nm = to_model(f, f.normal);
+    let night = prop_night(f, u);
+    let grime = u.noise.fbm(p * 0.8 + Vec3::splat(style.seed * 30.0), 3) * 0.5 + 0.5;
+    match material(f) {
+        0 => return pbr::shade_light(f, u, Vec3::splat(0.2), 0.5, 0.8, f.normal, 1.0, sun),
+        4 if nm.y < 0.5 => {}
+        _ => {
+            // Concreto; en la planta baja, vitrinas.
+            let mut albedo = CONCRETE * (0.7 + 0.3 * grime);
+            let mut glow = Vec3::ZERO;
+            if nm.y < 0.5 && p.y < PODIUM {
+                let shop = band(p.y, 0.15, 1.3, fp);
+                albedo = albedo.lerp(GLASS, shop);
+                glow = WINDOW * (shop * night * 0.8);
+            }
+            return pbr::shade_light(f, u, albedo, 0.85, 0.0, f.normal, 1.0, sun) + glow * u.gains.cementerio;
+        }
+    }
+    let tint = OFFICE_GLASS[(id % OFFICE_GLASS.len() as u32) as usize];
+    let along = if nm.x.abs() > 0.7 { p.z } else { p.x };
+    let storey = (p.y - PODIUM) / STOREY;
+    let level = storey.floor();
+    let cy = storey - level;
+    let spacing = [0.55, 0.7, 0.9][(id >> 4) as usize % 3];
+    let column = (along / spacing + 0.5).floor();
+    let cx = along / spacing + 0.5 - column;
+    let spandrel = band(cy, 0.0, 0.2 + 0.1 * unit(id >> 7), fp / STOREY);
+    let mullion = line(cx.min(1.0 - cx) * spacing, 0.025, fp);
+    let glass = (1.0 - spandrel) * (1.0 - mullion);
+    // El cielo que refleja: mas claro en el horizonte.
+    let up = f.object_to_world.mul_vec(Vec3::Y);
+    let v = f.view_dir();
+    let r = f.normal * (2.0 * f.normal.dot(v)) - v;
+    let ndv = f.normal.dot(v).max(0.0);
+    let fresnel = 0.08 + 0.92 * (1.0 - ndv).powi(5);
+    let sky = Vec3::new(0.02, 0.035, 0.065).lerp(Vec3::new(0.06, 0.075, 0.09), smoothstep(0.5, 0.0, r.dot(up)));
+    let reflection = sky * (sun.luminance() * (0.15 + 0.85 * fresnel)) * glass;
+    let frame = Vec3::new(0.18, 0.19, 0.2);
+    let albedo = tint.lerp(frame, mullion).lerp(tint * 0.6 + Vec3::splat(0.02), spandrel);
+    let rough = 0.1 + 0.6 * (1.0 - glass);
+    let lit = pbr::shade_light(f, u, albedo, rough, 0.0, f.normal, 1.0, sun);
+    // De noche, oficinas encendidas.
+    let wid = hash_u32(id ^ (column as i32 as u32).wrapping_mul(0x9E37_79B9) ^ (level as u32) << 8 ^ (nm.x.abs() > 0.7) as u32);
+    let on = unit(hash_u32(wid ^ ((u.time / 40.0).floor() as u32))) < 0.4;
+    let glow = if on { WINDOW.lerp(NEON, 0.5) * (glass * night * 1.2) } else { Vec3::ZERO };
+    lit + reflection + glow * u.gains.cementerio
 }
 
 // El anillo: camionetas y tuc-tucs --------------------------------------------

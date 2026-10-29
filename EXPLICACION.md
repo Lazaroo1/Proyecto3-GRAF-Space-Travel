@@ -39,14 +39,21 @@
 - **Las naves botella**: OBJ de Blender (Z arriba, etiqueta hacia +Y)
   girados al cargar para volar con el pico adelante, y dibujados con la boca
   22 grados hacia arriba (`System::ship_fix`): la cámara va atrás y arriba,
-  y así ve la etiqueta y no solo el fondo. Su shader usa el color de cada
+  y así ve la etiqueta y no solo el fondo. Miden 1.6 veces la OCASO-1
+  (`config::BOTTLE_LENGTH`) y con ellas la cámara de persecución va más
+  atrás y más baja (`config::BOTTLE_CHASE`): la botella queda entera a media
+  imagen en vez de cortarse abajo. Su shader usa el color de cada
   cara (`Kd`) con vidrio pulido, un borde de Fresnel y la luz que pasa por
   el vidrio a contraluz. Cada una tiene su escape (`effects::Exhaust`), que
   sale del fondo de la botella inclinada.
 - **Los lugares de día**: cada lugar está fijo en su planeta y el planeta
   gira, así que en la versión chapina N busca hacia adelante el primer
   momento (hasta dos vueltas y media del planeta) en que el sol está entre
-  unos 27 y 53 grados sobre el lugar, y llega ahí (`daylight_at`).
+  unos 27 y 53 grados sobre el lugar, y llega ahí (`daylight_at`). Los
+  lugares lejos del ecuador tienen temporada de noche polar (San Andrés
+  Xecul, cerca del polo de los Cuchumatanes, se quedaba de noche entre los
+  minutos 2 y 12): si en esas vueltas no amanece, se sigue buscando en el
+  año del planeta.
 - **La Torre del Reformador** ([chapin/capital.rs](src/chapin/capital.rs)):
   hecha a partir de una foto. Cuatro patas de celosía que se abren mucho
   abajo (medio ancho `2 + 4 (1 - y/8)^1.8`) con un arco grande de celosía en
@@ -70,6 +77,40 @@
   dormidos el bosque sube más. En Atitlán se quitó la franja de nubes
   pintada en las cimas, que se leía como nieve: el bosque sube casi hasta la
   punta y solo esta es pedregal.
+- **La columna de ceniza** ([chapin/plume.rs](src/chapin/plume.rs)): un
+  volumen en la pasada de volúmenes, como el vapor de Pira. Cada explosión
+  del Fuego (las mismas que encienden el cráter y tiran bombas) suelta una
+  bocanada que sube rápido, se frena, se infla y el viento se la lleva de
+  lado; abajo, un tallo de gas une el cráter con ellas. La densidad es la
+  de la bocanada más cercana, con el borde comido por un fbm que sube con
+  ella (la coliflor), y la luz es la de la estrella sobre el lado que le da,
+  más el cielo; recién salida, la base brilla al rojo. Las bocanadas y la
+  esfera que las envuelve se calculan una vez por frame, y cada rayo
+  primero ve qué bocanadas cruza y solo marcha ese tramo: así cuesta unos
+  9 ms cuando llena media pantalla y casi nada en lo demás.
+- **La lava** ([chapin/fuego.rs](src/chapin/fuego.rs) `fire`): una costra
+  negra que se resquebraja en placas (celdas de Worley que bajan con la
+  colada) y, por las grietas y por el canal abierto junto a la boca, la
+  lava al rojo con su temperatura de cuerpo negro. Ladera abajo se enfría:
+  placas más grandes, grietas más finas y rojas. La costra es suelo
+  iluminado, no luz, y la colada tiene cuerpo en el relieve (rellena el
+  fondo de su barranca).
+- **Los pueblos**: Antigua tiene árboles en los patios, cafetales afuera,
+  camionetas y un mercado; en los valles del Fuego se reparten aldeas y
+  árboles de sombra. Xecul es un pueblo: plaza empedrada y calles de tierra
+  pintadas por el shader en los mismos ejes con que se colocan las casas
+  (las hileras de Antigua, `fuego::row`), el mercado frente a la iglesia,
+  pinos y camionetas. Los **puestos** son un objeto nuevo: postes, mesa con
+  un corte típico, montones de fruta y verdura y un toldo de lona que deja
+  pasar la luz; el shader pone a cada uno su lona y lo que vende.
+- **La capital**: la Torre del Reformador mide ahora 37.5 (con más tramos
+  en el fuste) y es lo más alto del centro. Alrededor hay más cuadras y, en
+  algunas, **torres de oficinas** (otro objeto nuevo): basamento de concreto
+  con vitrinas y un muro cortina de vidrio con antepechos y parteluces que
+  refleja un cielo de día con Fresnel; de noche, oficinas encendidas. Las
+  cuadras de la 7a Avenida quedan sin torres para no tapar la vista, y no
+  se construye donde un barranco cruza la cuadra (ahí la cuenta que pone
+  cada objeto en la cuadrícula no converge).
 - **El HUD** ([hud.rs](src/hud.rs)): la letra es Segoe UI (la de Windows)
   cargada desde memoria con las tildes, un atlas por tamaño, dibujada sin
   escalar y en pixeles enteros para que se vea nítida; si no está, usa la de
@@ -79,11 +120,19 @@
   reproductor dibuja sus botones con triángulos, una barra con perilla y una
   portada con un ecualizador que se mueve mientras suena. H vuelve junto a
   Pira (además de Inicio) y la fila de Y dice qué hace: la ruta predicha.
+  Los nombres de los planetas que caen bajo el panel de vuelo no se
+  dibujan.
 - **El reproductor** ([player.rs](src/player.rs)): raylib solo decodifica y
   reproduce. Los archivos se leen con Rust y se le pasan desde memoria,
   porque en Windows raylib abre rutas con la página de códigos ANSI y una
-  ruta con tildes no se abriría. La marimba procedural
-  ([marimba.rs](src/marimba.rs)) es la última pista y la toca el sintetizador.
+  ruta con tildes no se abriría. Empieza con la canción de `primera.txt` y
+  luego las revuelve (Fisher-Yates con una semilla del reloj); al terminar
+  la vuelta las revuelve otra vez sin repetir de entrada la última. Cuando
+  a una canción le quedan 3.5 s empieza la siguiente: suenan dos streams a
+  la vez, uno baja con un coseno y el otro sube con un seno (potencia
+  constante, sin hueco de volumen en medio). La marimba procedural
+  ([marimba.rs](src/marimba.rs)) es la última pista de cada vuelta y la toca
+  el sintetizador; sola no entra al shuffle porque no se acaba nunca.
 
 # Cambios de la sexta revisión
 
@@ -180,6 +229,36 @@
   la tormenta y corre su color del rosa al violeta. Los relámpagos son
   destellos chicos dentro de las nubes del vórtice. Tiene **anillos
   delgados de polvo** que brillan a contraluz.
+- **Los anillos de Vigía, como los de Saturno**
+  ([shaders/rings.rs](src/shaders/rings.rs) `dust`): por radio, un anillo
+  interior tenue y oscuro, uno ancho y denso con anillitos, la división
+  oscura (como la de Cassini) y el exterior con un hueco angosto y otro más
+  fino; cada zona con franjas de colores (lila, rosa, durazno, blanco hielo
+  y gris azulado). Eso mismo da la sombra de los anillos sobre el planeta.
+  Lo que depende del ángulo solo se dibuja: la lunita del hueco, que gira a
+  su velocidad de Kepler y deja las orillas onduladas detrás (las olas se
+  van calmando), un anillo de grumos por fuera que se trenza entre dos
+  lunitas pastoras, y rayos radiales sobre el anillo denso que giran con el
+  planeta y no con el anillo y aparecen y se desvanecen despacio. La sombra
+  del planeta sobre los anillos ya estaba.
+- **Vigía ya no es una pelota lisa** ([shaders/vigia.rs](src/shaders/vigia.rs)):
+  - **Bandas** por latitud, cada una con su color y su corriente (al este o
+    al oeste). La latitud se tuerce con un fbm y con ondas de dos armónicos
+    a lo largo de la longitud (Kelvin-Helmholtz, como entre las bandas de
+    Saturno), y adentro de cada banda hay remolinos chicos cuando se
+    alcanzan a ver. Se doblan alrededor del ojo con menos giro que el
+    detalle de las nubes (con todo el giro el disco parecía una paleta de
+    dulce) y no se calculan debajo del iris, donde no se ven.
+  - **Tormentas eléctricas**: cinco cúmulos de nubes claras y esponjadas en
+    las bandas de latitudes medias. Adentro, rayos en celdas que destellan
+    cada una a su hora y, a ratos, uno grande que alumbra toda la nube desde
+    adentro; se ven de día y mucho más de noche. Cada pixel las descarta
+    primero por latitud, que no cuesta.
+  - **Auroras**: una cinta que serpentea alrededor de cada polo, con
+    pliegues finos como cortinas, verde abajo y magenta arriba; laten con
+    la estrella y se ven sobre todo de noche y en el borde.
+  - **Relámpagos por todo el planeta**: celdas sobre la esfera que destellan
+    cada una a su hora, sobre todo en el lado de noche.
 - **Párpado y El espejo** ([shaders/parpado.rs](src/shaders/parpado.rs)): la
   luna de Vigía, acoplada por marea (le da siempre la misma cara), con
   cordilleras de cristal y lagos. Del lado de Vigía hay un lago grande: su
@@ -246,7 +325,8 @@
   cercano, los naufragios recuperan algunas luces y echan chispas, la baliza
   titila más rápido y el ojo de Vigía cierra la pupila
   (`Uniforms::eye_near`). Cerca del suelo de cada planeta flotan brasas,
-  nieve, polvo o bruma en un cubo que acompaña a la cámara. Las luces de los
+  gotas, polvo o destellos en un cubo que acompaña a la cámara (en Vigía ya
+  no: los jirones de nube se veían como pedazos de cosas volando). Las luces de los
   géiseres, las agujas y la baliza se suman a las de los hongos (las 12 más
   cercanas). N viaja de un lugar al siguiente.
 
@@ -551,7 +631,13 @@ nebulosa, Pira hirviendo y gas del disco.
   de un planeta la nave viaja con él.
 - **Gravedad**: `a = -μ r / |r|³` del cuerpo dominante, integrada con Euler
   semi-implícito (conserva bien la energía de una órbita). Sin asistente la
-  nave es newtoniana.
+  nave es newtoniana: soltar las teclas no la detiene. Los propulsores
+  empujan con la mitad de la aceleración del asistente (siempre más que la
+  gravedad, para poder despegar) y dejan de empujar hacia adelante al llegar
+  a la velocidad máxima; la gravedad sí puede pasarla. Antes usaban la
+  aceleración del asistente, que crece con el exceso de velocidad para
+  frenar a tiempo: ir rápido empujaba más y en tres segundos de W la nave
+  pasaba de 1400 u/s.
 - **Predicción de trayectoria** ([scene/trajectory.rs](src/scene/trajectory.rs)):
   se integra la caída libre 90 s hacia adelante con la misma física y se
   dibuja con cintas; si choca, se marca el punto.
@@ -559,8 +645,18 @@ nebulosa, Pira hirviendo y gas del disco.
   que gira (`ω × r`); la mira se nivela con la vertical del planeta y se
   transporta con la curvatura (el giro mínimo que lleva la vertical anterior
   a la nueva), así avanzar derecho rodea el planeta por un círculo máximo; la
-  altura sobre el terreno se sostiene sola mirando el suelo que viene en
-  medio segundo y en un segundo. El crucero (O) empuja hacia adelante solo.
+  altura sobre el terreno se sostiene sola mirando el suelo que viene en un
+  cuarto, medio y un segundo (a la velocidad pedida y a la real), y para no
+  raspar el terreno puede subir más rápido que el límite. Mirando hacia
+  arriba o hacia abajo más de unos 11 grados, W sube o baja por donde se
+  mira; bajando, solo tan rápido como para frenar antes del suelo. Antes W
+  solo movía a la misma altura y la nave se sentía atascada. Si cambia el
+  planeta de abajo (de un planeta a su luna), la mira no se transporta, solo
+  se nivela. El crucero (O) empuja hacia adelante solo.
+- **Cuerpos ocultos**: no cuentan como marco ni como suelo. Antes, en
+  OCASO, la Luna de Xelajú (que solo existe en la versión chapina) seguía
+  en la física: cerca de Argos la nave se enganchaba a una luna invisible y
+  chocaba con su terreno.
 - **Colisión**: contra la misma función de altura que se dibuja; se empuja la
   nave afuera y se quita la velocidad hacia adentro con un rebote pequeño.
 

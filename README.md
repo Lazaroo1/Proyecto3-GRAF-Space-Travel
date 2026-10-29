@@ -35,7 +35,7 @@ con luces que alumbran lo de alrededor y algo que flota a su lado. La tecla
 | ![El nido de Argos](media/28_nido.png) | **El nido** (Argos): carne granate y mojada, en pliegues, llena de ojos que miran a la nave y parpadean cada uno a su ritmo. Al llegar, el ojo grande viene debajo de la nave (los del nido se hunden para dejarlo pasar): se vuela encima de su iris, con la corona de ojos de sus párpados mirando desde el horizonte. Flotan gotas rojas. |
 | ![El espejo en Párpado](media/32_espejo.png) | **El espejo** (Párpado, la luna de Vigía): un lago quieto entre cristales, con Vigía del otro lado del agua. El ojo te mira y también se ve en el lago, porque el reflejo se sombrea con el mismo shader de Vigía. La nave levanta ondas al pasar sobre el agua y los cristales se encienden por dentro. |
 | ![La baliza de Cementerio](media/26_baliza.png) | **La baliza** (Cementerio): naves caídas alrededor de la torre. A su paso les vuelven las luces y echan chispas; la baliza titila más rápido y su onda sube. |
-| ![El ojo de Vigía de cerca](media/29_ojo_cerca.png) | **El ojo** (Vigía): sigue a la nave y, cuando se acerca, cierra la pupila, enciende el iris y los relámpagos se juntan debajo de ella. Jirones de nube pasan rozando. |
+| ![El ojo de Vigía de cerca](media/29_ojo_cerca.png) | **El ojo** (Vigía): sigue a la nave y, cuando se acerca, cierra la pupila, enciende el iris y los relámpagos se juntan debajo de ella. |
 | ![El claro de Jardín](media/11_hongos.png) | **El claro** (Jardín): colonias de hongos y corales que alumbran el suelo, con esporas flotando. |
 
 ## La versión chapina (V)
@@ -59,17 +59,19 @@ las sombras tienen más relleno.
 | ![Tikal: el Templo del Gran Jaguar sobre la selva](media/44_tikal.png) | ![Panajachel y los volcanes de Atitlán](media/46_panajachel.png) |
 | ![Semuc Champey: pozas turquesa](media/47_semuc.png) | ![San Andrés Xecul y la Luna de Xelajú](media/49_xecul.png) |
 | ![La capital y su anillo de camionetas](media/51_capital.png) | ![La Torre del Reformador](media/52_reformador.png) |
+| ![La columna de ceniza del Fuego sobre Antigua](media/56_columna_de_ceniza.png) | ![El mercado frente a la iglesia de San Andrés Xecul](media/57_mercado_de_xecul.png) |
+| ![Torres de oficinas alrededor del Reformador](media/58_torres_de_la_capital.png) | |
 
 | OCASO | Versión chapina | Lugar (N) |
 | --- | --- | --- |
 | La estrella | **Kinich Ajaw**, el sol maya: fuego dorado con el glifo k'in (la flor de cuatro pétalos) fijo en su superficie, corona dorada con rayos | — |
-| Pira | **Volcán de Fuego**: el Fuego con la cumbre de ceniza oscura llena de surcos, barrancas de ceniza gris que bajan entre el bosque, coladas de lava que laten y un cráter encendido; a su lado el Acatenango, dormido, con bosque hasta arriba; en el valle, Antigua | **Antigua**: el Arco de Santa Catalina con su reloj (las agujas avanzan), casas coloniales y alfombras de aserrín en la calle |
+| Pira | **Volcán de Fuego**: el Fuego con la cumbre de ceniza oscura llena de surcos, barrancas de ceniza gris que bajan entre el bosque, coladas de lava con costra negra que se resquebraja y brilla por las grietas, y una **columna de ceniza** que sale con cada explosión y se la lleva el viento; a su lado el Acatenango, dormido, con bosque hasta arriba; en los valles, aldeas y cafetales | **Antigua**: el Arco de Santa Catalina con su reloj (las agujas avanzan), casas coloniales, alfombras de aserrín en la calle, árboles en los patios, camionetas en las avenidas y un mercado en la calle que cruza |
 | Jardín | **Petén**: selva, ríos y lagos | **Tikal**: el Templo del Gran Jaguar saliendo sobre la selva, ceibas y luciérnagas |
 | Vigía | **Atitlán**: un mundo lago con los volcanes Atitlán, Tolimán y San Pedro, con bosque casi hasta la punta y barrancos; el agua refleja y en las tardes el Xocomil la pica | **Panajachel**: el muelle y las lanchas que se mecen con las olas |
 | Párpado | **Semuc Champey**: pozas turquesa en terrazas de caliza entre la selva | **Las pozas** |
-| Argos | **Los Cuchumatanes**: sierra con helada al amanecer y pinos; en su anillo, los barriletes gigantes de Sumpango | **San Andrés Xecul**: la iglesia amarilla con sus columnas de colores, ángeles, enredaderas y cúpulas de gajos (todo pintado por el shader) |
+| Argos | **Los Cuchumatanes**: sierra con helada al amanecer y pinos; en su anillo, los barriletes gigantes de Sumpango | **San Andrés Xecul**: la iglesia amarilla con sus columnas de colores, ángeles, enredaderas y cúpulas de gajos (todo pintado por el shader), en un pueblo con plaza empedrada, mercado de puestos con toldos de colores, casas y camionetas |
 | — | **La Luna de Xelajú**, luna de los Cuchumatanes, con un tejido de huipil que brilla de noche | — |
-| Cementerio | **La capital**: barrancos, cuadras y luces; en su anillo, camionetas y tuc-tucs dando vueltas | **El Reformador**: la torre de celosía como la de la foto (patas abiertas con arcos sobre la 7a Avenida, alas con círculos, torrecitas en el primer nivel, un círculo en cada tramo del fuste, campana y faro), camionetas extraurbanas pasando abajo y edificios |
+| Cementerio | **La capital**: barrancos, cuadras y luces; en su anillo, camionetas y tuc-tucs dando vueltas | **El Reformador**: la torre de celosía como la de la foto (patas abiertas con arcos sobre la 7a Avenida, alas con círculos, torrecitas en el primer nivel, un círculo en cada tramo del fuste, campana y faro), lo más alto del centro; camionetas extraurbanas pasando abajo, edificios y torres de oficinas de vidrio |
 
 **Las naves botella** (modeladas en Blender para este proyecto): Gallo,
 Cabro Reserva, Jägermeister, Blue Label, Cubata Uva y Four Loko. **B** pasa a
@@ -77,12 +79,13 @@ la siguiente y **1** a **6** eligen una; cada una echa algo distinto (espuma
 la cerveza, fuego verde el Jäger, azul el Blue Label, morado la Cubata,
 chispas de colores el Four Loko).
 
-**La música**: las canciones van en la carpeta [`musica/`](musica/LEEME.txt)
-(mp3, ogg, wav); suenan en orden por nombre y un `primera.txt` con el nombre
-de una canción hace que siempre empiece con esa. Al final de la lista está
-una **marimba procedural** escrita en código (síntesis modal de las teclas
+**La música**: las canciones van en una carpeta `musica/` junto al proyecto
+(mp3, ogg, wav; no se suben al repositorio) y suenan en orden aleatorio, con un **crossfade** de 3.5 s
+entre una y otra; un `primera.txt` con el nombre de una canción (o un
+pedazo) hace que siempre empiece con esa. Al final de cada vuelta está una
+**marimba procedural** escrita en código (síntesis modal de las teclas
 afinadas 1:4:10, el charleo de los tecomates y el redoble, en 6/8 con
-sesquialtera). Abajo a la derecha hay un mini reproductor: **K** pausa,
+sesquialtera), a la que se llega con U / I. Abajo a la derecha hay un mini reproductor: **K** pausa,
 **U** / **I** canción anterior / siguiente, **-** / **+** volumen, y con el
 mouse suelto (Tab) se les puede dar clic a los botones y a la barra.
 
@@ -175,7 +178,9 @@ se muestran con F1; F2 abre contadores y F9 oculta el HUD.
 - Orbitas mas cercanas para reducir los viajes y hacer visibles los vecinos.
 - Velocidad normal limitada a 420 u/s, turbo a 1.092 u/s; el frenado conserva
   autoridad al bajar la velocidad de aproximacion. Con asistencia, soltar las
-  teclas detiene la nave; X tambien funciona sin asistencia.
+  teclas detiene la nave; sin asistencia sigue de largo, pero los
+  propulsores no la pasan de la velocidad maxima. X tambien funciona sin
+  asistencia.
 - La franja exterior impide escapar indefinidamente. H (o Inicio/Home) recupera una
   posicion segura: es una ayuda del piloto, no parte del recorrido evaluado.
 
@@ -205,7 +210,7 @@ Las vistas fijas se generan con `--captura` (nombres entre paréntesis).
 | **9 tipos de modelos** propios en la superficie (20) | Ojo de carne (Argos), hongo y coral (Jardín), espinas de obsidiana y géiser (Pira), nave náufraga y baliza de celosía (Cementerio), racimo de cristal (Párpado) y rocas, armados con código en `scene/props.rs`, cada uno en tres niveles de detalle. | (10) a (13), (26), (28), (32) |
 | **Distribución procedural** reproducible con ruido (10) | Una grilla por cara del cubo-esfera; cada celda propone un punto y lo acepta con una probabilidad de ruido fBm (grupos y claros) por las reglas del terreno (pendiente, surcos, lava, valles). Misma semilla, mismas ubicaciones. | F6 o T → semilla |
 | **Posición y orientación** sobre la superficie curva que gira (5) | Cada objeto vive en el espacio de su planeta, parado sobre la normal radial y hundido en el suelo; gira con el planeta y sube y baja con la respiración de Jardín. | Cualquier superficie |
-| **Shaders propios** distintos (24) | Estrella (fuego carmesí que hierve, con un ojo fijo en su superficie: un remolino alrededor de una pupila negra que late; borde en llamas que siguen en la corona, nubes de gas carmesí y magenta), Pira (placas de Voronoi y lava de cuerpo negro), Jardín (tejido con luz interna y poros), Vigía (paleta propia, vórtice de Rodrigues, brazos en espiral, iris de gas turbulento y relámpagos; del mapa del Hubble solo se toma el detalle de las nubes), Párpado (lagos espejo que reflejan a Vigía con su propio shader, cristal), Argos (iris en polares con fibras, collareta y pupila; esclera con venas; carne mojada; párpados que se cierran), Cementerio, anillos (naves y polvo), ojos de carne que miran a la nave, cristales, baliza, Pira hirviendo (corona volumétrica), nebulosa del estertor y Gargantúa. | Todas las vistas |
+| **Shaders propios** distintos (24) | Estrella (fuego carmesí que hierve, con un ojo fijo en su superficie: un remolino alrededor de una pupila negra que late; borde en llamas que siguen en la corona, nubes de gas carmesí y magenta), Pira (placas de Voronoi y lava de cuerpo negro), Jardín (tejido con luz interna y poros), Vigía (bandas por latitud que corren a su ritmo con bordes turbulentos y ondas de Kelvin-Helmholtz, vórtice de Rodrigues, brazos en espiral, iris de gas turbulento, tormentas eléctricas con rayos adentro, auroras en los polos que laten con la estrella y relámpagos por todo el lado de noche; del mapa del Hubble solo se toma el detalle de las nubes), Párpado (lagos espejo que reflejan a Vigía con su propio shader, cristal), Argos (iris en polares con fibras, collareta y pupila; esclera con venas; carne mojada; párpados que se cierran), Cementerio, anillos (naves; y los de Vigía como los de Saturno: zonas, divisiones, franjas de colores, lunitas pastoras con sus olas, un anillo de grumos trenzado y rayos radiales), ojos de carne que miran a la nave, cristales, baliza, Pira hirviendo (corona volumétrica), nebulosa del estertor y Gargantúa. | Todas las vistas |
 | **Shader animado** (8) | La estrella late: su pupila se dilata, cada latido sale de ella como un anillo de luz y su remolino gira; la lava y la luz de Jardín laten con retraso; Jardín respira; los géiseres hacen erupción; el vórtice de Vigía gira, su tormenta cambia de fuerza y de color y su pupila se dilata; el ojo de Argos parpadea, cierra la pupila con la nave cerca y sus venas laten; los cristales laten; el lago de Párpado ondula bajo la nave; los anillos orbitan con luces que parpadean; la nebulosa se expande; el gas del disco fluye. | (02), (04), (06), (10), (18), (25) |
 | **Mapeo de normales** (8) | Las placas del casco de los naufragios (generadas al arrancar), la roca y el tejido orgánico en triplanar, con mipmaps; tangentes por vértice y base TBN por pixel. | (13), (05) |
 | **Deformación de la geometría** con ruido (10) | Las funciones de altura de cada planeta desplazan los vértices del cubo-esfera (cráteres, crestas, mares de lava, zanjas); Jardín además respira en el vertex shader, y el de Argos aplana la carne donde está el ojo y levanta los párpados, siguiendo a la nave. | Todas; `--wire` |
