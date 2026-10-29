@@ -69,7 +69,7 @@ las sombras tienen más relleno.
 | Párpado | **Semuc Champey**: pozas turquesa en terrazas de caliza entre la selva | **Las pozas** |
 | Argos | **Los Cuchumatanes**: sierra con helada al amanecer y pinos; en su anillo, los barriletes gigantes de Sumpango | **San Andrés Xecul**: la iglesia amarilla con sus columnas de colores, ángeles, enredaderas y cúpulas de gajos (todo pintado por el shader) |
 | — | **La Luna de Xelajú**, luna de los Cuchumatanes, con un tejido de huipil que brilla de noche | — |
-| Cementerio | **La capital**: barrancos, cuadras y luces; en su anillo, camionetas y tuc-tucs dando vueltas | **El Reformador**: la torre, camionetas extraurbanas y edificios |
+| Cementerio | **La capital**: barrancos, cuadras y luces; en su anillo, camionetas y tuc-tucs dando vueltas | **El Reformador**: la torre de acero tipo Eiffel con sus arcos sobre la 7a Avenida, camionetas extraurbanas pasando abajo y edificios |
 
 **Las naves botella** (modeladas en Blender para este proyecto): Gallo,
 Cabro Reserva, Jägermeister, Blue Label, Cubata Uva y Four Loko. **B** pasa a
@@ -134,7 +134,7 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | Turbo | Shift |
 | **Freno de emergencia** (prioridad sobre turbo y crucero) | **X sostenida** |
 | **Recuperar posicion** junto a Pira, conservando el ciclo | **Inicio / Home** |
-| **Viajar al siguiente lugar** (claro, géiseres, nido, baliza, espejo) | **N** |
+| **Viajar al siguiente lugar** (claro, géiseres, nido, baliza, espejo; en la versión chapina se llega de día) | **N** |
 | Acercar / alejar la cámara | Rueda |
 | Cámara de persecución / cabina | C |
 | Asistente de vuelo / gravedad | Z / G |

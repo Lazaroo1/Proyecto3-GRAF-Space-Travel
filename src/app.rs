@@ -929,7 +929,12 @@ impl App {
         }
         self.next_site = (self.next_site + 1) % self.system.sites.len();
         let site = self.system.sites[self.next_site];
-        let time = self.time();
+        // En la version chapina se llega de dia (ahi no hay final que se
+        // adelante); en OCASO, a la hora que sea.
+        let time = match self.system.version {
+            Version::Chapin => daylight_at(&self.system, &site, self.time()),
+            Version::Ocaso => self.time(),
+        };
         let (altitude, back, lift) = site.view;
         self.apply_preset(&Preset {
             name: "lugar",
@@ -1122,8 +1127,12 @@ impl App {
             Some(bottle) => {
                 self.system.ship_mesh = [bottle.mesh; 3];
                 self.system.ship_material = Material::Bottle;
+                // Con la boca un poco hacia arriba: desde la camara, que va
+                // atras y arriba, se ve la etiqueta y no solo el fondo.
+                self.system.ship_fix = DQuat::from_axis_angle(DVec3::X, BOTTLE_PITCH);
             }
             None => {
+                self.system.ship_fix = DQuat::IDENTITY;
                 self.system.ship_mesh = [1, 2, 3];
                 self.system.ship_material = Material::Ship(crate::shaders::ShipStyle {
                     specular: 0.5,
@@ -1972,10 +1981,12 @@ impl App {
         if show_ship && self.throttle > 0.01 {
             let start = out.len();
             out.resize(start + EXHAUST_COUNT, blank);
+            // Sale del fondo de la nave tal como se dibuja (las botellas van
+            // inclinadas).
             effects::exhaust(
                 &mut out[start..],
                 ship_pos,
-                ship_rot,
+                ship_rot * self.system.ship_fix,
                 self.throttle,
                 config::SHIP_LENGTH,
                 t,
@@ -2353,6 +2364,9 @@ struct Transition {
     toward: Toward,
 }
 
+/// Cuanto se inclinan las naves botella con la boca hacia arriba (radianes).
+const BOTTLE_PITCH: f64 = 0.38;
+
 /// Segundos que se ve el titulo de la transicion (la cortina dura menos).
 const TITLE: f32 = 2.6;
 
@@ -2612,6 +2626,27 @@ fn eye_crown(look: &ArgosLook, radius: f64, field: &dyn crate::terrain::HeightFi
             }
         })
         .collect()
+}
+
+/// El primer instante desde `from` en que el sol esta bien alto sobre el
+/// lugar `site` (entre unos 27 y 53 grados): el planeta gira y orbita, asi
+/// que se busca hacia adelante, hasta un par de vueltas del planeta. Si en
+/// ese rato nunca se da (Pira le da siempre la misma cara a la estrella),
+/// se queda en `from`.
+fn daylight_at(system: &System, site: &crate::scene::Site, from: f64) -> f64 {
+    let body = &system.bodies[site.body];
+    let star = &system.bodies[0];
+    let height = |t: f64| {
+        let up = body.rotation(t).rotate(site.normal);
+        let ground = body.position(t) + up * body.radius;
+        up.dot((star.position(t) - ground).normalize())
+    };
+    let span = 2.5 * body.spin_period.abs().max(1.0);
+    let step = span / 600.0;
+    (0..=600)
+        .map(|k| from + k as f64 * step)
+        .find(|&t| (0.45..0.8).contains(&height(t)))
+        .unwrap_or(from)
 }
 
 /// Gira `from` hacia `to` (unitarios) una fraccion del angulo entre ellos,
@@ -2928,6 +2963,26 @@ fn build_draws<'a>(
 
 #[cfg(test)]
 mod tests {
+    /// En la version chapina, N llega a cada lugar de dia (menos Antigua,
+    /// en Pira, que le da siempre la misma cara a la estrella y ya esta de
+    /// dia).
+    #[test]
+    fn in_the_chapin_version_sites_are_visited_in_daylight() {
+        let mut app = App::new(64, 36).unwrap();
+        let p = PRESETS.iter().find(|p| p.name == "40_chapin").unwrap();
+        app.apply_preset(p);
+        for _ in 0..app.system.sites.len() {
+            app.visit_next_site();
+            let site = app.system.sites[app.next_site];
+            let body = &app.system.bodies[site.body];
+            let t = app.sim_time;
+            let up = body.rotation(t).rotate(site.normal);
+            let ground = body.position(t) + up * body.radius;
+            let sun = up.dot((app.system.bodies[0].position(t) - ground).normalize());
+            assert!(sun > 0.2, "{}: el sol esta a {sun:.2}", site.name);
+        }
+    }
+
     use super::*;
 
     #[test]
