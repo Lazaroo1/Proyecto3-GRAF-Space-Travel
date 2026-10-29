@@ -27,7 +27,6 @@ pub mod fuego;
 pub mod kinich;
 pub mod peten;
 pub mod semuc;
-mod stub;
 pub mod xela;
 
 use std::sync::Arc;
