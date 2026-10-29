@@ -237,19 +237,11 @@
     alcanzan a ver. Se doblan alrededor del ojo con menos giro que el
     detalle de las nubes (con todo el giro el disco parecía una paleta de
     dulce) y no se calculan debajo del iris, donde no se ven.
-  - **Ocho ojos chicos** como la Gran Mancha Roja de Júpiter: tormentas
-    ovaladas (más anchas de este a oeste) que viajan con su banda y doblan
-    las bandas a su alrededor. Están hechos de gas que gira: un collar
-    claro, el cuerpo del color de la tormenta con vetas en espiral (ruido en
-    polares con un giro que crece hacia el centro; la forma no cambia y gira
-    entera, cada una en su sentido) y un centro oscuro, la pupila, que se
-    corre hacia la nave y se dilata con ella cerca. Cada pixel los descarta
-    primero por latitud, que no cuesta, y el ojo grande se los traga si les
-    pasa encima.
   - **Tormentas eléctricas**: cinco cúmulos de nubes claras y esponjadas en
     las bandas de latitudes medias. Adentro, rayos en celdas que destellan
     cada una a su hora y, a ratos, uno grande que alumbra toda la nube desde
-    adentro; se ven de día y mucho más de noche.
+    adentro; se ven de día y mucho más de noche. Cada pixel las descarta
+    primero por latitud, que no cuesta.
   - **Auroras**: una cinta que serpentea alrededor de cada polo, con
     pliegues finos como cortinas, verde abajo y magenta arriba; laten con
     la estrella y se ven sobre todo de noche y en el borde.
