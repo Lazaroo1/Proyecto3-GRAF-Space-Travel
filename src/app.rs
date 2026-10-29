@@ -135,7 +135,7 @@ pub struct Preset {
     pub chapin: bool,
 }
 
-pub const PRESETS: [Preset; 51] = [
+pub const PRESETS: [Preset; 52] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
@@ -666,6 +666,18 @@ pub const PRESETS: [Preset; 51] = [
         time: 40.0,
         act: None,
         chapin: true,
+    },
+    Preset {
+        name: "59_vigia_de_noche",
+        shot: Shot::Orbit {
+            body: "Vigia",
+            distance: 2.4,
+            azimuth: 3.3,
+            elevation: 0.6,
+        },
+        time: 41.3,
+        act: None,
+        chapin: false,
     },
 ];
 
