@@ -177,7 +177,9 @@ se muestran con F1; F2 abre contadores y F9 oculta el HUD.
 - Orbitas mas cercanas para reducir los viajes y hacer visibles los vecinos.
 - Velocidad normal limitada a 420 u/s, turbo a 1.092 u/s; el frenado conserva
   autoridad al bajar la velocidad de aproximacion. Con asistencia, soltar las
-  teclas detiene la nave; X tambien funciona sin asistencia.
+  teclas detiene la nave; sin asistencia sigue de largo, pero los
+  propulsores no la pasan de la velocidad maxima. X tambien funciona sin
+  asistencia.
 - La franja exterior impide escapar indefinidamente. H (o Inicio/Home) recupera una
   posicion segura: es una ayuda del piloto, no parte del recorrido evaluado.
 

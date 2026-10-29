@@ -692,6 +692,8 @@ pub struct App {
     next_site: usize,
     /// Un aviso para el HUD (el lugar al que se llego, la muerte...).
     pub banner: Option<&'static str>,
+    /// En que planeta esta el lugar del aviso (al llegar con N).
+    pub banner_where: Option<&'static str>,
     /// Donde estuvo la nave cada medio segundo, para rebobinar si muere.
     history: std::collections::VecDeque<(f64, ShipState, DQuat)>,
     /// Cuando cruzo el horizonte de Gargantua.
@@ -891,6 +893,7 @@ impl App {
             timeline: Timeline::default(),
             next_site: usize::MAX,
             banner: None,
+            banner_where: None,
             history: std::collections::VecDeque::new(),
             dying: None,
             lens: None,
@@ -985,6 +988,7 @@ impl App {
             chapin: self.system.version == Version::Chapin,
         });
         self.banner = Some(site.name);
+        self.banner_where = Some(self.system.bodies[site.body].label);
     }
 
     /// Si la nave cruza el horizonte de Gargantua muere: la pantalla se va a
