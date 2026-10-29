@@ -30,6 +30,9 @@ pub struct Hud {
     pub preset: Option<(&'static str, f32)>,
     /// Un aviso del juego (un lugar, una nave) y cuando aparecio.
     pub banner: Option<(&'static str, f32)>,
+    /// El planeta del lugar del aviso, si es un lugar: "San Andres Xecul"
+    /// no dice que esta en los Cuchumatanes.
+    pub banner_where: Option<&'static str>,
     /// Si el titulo del principio ya se quito (al cambiar de version se
     /// quita para que no se encime con el de la transicion).
     pub intro_over: bool,
@@ -402,7 +405,11 @@ pub fn draw(
     let mut slot = 0.0;
     if let Some((text, since)) = hud.banner {
         if hud.age - since < TOAST {
-            toast(d, fonts, pretty(text), hud.age - since, width, bottom, slot);
+            let text = match hud.banner_where {
+                Some(place) => format!("{}  ·  {}", pretty(text), pretty(place)),
+                None => pretty(text).to_string(),
+            };
+            toast(d, fonts, &text, hud.age - since, width, bottom, slot);
             slot += 1.0;
         }
     }

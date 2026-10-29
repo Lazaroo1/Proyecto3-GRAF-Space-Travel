@@ -594,7 +594,13 @@ nebulosa, Pira hirviendo y gas del disco.
   de un planeta la nave viaja con él.
 - **Gravedad**: `a = -μ r / |r|³` del cuerpo dominante, integrada con Euler
   semi-implícito (conserva bien la energía de una órbita). Sin asistente la
-  nave es newtoniana.
+  nave es newtoniana: soltar las teclas no la detiene. Los propulsores
+  empujan con la mitad de la aceleración del asistente (siempre más que la
+  gravedad, para poder despegar) y dejan de empujar hacia adelante al llegar
+  a la velocidad máxima; la gravedad sí puede pasarla. Antes usaban la
+  aceleración del asistente, que crece con el exceso de velocidad para
+  frenar a tiempo: ir rápido empujaba más y en tres segundos de W la nave
+  pasaba de 1400 u/s.
 - **Predicción de trayectoria** ([scene/trajectory.rs](src/scene/trajectory.rs)):
   se integra la caída libre 90 s hacia adelante con la misma física y se
   dibuja con cintas; si choca, se marca el punto.

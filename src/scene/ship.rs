@@ -17,7 +17,13 @@
 //! Con el asistente, las teclas piden una **velocidad** y los propulsores
 //! corrigen la diferencia con aceleracion limitada: la nave acelera, frena y
 //! se detiene de forma progresiva, y compensa la gravedad. Sin asistente es
-//! newtoniana pura: soltar las teclas no la detiene y la gravedad la curva.
+//! newtoniana: soltar las teclas no la detiene y la gravedad la curva. Los
+//! propulsores empujan con una aceleracion mas suave (siempre mas que la
+//! gravedad, para poder despegar) y dejan de empujar hacia adelante al
+//! llegar a la velocidad maxima; la gravedad si puede pasarla. Antes el
+//! empuje sin asistente era el del asistente, que crece con el exceso de
+//! velocidad para frenar a tiempo: ir rapido empujaba mas y la nave se
+//! desbocaba.
 //!
 //! # Modo local
 //! Cerca de un planeta el vuelo se mide contra su **superficie**, que gira:
@@ -262,7 +268,19 @@ pub fn step(
         let correction = s.rot.rotate((thrust * max_speed - local_vel) * gain);
         (correction - gravity).clamp_length(max_accel)
     } else {
-        s.rot.rotate(thrust * max_accel)
+        let accel = (max_speed * MANUAL_ACCEL_PER_SPEED).max(gravity.length() * 1.5 + 2.0);
+        let mut push = s.rot.rotate(thrust);
+        let speed = s.rel_vel.length();
+        if speed > 1e-6 {
+            // Cerca de la velocidad maxima se apaga el empuje hacia adelante.
+            let along = s.rel_vel / speed;
+            let ahead = push.dot(along);
+            if ahead > 0.0 {
+                let room = ((max_speed - speed) / (0.15 * max_speed)).clamp(0.0, 1.0);
+                push -= along * (ahead * (1.0 - room));
+            }
+        }
+        push * accel
     };
 
     // Euler semi-implicito: la posicion avanza con la velocidad ya actualizada,
@@ -410,6 +428,36 @@ mod tests {
             (ship.world_pos - pos).length() < 130.0,
             "distancia de frenado excesiva"
         );
+    }
+
+    /// Sin asistente, mantener W lleva a la velocidad maxima y no mas alla:
+    /// ir rapido no hace mas fuerte el empuje (la aceleracion extra es solo
+    /// para que el asistente frene).
+    #[test]
+    fn unassisted_thrust_does_not_run_away() {
+        let sys = system();
+        let body = &sys.bodies[1];
+        let t0 = 10.0;
+        let pos = body.position(t0) + DVec3::Y * (body.radius + 300.0);
+        let mut ship = ShipState::new(&sys.bodies, pos, DQuat::IDENTITY, t0);
+        let settings = FlightSettings {
+            assist: false,
+            ..FlightSettings::default()
+        };
+        let controls = Controls {
+            thrust: -DVec3::Z,
+            aim: DQuat::IDENTITY,
+            ..Controls::default()
+        };
+        let mut top: f64 = 0.0;
+        for k in 0..360 {
+            let info = step(&mut ship, &controls, &settings, &sys.bodies, t0 + k as f64 * PHYSICS_DT, PHYSICS_DT);
+            top = top.max(info.max_speed);
+        }
+        // Los propulsores no pasan de la velocidad maxima; la gravedad (unos
+        // 3 u/s2 aqui) puede sumar un poco en tres segundos.
+        let reachable = top * 1.05 + 3.0 * 4.0;
+        assert!(ship.rel_vel.length() < reachable, "{:.0} u/s, deberia ser menos de {reachable:.0}", ship.rel_vel.length());
     }
 
     #[test]

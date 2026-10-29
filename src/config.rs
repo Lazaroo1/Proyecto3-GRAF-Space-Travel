@@ -87,6 +87,8 @@ pub const BRAKE_MIN_ACCEL: f64 = 100.0;
 pub const SYSTEM_MARGIN: f64 = 3200.0;
 /// Aceleracion maxima como fraccion de la velocidad maxima, por segundo.
 pub const ACCEL_PER_SPEED: f64 = 1.2;
+/// Lo mismo sin asistente: mas suave, porque nadie frena por el piloto.
+pub const MANUAL_ACCEL_PER_SPEED: f64 = 0.6;
 /// Ganancia del asistente de vuelo (1/s): que tan rapido corrige la velocidad.
 pub const ASSIST_GAIN: f64 = 3.0;
 /// Giro: la nave persigue la mira con velocidad y aceleracion angular limitadas.
