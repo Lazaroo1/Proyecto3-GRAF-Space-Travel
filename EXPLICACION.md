@@ -39,7 +39,10 @@
 - **Las naves botella**: OBJ de Blender (Z arriba, etiqueta hacia +Y)
   girados al cargar para volar con el pico adelante, y dibujados con la boca
   22 grados hacia arriba (`System::ship_fix`): la cámara va atrás y arriba,
-  y así ve la etiqueta y no solo el fondo. Su shader usa el color de cada
+  y así ve la etiqueta y no solo el fondo. Miden 1.6 veces la OCASO-1
+  (`config::BOTTLE_LENGTH`) y con ellas la cámara de persecución va más
+  atrás y más baja (`config::BOTTLE_CHASE`): la botella queda entera a media
+  imagen en vez de cortarse abajo. Su shader usa el color de cada
   cara (`Kd`) con vidrio pulido, un borde de Fresnel y la luz que pasa por
   el vidrio a contraluz. Cada una tiene su escape (`effects::Exhaust`), que
   sale del fondo de la botella inclinada.

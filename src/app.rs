@@ -2047,7 +2047,7 @@ impl App {
                 ship_pos,
                 ship_rot * self.system.ship_fix,
                 self.throttle,
-                config::SHIP_LENGTH,
+                if self.system.version == Version::Chapin { config::BOTTLE_LENGTH } else { config::SHIP_LENGTH },
                 t,
                 camera.pos,
                 self.exhaust_style(),
@@ -2083,7 +2083,12 @@ impl App {
         let rot = (self.aim * look).normalize();
         let mut pos = match self.camera_mode {
             CameraMode::Chase => {
-                let offset = DVec3::new(2.2, config::CHASE_HEIGHT, config::CHASE_DISTANCE);
+                let offset = if self.system.version == Version::Chapin {
+                    let [x, y, z] = config::BOTTLE_CHASE;
+                    DVec3::new(x, y, z)
+                } else {
+                    DVec3::new(2.2, config::CHASE_HEIGHT, config::CHASE_DISTANCE)
+                };
                 ship_pos + rot.rotate(offset * self.zoom)
             }
             CameraMode::Cockpit => {

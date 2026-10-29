@@ -69,6 +69,9 @@ pub const REWIND_SPEED: f64 = 8.0;
 
 /// Largo de la nave en unidades del mundo (el modelo se escala a esto).
 pub const SHIP_LENGTH: f64 = 4.0;
+/// Largo de las naves botella: mas grandes que la OCASO-1 para que se lea
+/// la etiqueta.
+pub const BOTTLE_LENGTH: f64 = SHIP_LENGTH * 1.6;
 /// La velocidad maxima crece con la altitud: lejos se cruza el sistema en
 /// segundos y junto a la superficie se vuela con precision. Como la nave
 /// tambien frena con la altitud, nunca llega al suelo a toda velocidad.
@@ -108,6 +111,10 @@ pub const CRUISE_THRUST: f64 = 0.6;
 
 pub const CHASE_HEIGHT: f64 = 2.8;
 pub const CHASE_DISTANCE: f64 = 8.8;
+/// La camara de persecucion con las botellas (a la derecha, arriba y
+/// atras): mas atras y mas baja que con la OCASO-1, asi la botella queda
+/// mas adelante en la imagen y entera, sin cortarse abajo.
+pub const BOTTLE_CHASE: [f64; 3] = [1.7, 2.0, 11.2];
 /// Posicion de la cabina respecto al centro de la nave.
 pub const COCKPIT_OFFSET: [f64; 3] = [0.0, 0.5, -0.6];
 /// Distancia minima entre la camara y la superficie de un cuerpo.
