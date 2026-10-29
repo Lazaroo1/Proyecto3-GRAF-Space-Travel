@@ -48,10 +48,37 @@
   momento (hasta dos vueltas y media del planeta) en que el sol está entre
   unos 27 y 53 grados sobre el lugar, y llega ahí (`daylight_at`).
 - **La Torre del Reformador** ([chapin/capital.rs](src/chapin/capital.rs)):
-  como la Eiffel, en la que se inspira, la media anchura de la torre a cada
-  altura es una exponencial (`0.5 + 3.7 e^(-y/5)`): las patas se abren abajo,
-  a los lados de la 7a Avenida, con arcos que pasan sobre ella, y se cierran
-  despacio hacia el faro. Acero galvanizado gris.
+  hecha a partir de una foto. Cuatro patas de celosía que se abren mucho
+  abajo (medio ancho `2 + 4 (1 - y/8)^1.8`) con un arco grande de celosía en
+  cada cara (por los del frente y de atrás pasa la 7a Avenida); a los lados,
+  alas más bajas con su arco y dos círculos; el primer nivel con una
+  torrecita en cada esquina; el fuste recto que se afila, con un círculo en
+  cada cara de cada tramo; arriba la campana, la linterna y el faro. Cada
+  viga de celosía son dos cuerdas unidas en zigzag (`girder`) y los círculos
+  son tubos (`hoop`). Acero galvanizado gris oscuro.
+- **Los volcanes** ([chapin/fuego.rs](src/chapin/fuego.rs),
+  [chapin/atitlan.rs](src/chapin/atitlan.rs)): además de las barrancas
+  grandes, el relieve del Fuego tiene surcos: ruido en un círculo alrededor
+  del eje del cono (periódico en el ángulo) que serpentea al bajar; el fondo
+  va donde el ruido cruza por cero y deja aristas en la silueta. El shader
+  agrega surcos más finos solo en la normal: deriva su perfil con
+  diferencias finitas en el ángulo e inclina la normal de lado, y se apagan
+  cuando miden menos de unos pixeles. La ladera va por franjas torcidas con
+  ruido: cumbre de ceniza oscura con los surcos rellenos de ceniza gris,
+  zacate y bosque de copas (celdas de Worley). Las barrancas del Fuego
+  cortan el bosque como franjas grises, como se ven desde Antigua; en los
+  dormidos el bosque sube más. En Atitlán se quitó la franja de nubes
+  pintada en las cimas, que se leía como nieve: el bosque sube casi hasta la
+  punta y solo esta es pedregal.
+- **El HUD** ([hud.rs](src/hud.rs)): la letra es Segoe UI (la de Windows)
+  cargada desde memoria con las tildes, un atlas por tamaño, dibujada sin
+  escalar y en pixeles enteros para que se vea nítida; si no está, usa la de
+  raylib sin tildes. Paneles redondeados con las teclas en cajitas; los
+  avisos (como el de J en la chapina) salen en una píldora abajo al centro,
+  lejos del panel de vuelo, y suben si la ayuda está abierta. El
+  reproductor dibuja sus botones con triángulos, una barra con perilla y una
+  portada con un ecualizador que se mueve mientras suena. H vuelve junto a
+  Pira (además de Inicio) y la fila de Y dice qué hace: la ruta predicha.
 - **El reproductor** ([player.rs](src/player.rs)): raylib solo decodifica y
   reproduce. Los archivos se leen con Rust y se le pasan desde memoria,
   porque en Windows raylib abre rutas con la página de códigos ANSI y una

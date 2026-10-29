@@ -66,12 +66,12 @@ pub enum Phase {
 impl Phase {
     pub fn name(self) -> &'static str {
         match self {
-            Phase::Agony => "agonia",
-            Phase::Estertor => "estertor",
-            Phase::Silence => "silencio",
-            Phase::EyeOpens => "el ojo se abre",
-            Phase::After => "despues",
-            Phase::Rebirth => "renacer",
+            Phase::Agony => "Agonía",
+            Phase::Estertor => "Estertor",
+            Phase::Silence => "Silencio",
+            Phase::EyeOpens => "El ojo se abre",
+            Phase::After => "Después",
+            Phase::Rebirth => "Renacer",
         }
     }
 }

@@ -42,8 +42,8 @@
 //! # La tierra
 //! Arena volcanica negra en la orilla; milpas en parcelas (celdas de
 //! Worley, cada una con su cultivo y un lindero oscuro), bosque en las
-//! laderas empinadas y en la franja de neblina de los volcanes; arriba,
-//! ceniza y roca, con nubes que se pegan a las cimas y se mueven despacio.
+//! laderas empinadas y en la franja de neblina de los volcanes, casi hasta
+//! arriba; solo la punta es pedregal de roca cafe y ceniza.
 //! Los pueblos son celdas de Worley mas chicas: cada casa con su techo de
 //! lamina o de teja, inclinado desde el centro para que el sol lo marque.
 //!
@@ -383,7 +383,8 @@ const FOREST: Vec3 = Vec3::new(0.018, 0.05, 0.02);
 const FOREST_LIGHT: Vec3 = Vec3::new(0.05, 0.1, 0.035);
 const ASH: Vec3 = Vec3::new(0.085, 0.075, 0.066);
 const BASALT: Vec3 = Vec3::new(0.09, 0.085, 0.08);
-const CLOUD: Vec3 = Vec3::new(0.85, 0.87, 0.9);
+/// Pedregal de las cimas: roca cafe y ceniza.
+const SCREE: Vec3 = Vec3::new(0.068, 0.054, 0.044);
 const FOAM: Vec3 = Vec3::new(0.8, 0.85, 0.88);
 /// Cultivos de las parcelas: milpa verde, milpa seca, cafe, tierra arada.
 const CROPS: [Vec3; 6] = [
@@ -567,7 +568,7 @@ fn reflection(f: &Fragment, u: &Uniforms, dir: Vec3) -> Vec3 {
     let (sin_a, cos_a) = cone_angle(v);
     let normal = to_world(f, radial * cos_a + axis * sin_a);
     let high = 1.0 - along / v.height;
-    let albedo = FOREST_LIGHT.lerp(ASH, smoothstep(0.55, 0.75, high));
+    let albedo = FOREST_LIGHT.lerp(SCREE, smoothstep(0.82, 0.92, high));
     let light = u.sun_light * (normal.dot(f.light_dir(u)).max(0.0) * 3.6 / PI) + Vec3::new(0.03, 0.045, 0.07);
     // Mientras mas lejos, mas se pierde en la bruma.
     (albedo * light).lerp(sky, 1.0 - (-t / 700.0).exp())
@@ -610,8 +611,7 @@ fn cone_hit(o: Vec3, d: Vec3, axis: Vec3, v: &Volcano) -> Option<(f32, f32)> {
 
 // La tierra -----------------------------------------------------------------
 
-/// Arena, milpas, bosque, ceniza, pueblos, el muelle y las nubes en las
-/// cimas.
+/// Arena, milpas, bosque, el pedregal de las cimas, pueblos y el muelle.
 fn land(f: &Fragment, u: &Uniforms, village: f32, summit: f32, footprint: f32) -> Vec3 {
     let n = u.noise;
     let p = f.local;
@@ -632,9 +632,10 @@ fn land(f: &Fragment, u: &Uniforms, village: f32, summit: f32, footprint: f32) -
 
     // Arena negra en la orilla.
     let beach = smoothstep(1.0, 0.35, height + 0.5 * n.noise(p * 0.4)) * (1.0 - deck);
-    // Arriba de los volcanes: ceniza; en la franja de neblina y en lo
-    // empinado: bosque; lo demas, parcelas.
-    let bare = smoothstep(0.74, 0.86, summit + 0.06 * n.noise(p * 0.06));
+    // Arriba de los volcanes: pedregal, solo en la punta (el bosque sube
+    // casi hasta arriba); en la franja de neblina y en lo empinado: bosque;
+    // lo demas, parcelas.
+    let bare = smoothstep(0.83, 0.91, summit + 0.05 * n.noise(p * 0.06));
     let cliff = smoothstep(0.45, 0.65, slope);
     let cloud_forest = smoothstep(0.4, 0.55, summit) * (1.0 - bare);
     let woods = smoothstep(0.1, 0.35, n.fbm(p * 0.03, 3) + slope * 0.9).max(cloud_forest).max(village * 0.85);
@@ -648,7 +649,8 @@ fn land(f: &Fragment, u: &Uniforms, village: f32, summit: f32, footprint: f32) -
         normal = normal.lerp(leaf_normal, woods).normalize();
         cavity *= 1.0 + (shade - 1.0) * woods;
     }
-    albedo = albedo.lerp(ASH * grain, bare).lerp(BASALT * grain, cliff * (1.0 - beach));
+    let scree = SCREE.lerp(ASH, smoothstep(-0.3, 0.5, n.fbm(p * 0.12, 2))) * grain;
+    albedo = albedo.lerp(scree, bare).lerp(BASALT * grain, cliff * (1.0 - beach));
     albedo = albedo.lerp(SAND * grain, beach);
 
     // Los pueblos.
@@ -667,18 +669,7 @@ fn land(f: &Fragment, u: &Uniforms, village: f32, summit: f32, footprint: f32) -
         normal = normal.lerp(f.normal, deck).normalize();
     }
     let rough = 0.9 - 0.3 * beach;
-    let mut color = pbr::shade(f, u, albedo, rough, 0.0, normal, cavity);
-
-    // Nubes alrededor de las cimas: una franja bajo la punta, en jirones que
-    // se mueven despacio; la cima asoma por encima.
-    let drift = n.fbm(p * 0.025 + Vec3::new(u.time * 0.01, 0.0, u.time * 0.007), 3) * 0.5 + 0.5;
-    let cloud = smoothstep(0.5, 0.64, summit) * smoothstep(0.93, 0.8, summit) * smoothstep(0.42, 0.72, drift);
-    if cloud > 0.0 {
-        let l = f.light_dir(u);
-        let lit = u.sun_light * (0.45 + 0.55 * f.normal.dot(l).max(0.0)) * 0.9 + Vec3::new(0.06, 0.08, 0.11);
-        color = color.lerp(CLOUD * lit, cloud * 0.85);
-    }
-    color
+    pbr::shade(f, u, albedo, rough, 0.0, normal, cavity)
 }
 
 /// Copas de arboles: un Worley donde cada punto es una copa; la normal sale

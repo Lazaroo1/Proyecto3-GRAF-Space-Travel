@@ -1050,124 +1050,196 @@ pub fn mesh(kind: PropKind, detail: usize) -> Mesh {
     }
 }
 
-/// Alto del fuste de la torre, de sus dos plataformas y de la punta del
-/// faro. La de verdad mide unos 72 m: aqui una unidad son unos 3 m.
-const SHAFT: f32 = 19.5;
-const PLATFORM: f32 = 5.0;
-const PLATFORM_2: f32 = 11.5;
-const TOWER_TOP: f32 = 22.3;
+/// La Torre del Reformador, en unidades del modelo (una unidad son unos
+/// 3 m; la de verdad mide unos 72 m). Medio ancho de la base y del primer
+/// nivel, alto del primer nivel, medio ancho y alto del fuste arriba.
+const BASE: f32 = 6.0;
+const LEVEL_HALF: f32 = 2.0;
+const LEVEL: f32 = 8.0;
+const SHAFT_TOP_HALF: f32 = 0.42;
+const SHAFT_TOP: f32 = 22.8;
+const TOWER_TOP: f32 = 24.3;
 
-/// Media anchura de la torre a la altura `y`. Como la torre Eiffel, en la
-/// que se inspira: una curva exponencial que se abre mucho abajo (las patas
-/// quedan a los lados de la 7a Avenida y los arcos pasan sobre ella) y se
-/// cierra despacio hacia arriba.
-fn tower_half(y: f32) -> f32 {
-    0.5 + 3.7 * (-y / 5.0).exp()
+/// Medio ancho de las patas a la altura `y` (del suelo al primer nivel): se
+/// abren mucho abajo y suben casi rectas al final, como en la Eiffel.
+fn leg_half(y: f32) -> f32 {
+    LEVEL_HALF + (BASE - LEVEL_HALF) * (1.0 - y / LEVEL).max(0.0).powf(1.8)
 }
 
-/// La Torre del Reformador: cuatro patas de acero que se abren abajo en
-/// arcos sobre la avenida y la calle, dos plataformas, el fuste de celosia
-/// con diagonales en cruz, el campanario con su campana y el faro arriba.
+/// Medio ancho del fuste a la altura `y` (del primer nivel a la punta):
+/// se afila derecho.
+fn shaft_half(y: f32) -> f32 {
+    let t = (y - LEVEL) / (SHAFT_TOP - LEVEL);
+    (LEVEL_HALF - 0.4) + (SHAFT_TOP_HALF - (LEVEL_HALF - 0.4)) * t
+}
+
+/// Un aro de celosia (los circulos de la torre): centro, los dos ejes de su
+/// plano y su radio.
+fn hoop(b: &mut MeshBuilder, center: Vec3, a: Vec3, c: Vec3, radius: f32, points: usize, sides: usize) {
+    let path: Vec<Vec3> = (0..=points)
+        .map(|k| {
+            let t = k as f32 / points as f32 * TAU;
+            center + (a * t.cos() + c * t.sin()) * radius
+        })
+        .collect();
+    let radii = vec![0.045; path.len()];
+    b.tube(&path, &radii, sides);
+}
+
+/// Una viga de celosia por una curva: dos cuerdas paralelas (separadas
+/// `gap` hacia `inward`) unidas en zigzag.
+fn girder(b: &mut MeshBuilder, curve: &[Vec3], inward: Vec3, gap: f32, thick: f32, zigzag: bool) {
+    for w in curve.windows(2) {
+        beam(b, w[0], w[1], thick);
+        beam(b, w[0] + inward * gap, w[1] + inward * gap, thick * 0.8);
+    }
+    if zigzag {
+        for (k, w) in curve.windows(2).enumerate() {
+            let (a, c) = if k % 2 == 0 { (w[0], w[1] + inward * gap) } else { (w[0] + inward * gap, w[1]) };
+            beam(b, a, c, thick * 0.45);
+        }
+    }
+}
+
+/// La Torre del Reformador como la de la foto: cuatro patas de celosia que
+/// se abren mucho; en cada cara un arco grande de celosia (por los del
+/// frente y de atras pasa la 7a Avenida); a los lados, alas mas bajas con
+/// su arco y dos circulos; el primer nivel con una torrecita en cada
+/// esquina; el fuste recto que se afila, con un circulo en cada cara de cada
+/// tramo; y arriba la campana, la linterna y el faro.
 fn tower(detail: usize) -> Mesh {
     let mut b = MeshBuilder::new();
     b.color(Vec3::new(IRON, 0.0, 0.0));
-    let corners = [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)];
-    let leg = |k: usize, y: f32| {
-        let r = tower_half(y);
-        Vec3::new(corners[k].0 * r, y, corners[k].1 * r)
-    };
-    // Las patas: vigas que siguen la curva, con mas tramos abajo, donde
-    // mas se dobla.
-    let steps = [6, 10, 16][detail];
-    let heights: Vec<f32> = (0..=steps)
-        .map(|i| SHAFT * (i as f32 / steps as f32).powf(1.6))
-        .collect();
-    for k in 0..4 {
-        for w in heights.windows(2) {
-            let thick = 0.26 - 0.16 * w[0] / SHAFT;
-            beam(&mut b, leg(k, w[0] - 0.05), leg(k, w[1] + 0.05), thick);
-        }
+    let corners = [(1.0f32, 1.0f32), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)];
+    let steps = [6, 10, 14][detail];
+    let lattice = detail >= 1;
+    // Las patas, del suelo al primer nivel.
+    for &(cx, cz) in &corners {
+        let curve: Vec<Vec3> = (0..=steps)
+            .map(|i| {
+                let y = LEVEL * (i as f32 / steps as f32).powf(0.8);
+                let r = leg_half(y);
+                Vec3::new(cx * r, y, cz * r)
+            })
+            .collect();
+        let inward = Vec3::new(-cx, 0.0, -cz).normalize();
+        girder(&mut b, &curve, inward, 0.55, 0.13, lattice);
     }
-    // Los arcos de abajo, uno por cara, con un arco de adentro y rayos.
-    let segments = [6, 10, 16][detail];
-    let spring = 0.6;
+    // Los arcos grandes, uno por cara, de pata a pata.
+    let arc_steps = [8, 12, 18][detail];
     for face in 0..4 {
         let (a, c) = (corners[face], corners[(face + 1) % 4]);
-        let point = |t: f32, inset: f32| {
-            let theta = t * PI;
-            let y = spring + (PLATFORM - 0.2 - inset - spring) * theta.sin();
-            let r = tower_half(y);
-            let s = theta.cos() * (tower_half(spring) - inset);
-            // Entre la pata `a` y la `c`, sobre la cara.
-            let mid = Vec3::new((a.0 + c.0) * 0.5 * r, y, (a.1 + c.1) * 0.5 * r);
-            let along = Vec3::new((a.0 - c.0) * 0.5, 0.0, (a.1 - c.1) * 0.5);
-            mid + along * s
-        };
-        for i in 0..segments {
-            let (t0, t1) = (i as f32 / segments as f32, (i + 1) as f32 / segments as f32);
-            beam(&mut b, point(t0, 0.0), point(t1, 0.0), 0.13);
-            if detail >= 1 {
-                beam(&mut b, point(t0, 0.45), point(t1, 0.45), 0.08);
-                if i % 2 == 0 {
-                    beam(&mut b, point(t0, 0.0), point(t0, 0.45), 0.05);
+        let mid = Vec3::new((a.0 + c.0) * 0.5, 0.0, (a.1 + c.1) * 0.5);
+        let along = Vec3::new((a.0 - c.0) * 0.5, 0.0, (a.1 - c.1) * 0.5);
+        let spring = 1.2;
+        let span = leg_half(spring);
+        let curve: Vec<Vec3> = (0..=arc_steps)
+            .map(|i| {
+                let theta = i as f32 / arc_steps as f32 * PI;
+                let y = spring + (LEVEL - 1.1 - spring) * theta.sin();
+                // Sobre la cara de la torre a esa altura.
+                let r = leg_half(y);
+                mid * r + along * (theta.cos() * span * (r / leg_half(spring)).min(1.0)) + Vec3::Y * y
+            })
+            .collect();
+        girder(&mut b, &curve, Vec3::Y, 0.45, 0.1, lattice);
+    }
+    // El primer nivel: un marco cuadrado con baranda.
+    for k in 0..4 {
+        let (a, c) = (corners[k], corners[(k + 1) % 4]);
+        let pa = Vec3::new(a.0 * (LEVEL_HALF + 0.3), LEVEL, a.1 * (LEVEL_HALF + 0.3));
+        let pc = Vec3::new(c.0 * (LEVEL_HALF + 0.3), LEVEL, c.1 * (LEVEL_HALF + 0.3));
+        beam(&mut b, pa, pc, 0.16);
+        beam(&mut b, pa + Vec3::Y * 0.6, pc + Vec3::Y * 0.6, 0.05);
+    }
+    // Las torrecitas de las esquinas del primer nivel: cuatro postes y un
+    // techo en punta.
+    for &(cx, cz) in &corners {
+        let base = Vec3::new(cx * (LEVEL_HALF + 0.1), LEVEL, cz * (LEVEL_HALF + 0.1));
+        let half = 0.32;
+        for &(px, pz) in &corners {
+            let foot = base + Vec3::new(px * half, 0.0, pz * half);
+            beam(&mut b, foot, foot + Vec3::Y * 2.4, 0.04);
+        }
+        let apex = base + Vec3::Y * 3.3;
+        for &(px, pz) in &corners {
+            beam(&mut b, base + Vec3::new(px * half, 2.4, pz * half), apex, 0.035);
+        }
+        if lattice {
+            for y in [0.8f32, 1.6] {
+                for k in 0..4 {
+                    let (p0, p1) = (corners[k], corners[(k + 1) % 4]);
+                    beam(&mut b, base + Vec3::new(p0.0 * half, y, p0.1 * half), base + Vec3::new(p1.0 * half, y, p1.1 * half), 0.03);
                 }
             }
         }
     }
-    // Las plataformas: marcos cuadrados con baranda.
-    for (level, thick) in [(PLATFORM, 0.18), (PLATFORM_2, 0.12)] {
-        for k in 0..4 {
-            let (a, c) = (leg(k, level), leg((k + 1) % 4, level));
-            let out = (a + c) * 0.5;
-            let push = Vec3::new(out.x, 0.0, out.z).normalize() * 0.25;
-            beam(&mut b, a + push, c + push, thick);
-            if detail >= 1 {
-                beam(&mut b, a + push * 1.6 + Vec3::Y * 0.6, c + push * 1.6 + Vec3::Y * 0.6, 0.04);
+    // Las alas de los lados (a lo largo de x): un poste afuera, un techo en
+    // curva que sube a la pata, un arco y dos circulos.
+    for side in [-1.0f32, 1.0] {
+        for depth in [-1.0f32, 1.0] {
+            let z = depth * BASE * 0.92;
+            let outer = Vec3::new(side * (BASE + 2.6), 0.0, z);
+            beam(&mut b, outer, outer + Vec3::Y * 3.4, 0.09);
+            let hood: Vec<Vec3> = (0..=6)
+                .map(|i| {
+                    let t = i as f32 / 6.0;
+                    let y = 3.4 + 1.6 * (t * PI * 0.5).sin();
+                    let x = side * (BASE + 2.6 - 2.9 * t);
+                    Vec3::new(x, y, z)
+                })
+                .collect();
+            for w in hood.windows(2) {
+                beam(&mut b, w[0], w[1], 0.08);
+            }
+            let arch: Vec<Vec3> = (0..=8)
+                .map(|i| {
+                    let t = i as f32 / 8.0 * PI;
+                    Vec3::new(side * (BASE + 1.3 + 1.3 * t.cos()), 2.6 * t.sin(), z)
+                })
+                .collect();
+            for w in arch.windows(2) {
+                beam(&mut b, w[0], w[1], 0.06);
+            }
+            if lattice {
+                let points = [8, 10, 16][detail];
+                for (cx, cy) in [(BASE + 0.8, 3.6), (BASE + 1.9, 3.6)] {
+                    hoop(&mut b, Vec3::new(side * cx, cy, z), Vec3::X, Vec3::Y, 0.42, points, 3);
+                }
             }
         }
     }
-    // El fuste: travesanos en cada piso y diagonales en cruz.
-    let bays = [5, 8, 11][detail];
+    // El fuste: las cuatro esquinas, un marco en cada tramo y un circulo en
+    // cada cara de cada tramo.
+    let bays = [8, 12, 14][detail];
+    let level = |i: usize| LEVEL + (SHAFT_TOP - LEVEL) * i as f32 / bays as f32;
     for i in 0..bays {
-        let (y0, y1) = (
-            PLATFORM + (SHAFT - PLATFORM) * i as f32 / bays as f32,
-            PLATFORM + (SHAFT - PLATFORM) * (i + 1) as f32 / bays as f32,
-        );
+        let (y0, y1) = (level(i), level(i + 1));
+        let (h0, h1) = (shaft_half(y0), shaft_half(y1));
         for k in 0..4 {
-            let next = (k + 1) % 4;
-            beam(&mut b, leg(k, y1), leg(next, y1), 0.07);
+            let (a, c) = (corners[k], corners[(k + 1) % 4]);
+            beam(&mut b, Vec3::new(a.0 * h0, y0, a.1 * h0), Vec3::new(a.0 * h1, y1, a.1 * h1), 0.07);
+            beam(&mut b, Vec3::new(a.0 * h1, y1, a.1 * h1), Vec3::new(c.0 * h1, y1, c.1 * h1), 0.045);
             if detail >= 1 {
-                beam(&mut b, leg(k, y0), leg(next, y1), 0.045);
-            }
-            if detail >= 2 {
-                beam(&mut b, leg(next, y0), leg(k, y1), 0.045);
+                // El circulo de esta cara, del alto del tramo.
+                let ym = (y0 + y1) * 0.5;
+                let hm = shaft_half(ym);
+                let normal = Vec3::new((a.0 + c.0) * 0.5, 0.0, (a.1 + c.1) * 0.5);
+                let across = Vec3::new((a.0 - c.0) * 0.5, 0.0, (a.1 - c.1) * 0.5);
+                let radius = (hm * 0.92).min((y1 - y0) * 0.5);
+                hoop(&mut b, normal * hm + Vec3::Y * ym, across, Vec3::Y, radius, [0, 10, 16][detail], [0, 3, 4][detail]);
             }
         }
     }
-    // El campanario: losa, cuatro postes, techo en punta y el mastil.
-    bx(&mut b, Vec3::new(0.0, SHAFT + 0.08, 0.0), Vec3::new(0.8, 0.08, 0.8));
-    for (sx, sz) in corners {
-        beam(&mut b, Vec3::new(sx * 0.5, SHAFT + 0.15, sz * 0.5), Vec3::new(sx * 0.5, SHAFT + 1.4, sz * 0.5), 0.05);
-    }
-    let apex = Vec3::new(0.0, SHAFT + 2.1, 0.0);
-    let eave = SHAFT + 1.4;
-    for k in 0..4 {
-        let (a, c) = (corners[k], corners[(k + 1) % 4]);
-        let (pa, pc) = (Vec3::new(a.0 * 0.66, eave, a.1 * 0.66), Vec3::new(c.0 * 0.66, eave, c.1 * 0.66));
-        // Que la cara mire hacia afuera.
-        if (pc - pa).cross(apex - pa).dot(pa + pc) > 0.0 {
-            b.triangle(pa, pc, apex);
-        } else {
-            b.triangle(pc, pa, apex);
-        }
-    }
-    b.frustum(apex, Vec3::Y, TOWER_TOP - apex.y - 0.15, 0.06, 0.035, 4, false, (false, false));
-    b.color(Vec3::new(BELL, 0.0, 0.0));
+    // Arriba: la plataforma chica, la campana colgando adentro, la linterna
+    // y el faro.
+    bx(&mut b, Vec3::new(0.0, SHAFT_TOP, 0.0), Vec3::new(0.55, 0.06, 0.55));
     let sides = [6, 8, 12][detail];
-    b.frustum(Vec3::new(0.0, SHAFT + 0.45, 0.0), Vec3::Y, 0.55, 0.36, 0.16, sides, true, (true, false));
-    b.ellipsoid(Vec3::new(0.0, SHAFT + 1.0, 0.0), Vec3::new(0.16, 0.12, 0.16), 3, sides, true);
+    b.frustum(Vec3::new(0.0, SHAFT_TOP, 0.0), Vec3::Y, 1.0, 0.32, 0.2, sides, false, (false, true));
+    b.color(Vec3::new(BELL, 0.0, 0.0));
+    b.frustum(Vec3::new(0.0, SHAFT_TOP - 1.4, 0.0), Vec3::Y, 0.5, 0.3, 0.14, sides, true, (true, false));
     b.color(Vec3::new(LAMP, 0.0, 0.0));
-    b.ellipsoid(Vec3::new(0.0, TOWER_TOP, 0.0), Vec3::splat(0.16), [3, 4, 5][detail], sides, false);
+    b.ellipsoid(Vec3::new(0.0, TOWER_TOP - 0.2, 0.0), Vec3::splat(0.22), [3, 4, 5][detail], sides, false);
     b.build()
 }
 
@@ -1317,7 +1389,7 @@ fn tower_shade(f: &Fragment, u: &Uniforms, _style: &PropStyle, sun: Vec3) -> Vec
         }
         _ => {
             let weather = u.noise.fbm(p * Vec3::new(1.5, 0.4, 1.5), 3) * 0.5 + 0.5;
-            let paint = Vec3::new(0.36, 0.37, 0.39).lerp(Vec3::new(0.2, 0.21, 0.22), smoothstep(0.45, 0.75, weather));
+            let paint = Vec3::new(0.2, 0.21, 0.22).lerp(Vec3::new(0.11, 0.115, 0.12), smoothstep(0.45, 0.75, weather));
             let lit = pbr::shade_light(f, u, paint, 0.45, 0.6, f.normal, 1.0, sun);
             let night = prop_night(f, u);
             let flood = (1.0 - p.y / TOWER_TOP).max(0.0).powf(1.5);
