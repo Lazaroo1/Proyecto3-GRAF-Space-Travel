@@ -49,7 +49,11 @@
 - **Los lugares de día**: cada lugar está fijo en su planeta y el planeta
   gira, así que en la versión chapina N busca hacia adelante el primer
   momento (hasta dos vueltas y media del planeta) en que el sol está entre
-  unos 27 y 53 grados sobre el lugar, y llega ahí (`daylight_at`).
+  unos 27 y 53 grados sobre el lugar, y llega ahí (`daylight_at`). Los
+  lugares lejos del ecuador tienen temporada de noche polar (San Andrés
+  Xecul, cerca del polo de los Cuchumatanes, se quedaba de noche entre los
+  minutos 2 y 12): si en esas vueltas no amanece, se sigue buscando en el
+  año del planeta.
 - **La Torre del Reformador** ([chapin/capital.rs](src/chapin/capital.rs)):
   hecha a partir de una foto. Cuatro patas de celosía que se abren mucho
   abajo (medio ancho `2 + 4 (1 - y/8)^1.8`) con un arco grande de celosía en

@@ -2694,9 +2694,12 @@ fn eye_crown(look: &ArgosLook, radius: f64, field: &dyn crate::terrain::HeightFi
 
 /// El primer instante desde `from` en que el sol esta bien alto sobre el
 /// lugar `site` (entre unos 27 y 53 grados): el planeta gira y orbita, asi
-/// que se busca hacia adelante, hasta un par de vueltas del planeta. Si en
-/// ese rato nunca se da (Pira le da siempre la misma cara a la estrella),
-/// se queda en `from`.
+/// que se busca hacia adelante, primero en un par de vueltas del planeta.
+/// Los lugares lejos del ecuador de un planeta inclinado tienen temporada de
+/// noche polar (San Andres Xecul, cerca del polo de los Cuchumatanes, se
+/// quedaba de noche): entonces se sigue buscando en lo que queda del ano del
+/// planeta. Si el sol nunca sube tanto (Pira le da siempre la misma cara a
+/// la estrella), se llega a la hora en que mas sube.
 fn daylight_at(system: &System, site: &crate::scene::Site, from: f64) -> f64 {
     let body = &system.bodies[site.body];
     let star = &system.bodies[0];
@@ -2705,12 +2708,27 @@ fn daylight_at(system: &System, site: &crate::scene::Site, from: f64) -> f64 {
         let ground = body.position(t) + up * body.radius;
         up.dot((star.position(t) - ground).normalize())
     };
-    let span = 2.5 * body.spin_period.abs().max(1.0);
-    let step = span / 600.0;
-    (0..=600)
-        .map(|k| from + k as f64 * step)
-        .find(|&t| (0.45..0.8).contains(&height(t)))
-        .unwrap_or(from)
+    let good = 0.45..0.8;
+    let spin = body.spin_period.abs().max(1.0);
+    let span = 2.5 * spin;
+    if let Some(t) = (0..=600).map(|k| from + k as f64 * span / 600.0).find(|&t| good.contains(&height(t))) {
+        return t;
+    }
+    // Un ano: el de su planeta si es una luna.
+    let year = body.host.as_ref().map_or(body.orbit_period, |h| h.period).abs().max(span);
+    let step = spin / 40.0;
+    let mut best = (from, f64::MIN);
+    for k in 0..=(year / step).ceil() as usize {
+        let t = from + span + k as f64 * step;
+        let h = height(t);
+        if good.contains(&h) {
+            return t;
+        }
+        if h > best.1 {
+            best = (t, h);
+        }
+    }
+    best.0
 }
 
 /// Gira `from` hacia `to` (unitarios) una fraccion del angulo entre ellos,
@@ -3034,16 +3052,20 @@ mod tests {
     fn in_the_chapin_version_sites_are_visited_in_daylight() {
         let mut app = App::new(64, 36).unwrap();
         let p = PRESETS.iter().find(|p| p.name == "40_chapin").unwrap();
-        app.apply_preset(p);
-        for _ in 0..app.system.sites.len() {
-            app.visit_next_site();
-            let site = app.system.sites[app.next_site];
-            let body = &app.system.bodies[site.body];
-            let t = app.sim_time;
-            let up = body.rotation(t).rotate(site.normal);
-            let ground = body.position(t) + up * body.radius;
-            let sun = up.dot((app.system.bodies[0].position(t) - ground).normalize());
-            assert!(sun > 0.2, "{}: el sol esta a {sun:.2}", site.name);
+        // A cualquier hora: tambien en la temporada en que el polo de los
+        // Cuchumatanes (Xecul) o el lugar de la capital quedan de noche.
+        for start in [40.0, 150.0, 500.0, 900.0, 1300.0, 1900.0] {
+            app.apply_preset(&Preset { time: start, ..*p });
+            for _ in 0..app.system.sites.len() {
+                app.visit_next_site();
+                let site = app.system.sites[app.next_site];
+                let body = &app.system.bodies[site.body];
+                let t = app.sim_time;
+                let up = body.rotation(t).rotate(site.normal);
+                let ground = body.position(t) + up * body.radius;
+                let sun = up.dot((app.system.bodies[0].position(t) - ground).normalize());
+                assert!(sun > 0.2, "{} desde {start}: el sol esta a {sun:.2}", site.name);
+            }
         }
     }
 
