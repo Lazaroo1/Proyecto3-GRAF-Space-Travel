@@ -29,3 +29,6 @@ rustc-ice-*.txt
 # Canciones de la version chapina: no se suben (pesan y tienen derechos)
 /musica/*
 !/musica/LEEME.txt
+
+# Cache de Python de los scripts de tools/
+__pycache__/
