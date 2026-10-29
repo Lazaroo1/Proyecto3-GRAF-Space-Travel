@@ -18,13 +18,24 @@
   los arcos de plasma, la cola de Pira ni las nubes de la corona. Kinich Ajaw
   no late: el latido, el fondo del sintetizador y el final (J) son de OCASO;
   al entrar se guarda la línea de tiempo del final y al volver se recupera.
+  Es de día: la luz del sol es de 5200 K y más fuerte, la exposición sube un
+  poco y la luz de relleno de las sombras (`Uniforms::fill`) es mayor.
+- **San Andrés Xecul** (en los Cuchumatanes, en vez de unas estelas que no
+  se reconocían): la iglesia es una malla simple (nave, fachada con remates,
+  torres, cúpulas, gradas) y todo el arte de la fachada lo pinta el shader
+  con formas de distancia con signo. Los materiales se distinguen por el
+  color de vértice comparando cada canal contra 0.5: comparado con `==`, el
+  valor interpolado (1.0000001) caía en otro material y salía moteado.
 - **La transición** ([render/transition.rs](src/render/transition.rs)): al
   presionar V se guarda la imagen de ese momento y, encima de la nueva, se
   abre una cortina desde el centro: cada pixel compara su distancia al
   centro con el frente (que avanza con un *ease out*) y en la franja del
-  borde se dibuja un tejido de huipil (rombos por celdas a lo largo del
-  ángulo, con su contorno) o, al volver, una brasa. Se calcula por filas en
-  paralelo sobre la imagen ya terminada.
+  borde se dibuja una faja tejida que gira: orillas de picos y, en medio,
+  cuadros a lo largo del ángulo con un motivo cada uno (quetzal, volcán,
+  mazorca, barrilete y greca escalonada), hechos con formas de distancia con
+  signo en las coordenadas del cuadro; al volver, una brasa. Se calcula por
+  filas en paralelo sobre la imagen ya terminada. La V también quita el
+  título del principio para que no se encime con el de la transición.
 - **Las naves botella**: OBJ de Blender (Z arriba, etiqueta hacia +Y)
   girados al cargar para volar con el pico adelante; su shader usa el color
   de cada cara (`Kd`) con vidrio pulido y un borde de Fresnel. Cada una tiene

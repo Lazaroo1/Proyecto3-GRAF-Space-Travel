@@ -13,7 +13,7 @@
 //! | Jardin | Peten: la selva y Tikal ([peten.rs]) |
 //! | Vigia | Atitlan: un mundo lago con tres volcanes ([atitlan.rs]) |
 //! | Parpado | Semuc Champey: pozas turquesa ([semuc.rs]) |
-//! | Argos | Los Cuchumatanes y las estelas de Quirigua ([cuchumatanes.rs]) |
+//! | Argos | Los Cuchumatanes y San Andres Xecul ([cuchumatanes.rs]) |
 //! | (nueva) | La Luna de Xelaju, luna de los Cuchumatanes ([xela.rs]) |
 //! | Cementerio | La capital: camionetas y la Torre del Reformador ([capital.rs]) |
 //! | El final (J) | No hay: Kinich Ajaw no se apaga ni late |
@@ -176,7 +176,7 @@ pub fn mesh(kind: PropKind, detail: usize) -> Mesh {
         PropKind::Arco | PropKind::Casa => fuego::mesh(kind, detail),
         PropKind::Templo | PropKind::Ceiba | PropKind::Arbol => peten::mesh(kind, detail),
         PropKind::Lancha => atitlan::mesh(kind, detail),
-        PropKind::Estela | PropKind::Pino => cuchumatanes::mesh(kind, detail),
+        PropKind::Iglesia | PropKind::Pino => cuchumatanes::mesh(kind, detail),
         PropKind::Camioneta | PropKind::Torre | PropKind::Edificio => capital::mesh(kind, detail),
         _ => unreachable!("{kind:?} no es un objeto chapin"),
     }
@@ -189,7 +189,7 @@ pub fn shade_prop(kind: PropKind, f: &Fragment, u: &Uniforms, style: &PropStyle,
         PropKind::Arco | PropKind::Casa => fuego::shade_prop(kind, f, u, style, sun),
         PropKind::Templo | PropKind::Ceiba | PropKind::Arbol => peten::shade_prop(kind, f, u, style, sun),
         PropKind::Lancha => atitlan::shade_prop(kind, f, u, style, sun),
-        PropKind::Estela | PropKind::Pino => cuchumatanes::shade_prop(kind, f, u, style, sun),
+        PropKind::Iglesia | PropKind::Pino => cuchumatanes::shade_prop(kind, f, u, style, sun),
         PropKind::Camioneta | PropKind::Torre | PropKind::Edificio => {
             capital::shade_prop(kind, f, u, style, sun)
         }

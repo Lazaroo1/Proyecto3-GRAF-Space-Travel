@@ -60,8 +60,8 @@ pub enum PropKind {
     Arbol,
     /// Lanchas en el lago (Atitlan).
     Lancha,
-    /// Estelas de Quirigua y pinos (Cuchumatanes).
-    Estela,
+    /// La iglesia de San Andres Xecul y pinos (Cuchumatanes).
+    Iglesia,
     Pino,
     /// Camionetas extraurbanas, la Torre del Reformador y edificios (la
     /// capital).
@@ -87,7 +87,7 @@ impl PropKind {
         Self::Ceiba,
         Self::Arbol,
         Self::Lancha,
-        Self::Estela,
+        Self::Iglesia,
         Self::Pino,
         Self::Camioneta,
         Self::Torre,
@@ -106,8 +106,8 @@ impl PropKind {
     pub fn visibility(self) -> f32 {
         match self {
             Self::Wreck | Self::Boulder | Self::Beacon => 1.0,
-            Self::Arco | Self::Templo | Self::Torre | Self::Edificio | Self::Camioneta => 1.0,
-            Self::Eye | Self::Casa | Self::Ceiba | Self::Estela | Self::Lancha => 0.75,
+            Self::Arco | Self::Templo | Self::Torre | Self::Edificio | Self::Camioneta | Self::Iglesia => 1.0,
+            Self::Eye | Self::Casa | Self::Ceiba | Self::Lancha => 0.75,
             Self::Arbol | Self::Pino => 0.5,
             Self::Mushroom | Self::Coral | Self::Spike | Self::Vent | Self::Crystal => 0.5,
         }

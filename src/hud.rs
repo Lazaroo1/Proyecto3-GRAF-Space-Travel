@@ -20,6 +20,9 @@ pub struct Hud {
     pub preset: Option<(&'static str, f32)>,
     /// Un aviso del juego (un lugar, una nave) y cuando aparecio.
     pub banner: Option<(&'static str, f32)>,
+    /// Si el titulo del principio ya se quito (al cambiar de version se
+    /// quita para que no se encime con el de la transicion).
+    pub intro_over: bool,
 }
 
 /// Segundos que dura el titulo al empezar.
@@ -46,7 +49,7 @@ pub fn draw(
     }
 
     // Intro: el titulo aparece y se desvanece en los primeros segundos.
-    if hud.age < INTRO {
+    if hud.age < INTRO && !hud.intro_over {
         let fade = (hud.age / 1.2).min(1.0) * ((INTRO - hud.age) / 2.0).min(1.0);
         let alpha = |a: f32| (a * fade * 255.0) as u8;
         let title = "OCASO";
