@@ -1,0 +1,67 @@
+# 02 | Grafito estructural
+newmtl mat_0
+Kd 100.00000 0.00000 0.00000
+
+# 01 | Ceramica blanca desgastada
+newmtl mat_1
+Kd 101.00000 0.00000 0.00000
+
+# 15 | Pintura y desgaste de referencia OCASO
+newmtl mat_2
+Kd 102.00000 0.00000 0.00000
+
+# 24 | Cubierta dorsal de referencia
+newmtl mat_3
+Kd 103.00000 0.00000 0.00000
+
+# 18 | Cristal curvo azul oscuro
+newmtl mat_4
+Kd 104.00000 0.00000 0.00000
+
+# 16 | Placa de referencia main_wing
+newmtl mat_5
+Kd 105.00000 0.00000 0.00000
+
+# 03 | Titanio mecanizado
+newmtl mat_6
+Kd 106.00000 0.00000 0.00000
+
+# 04 | Naranja de exploracion
+newmtl mat_7
+Kd 107.00000 0.00000 0.00000
+
+# 09 | Bobina de plasma naranja
+newmtl mat_8
+Kd 108.00000 0.00000 0.00000
+
+# 07 | LED blanco azulado
+newmtl mat_9
+Kd 109.00000 0.00000 0.00000
+
+# 08 | Plasma azul
+newmtl mat_10
+Kd 110.00000 0.00000 0.00000
+
+# 05 | Juntas y juntas elastomeras
+newmtl mat_11
+Kd 111.00000 0.00000 0.00000
+
+# 11 | Tapiceria de piloto
+newmtl mat_12
+Kd 112.00000 0.00000 0.00000
+
+# 12 | Pantallas de navegacion
+newmtl mat_13
+Kd 113.00000 0.00000 0.00000
+
+# 19 | Instrumentos azul tenue
+newmtl mat_14
+Kd 114.00000 0.00000 0.00000
+
+# 10 | Nucleo de plasma blanco
+newmtl mat_15
+Kd 115.00000 0.00000 0.00000
+
+# 20 | Cobre del reactor
+newmtl mat_16
+Kd 116.00000 0.00000 0.00000
