@@ -2415,6 +2415,15 @@ impl App {
 
     fn place(&mut self, pos: DVec3, rot: DQuat, t: f64) {
         self.ship = ShipState::new(&self.system.bodies, pos, rot, t);
+        // Junto a un planeta, quieta respecto al suelo que gira y no respecto
+        // a su centro: en los que giran rapido (en el ecuador de Vigia el
+        // suelo va a 38 u/s) el asistente tardaba segundos en alcanzar al
+        // suelo y la nave llegaba derrapando de lado.
+        let body = &self.system.bodies[self.ship.frame];
+        let altitude = self.ship.rel_pos.length() - body.radius;
+        if self.ship.frame != 0 && altitude < config::LOCAL_RANGE * body.radius {
+            self.ship.rel_vel = ship::angular_velocity(body).cross(self.ship.rel_pos);
+        }
         self.ship_prev = self.ship;
         self.aim = rot;
         // El render dibuja `sim_time - dt` cuando el acumulador esta vacio.
@@ -3078,6 +3087,34 @@ mod tests {
     }
 
     use super::*;
+
+    /// Al llegar con N la nave queda quieta sobre el suelo, que gira: antes
+    /// llegaba quieta respecto al centro del planeta y en Atitlan (Vigia
+    /// gira rapido) derrapaba de lado mientras el asistente la alcanzaba.
+    #[test]
+    fn arriving_with_n_the_ship_stays_over_the_same_ground() {
+        for chapin in [false, true] {
+            let mut app = App::new(64, 36).unwrap();
+            app.apply_preset(&PRESETS[21]);
+            if chapin {
+                app.switch_version();
+            }
+            for _ in 0..app.system.sites.len() {
+                app.visit_next_site();
+                let site = app.system.sites[app.next_site];
+                let ground = |app: &App| {
+                    let body = &app.system.bodies[site.body];
+                    body.rotation(app.sim_time).conjugate().rotate(app.ship.world_pos - body.position(app.sim_time)).normalize()
+                };
+                let start = ground(&app);
+                for _ in 0..90 {
+                    app.update(1.0 / 30.0, &FrameInput::default());
+                }
+                let drift = ground(&app).dot(start).clamp(-1.0, 1.0).acos() * app.system.bodies[site.body].radius;
+                assert!(drift < 1.0, "{}: se deslizo {drift:.1} sobre el suelo", site.name);
+            }
+        }
+    }
 
     #[test]
     fn slow_frames_keep_the_cycle_clock_in_real_time() {
