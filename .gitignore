@@ -25,3 +25,7 @@ rustc-ice-*.txt
 
 # Capturas y fotos generadas por el programa
 /capturas/
+
+# Canciones de la version chapina: no se suben (pesan y tienen derechos)
+/musica/*
+!/musica/LEEME.txt

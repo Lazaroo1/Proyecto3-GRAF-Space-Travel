@@ -1,6 +1,10 @@
 //! La version chapina (V): el mismo sistema, las mismas orbitas y la misma
 //! fisica, con Guatemala. Cada cuerpo cambia de piel: su nombre, su relieve,
-//! su shader, sus objetos, sus anillos, su atmosfera y su lugar.
+//! su shader, sus objetos, sus anillos, su atmosfera y su lugar. Tambien
+//! cambian el cielo (otra Via Lactea), la corona del sol (dorada, con rayos),
+//! la nave (botellas), el sonido (la musica de la carpeta `musica`, sin el
+//! latido) y no hay final. Lo de OCASO que no tiene que ver (los arcos de
+//! plasma, la cola de Pira) no se dibuja.
 //!
 //! | OCASO | Version chapina |
 //! | --- | --- |
@@ -12,7 +16,7 @@
 //! | Argos | Los Cuchumatanes y las estelas de Quirigua ([cuchumatanes.rs]) |
 //! | (nueva) | La Luna de Xelaju, luna de los Cuchumatanes ([xela.rs]) |
 //! | Cementerio | La capital: camionetas y la Torre del Reformador ([capital.rs]) |
-//! | Gargantua | Xibalba, el inframundo maya |
+//! | El final (J) | No hay: Kinich Ajaw no se apaga ni late |
 //!
 //! Cada planeta vive en su archivo y da lo mismo: su `spec` (nombre,
 //! atmosfera, anillos, particulas y lugar), su relieve (`field`), su shader
@@ -81,8 +85,6 @@ pub fn spec(name: &str) -> Option<Spec> {
 
 /// El nombre de la estrella en la version chapina.
 pub const STAR_LABEL: &str = "Kinich Ajaw";
-/// El nombre del agujero negro en la version chapina.
-pub const HOLE_LABEL: &str = "Xibalba";
 
 /// El relieve de un cuerpo (por su nombre interno).
 pub fn field(name: &str, seed: u32) -> Option<Arc<dyn HeightField>> {

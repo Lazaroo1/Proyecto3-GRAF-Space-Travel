@@ -38,10 +38,22 @@ pub struct SkyCube {
     texels: Vec<u32>,
 }
 
+/// De que version es un cielo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SkyStyle {
+    /// La banda azul y morada de OCASO.
+    Ocaso,
+    /// La Via Lactea de la version chapina, en otro lugar del cielo.
+    Chapin,
+}
+
+/// Fondo de la version chapina: un indigo apenas verdoso.
+const BACKGROUND_CHAPIN: Vec3 = Vec3::new(0.0002, 0.0004, 0.0008);
+
 impl SkyCube {
     /// Hornea el cielo en paralelo. Cada texel evalua las estrellas en su
     /// direccion, con el tamano minimo de un texel para que no titilen.
-    pub fn bake(size: usize, seed: u32) -> Self {
+    pub fn bake(size: usize, seed: u32, style: SkyStyle) -> Self {
         let noise = Perlin::new(seed ^ 0x5EB0);
         let texel_angle = std::f32::consts::FRAC_PI_2 / size as f32;
         let mut texels = vec![0u32; 6 * size * size];
@@ -52,7 +64,14 @@ impl SkyCube {
                 let u = (x as f32 + 0.5) / size as f32 * 2.0 - 1.0;
                 let v = (y as f32 + 0.5) / size as f32 * 2.0 - 1.0;
                 let dir = face_direction(face, u, v);
-                *texel = encode_rgbe(stars(dir, texel_angle) + nebula(dir, &noise) + BACKGROUND);
+                let sky = match style {
+                    SkyStyle::Ocaso => stars(dir, texel_angle) + nebula(dir, &noise) + BACKGROUND,
+                    // Cielo de altiplano: mas estrellas a la vista.
+                    SkyStyle::Chapin => {
+                        stars(dir, texel_angle) * 1.4 + milky_way(dir, &noise) + BACKGROUND_CHAPIN
+                    }
+                };
+                *texel = encode_rgbe(sky);
             }
         });
         Self { size, texels }
@@ -245,6 +264,9 @@ pub fn corona(dir: Vec3, u: &Uniforms) -> Vec3 {
     if dist2 <= r2 || u.star_glow <= 0.0 {
         return Vec3::ZERO;
     }
+    if u.chapin {
+        return golden_corona(dir, u, dist2, r2);
+    }
     let cos = dir.dot(u.sun_pos) / (dir.length_squared() * dist2).sqrt();
     let disc2 = r2 / dist2;
     // Cuerda al cuadrado en radios del disco. Es continua en toda la esfera:
@@ -275,6 +297,63 @@ pub fn corona(dir: Vec3, u: &Uniforms) -> Vec3 {
             None => cloud(theta, x, t, n),
         };
         light += clouds * strength;
+    }
+    light
+}
+
+/// La Via Lactea de la version chapina: una banda blanca y dorada, mas
+/// brillante hacia el centro de la galaxia, cortada a lo largo por la
+/// grieta oscura de polvo (para los mayas, el camino negro a Xibalba). Esta
+/// en otro lugar del cielo que la banda de OCASO.
+fn milky_way(dir: Vec3, noise: &Perlin) -> Vec3 {
+    let band_normal = Vec3::new(-0.62, 0.52, 0.58).normalize();
+    let latitude = dir.dot(band_normal);
+    let band = (-(latitude / 0.24).powi(2)).exp();
+    if band < 0.01 {
+        return Vec3::ZERO;
+    }
+    // El centro de la galaxia, en la banda.
+    let core = Vec3::new(0.72, 0.1, 0.68).normalize();
+    let core = (core - band_normal * core.dot(band_normal)).normalize();
+    let bulge = (-((1.0 - dir.dot(core)) / 0.35).powi(2)).exp();
+    // Nubes de estrellas finas y la grieta, torcida por el mismo ruido.
+    let clouds = noise.fbm(dir * 9.0 + Vec3::new(2.0, 9.0, 4.0), 6) * 0.5 + 0.5;
+    let warp = noise.fbm(dir * 3.0 + Vec3::new(-5.0, 1.0, 7.0), 3);
+    let rift = 1.0 - 0.92 * (-((latitude + 0.04 * warp) / (0.03 + 0.03 * bulge)).powi(2)).exp();
+    let dust = smoothstep(0.5, 0.7, noise.fbm(dir * 16.0 + Vec3::new(9.0, 3.0, 1.0), 4) * 0.5 + 0.5);
+    let warm = Vec3::new(0.52, 0.47, 0.38).lerp(Vec3::new(0.62, 0.5, 0.32), bulge);
+    warm * (band * clouds.powi(2) * (0.6 + 1.6 * bulge) * rift * (1.0 - 0.7 * dust) * 0.2)
+}
+
+/// La corona de Kinich Ajaw (version chapina): un halo dorado, rayos que
+/// salen del disco como en el glifo del sol y que giran despacio, y llamas
+/// doradas en el borde (las mismas lenguas que el limbo, con otro color).
+fn golden_corona(dir: Vec3, u: &Uniforms, dist2: f32, r2: f32) -> Vec3 {
+    let cos = dir.dot(u.sun_pos) / (dir.length_squared() * dist2).sqrt();
+    let x2 = (2.0 * (1.0 - cos) / (r2 / dist2)).max(1.0);
+    if x2 > 1600.0 {
+        return Vec3::ZERO;
+    }
+    let x = x2.sqrt();
+    let h = x - 1.0;
+    let strength = u.sun_light.luminance() / 1.5;
+    let gold = Vec3::new(1.0, 0.62, 0.2);
+    let mut light = gold * ((0.05 * (-h * 3.0).exp() + 0.003 / x2) * strength);
+    if h < 3.0 {
+        let (_, a, b) = super::sun::limb_frame(u.sun_pos);
+        let theta = dir.dot(b).atan2(dir.dot(a));
+        // Rayos: dieciseis largos y dieciseis cortos entre ellos.
+        let spin = theta + u.time * 0.02;
+        let long = (0.5 + 0.5 * (spin * 16.0).cos()).powi(8);
+        let short = (0.5 + 0.5 * (spin * 16.0 + std::f32::consts::PI).cos()).powi(12) * 0.5;
+        let flicker = 0.75 + 0.25 * u.noise.noise(Vec3::new(theta.cos() * 4.0, theta.sin() * 4.0, u.time * 0.3));
+        let rays = (long * (-h * 2.2).exp() + short * (-h * 4.5).exp()) * flicker;
+        light += Vec3::new(1.0, 0.75, 0.35) * (rays * 0.16 * strength);
+        if h < 0.45 {
+            let fire = super::sun::limb_fire(theta, h, u.time, u.noise) + 0.05 * (-h * 14.0).exp();
+            let color = Vec3::new(4.0, 2.6, 0.8).lerp(Vec3::new(2.4, 1.1, 0.2), smoothstep(0.0, 0.3, h));
+            light += color * (fire * strength);
+        }
     }
     light
 }
@@ -349,7 +428,7 @@ mod tests {
     #[test]
     #[ignore]
     fn medir_cielo() {
-        let sky = SkyCube::bake(crate::config::SKY_SIZE, 1);
+        let sky = SkyCube::bake(crate::config::SKY_SIZE, 1, SkyStyle::Ocaso);
         let noise = Perlin::new(1);
         let textures = super::super::Textures::generate();
         let u = Uniforms {
@@ -384,6 +463,7 @@ mod tests {
             biolum: 1.0,
             gains: Default::default(),
             clouds: None,
+            chapin: false,
             debug: Default::default(),
         };
         let n = 2_000_000;

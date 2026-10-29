@@ -34,6 +34,7 @@ mod raster;
 mod reflections;
 mod shade;
 pub mod shadow;
+pub mod transition;
 mod stats;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -228,6 +229,12 @@ impl Renderer {
     /// La imagen del ultimo frame, RGBA8 por filas.
     pub fn rgba(&self) -> &[u8] {
         &self.rgba
+    }
+
+    /// La misma imagen, para retocarla despues del render (la transicion
+    /// entre versiones).
+    pub fn rgba_mut(&mut self) -> &mut [u8] {
+        &mut self.rgba
     }
 
     pub fn render(&mut self, draws: &[Draw], view: &View, uniforms: &Uniforms) -> Stats {

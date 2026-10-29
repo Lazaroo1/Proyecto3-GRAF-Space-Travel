@@ -1,3 +1,40 @@
+# La versión chapina (V)
+
+- **Un cambio de piel, no otra escena** ([scene/system.rs](src/scene/system.rs)
+  `toggle_version`): cada cuerpo guarda lo de la otra versión en un `Look`
+  (nombre, material, relieve, anillos, terreno ya generado, atmósfera,
+  objetos y si existe) y V lo intercambia con lo suyo, junto con los lugares
+  y el cielo. Las órbitas, los radios y la gravedad son los mismos, así que
+  la nave no salta. Lo chapín se arma una vez al arrancar (`build_chapin`).
+  La Luna de Xelajú es un cuerpo más que solo existe en la versión chapina.
+- **Cada planeta en su archivo** ([chapin/](src/chapin)): `mod.rs` es la
+  tabla y cada módulo da su `spec`, su relieve (`HeightField`), su shader,
+  su vertex shader si mueve vértices (las olas de Atitlán mecen las lanchas),
+  sus reglas de reparto, su lugar y los modelos y shaders de sus objetos. El
+  comentario de arriba de cada archivo explica sus técnicas.
+- **Sin nada de OCASO a la vista**: el cielo es otro cubemap horneado
+  (`SkyStyle::Chapin`: otra Vía Láctea, dorada, con su grieta oscura), la
+  corona del sol es dorada con rayos (`sky::golden_corona`) y no se dibujan
+  los arcos de plasma, la cola de Pira ni las nubes de la corona. Kinich Ajaw
+  no late: el latido, el fondo del sintetizador y el final (J) son de OCASO;
+  al entrar se guarda la línea de tiempo del final y al volver se recupera.
+- **La transición** ([render/transition.rs](src/render/transition.rs)): al
+  presionar V se guarda la imagen de ese momento y, encima de la nueva, se
+  abre una cortina desde el centro: cada pixel compara su distancia al
+  centro con el frente (que avanza con un *ease out*) y en la franja del
+  borde se dibuja un tejido de huipil (rombos por celdas a lo largo del
+  ángulo, con su contorno) o, al volver, una brasa. Se calcula por filas en
+  paralelo sobre la imagen ya terminada.
+- **Las naves botella**: OBJ de Blender (Z arriba, etiqueta hacia +Y)
+  girados al cargar para volar con el pico adelante; su shader usa el color
+  de cada cara (`Kd`) con vidrio pulido y un borde de Fresnel. Cada una tiene
+  su escape (`effects::Exhaust`).
+- **El reproductor** ([player.rs](src/player.rs)): raylib solo decodifica y
+  reproduce. Los archivos se leen con Rust y se le pasan desde memoria,
+  porque en Windows raylib abre rutas con la página de códigos ANSI y una
+  ruta con tildes no se abriría. La marimba procedural
+  ([marimba.rs](src/marimba.rs)) es la última pista y la toca el sintetizador.
+
 # Cambios de la sexta revisión
 
 - **Argos reemplaza a Réquiem** (misma órbita, radio 200): un planeta de

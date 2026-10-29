@@ -5,6 +5,7 @@
 use raylib::prelude::*;
 
 use crate::app::App;
+use crate::player::PlayerView;
 use crate::parallel;
 use crate::tweaks::Tweaks;
 
@@ -17,6 +18,8 @@ pub struct Hud {
     pub hidden: bool,
     /// Nombre de la ultima vista fija elegida y cuando se eligio.
     pub preset: Option<(&'static str, f32)>,
+    /// Un aviso del juego (un lugar, una nave) y cuando aparecio.
+    pub banner: Option<(&'static str, f32)>,
 }
 
 /// Segundos que dura el titulo al empezar.
@@ -28,7 +31,14 @@ const TEXT: Color = Color::new(236, 226, 214, 255);
 const PANEL: Color = Color::new(0, 0, 0, 150);
 const MARKER: Color = Color::new(255, 214, 120, 220);
 
-pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &Tweaks) {
+pub fn draw(
+    d: &mut RaylibDrawHandle,
+    app: &App,
+    fps: u32,
+    hud: &Hud,
+    tweaks: &Tweaks,
+    player: Option<&PlayerView>,
+) {
     let width = d.get_screen_width();
     let height = d.get_screen_height();
     if hud.hidden {
@@ -158,15 +168,12 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
         )
     };
     let lines = [
-        match c.phase {
-            crate::scene::cycle::Phase::Agony => "AGONIA   J: desatar el final".to_string(),
-            phase => format!(
+        match (c.phase, app.bottle_name()) {
+            (_, Some(_)) => "VERSION CHAPINA   V: volver a OCASO".to_string(),
+            (crate::scene::cycle::Phase::Agony, None) => "AGONIA   J: desatar el final".to_string(),
+            (phase, None) => format!(
                 "{}   {}   J: renacer",
-                match (phase, app.bottle_name()) {
-                    (crate::scene::cycle::Phase::EyeOpens, Some(_)) => "SE ABRE XIBALBA",
-                    _ => phase.name(),
-                }
-                .to_uppercase(),
+                phase.name().to_uppercase(),
                 clock(c.tau)
             ),
         },
@@ -195,8 +202,8 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
             on_off(app.settings.cruise)
         ),
         match app.bottle_name() {
-            Some(name) => format!("version chapina [V]   nave [B]: {name}"),
-            None => "version [V]: OCASO".to_string(),
+            Some(name) => format!("nave [B o 1-6]: {name}"),
+            None => "version chapina [V]".to_string(),
         },
     ];
     panel(d, 10, 10, &lines, true, width);
@@ -225,6 +232,26 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
             d.draw_text(&text, (width - w) / 2, 60, 26, MARKER);
         }
     }
+    if let Some((text, since)) = hud.banner {
+        if hud.age - since < 3.0 {
+            let w = d.measure_text(text, 26);
+            d.draw_text(text, (width - w) / 2, 96, 26, MARKER);
+        }
+    }
+    if let Some(view) = player {
+        draw_player(d, view, (width, height));
+    }
+    // El titulo grande de la transicion entre versiones.
+    if let Some((title, fade)) = app.transition_title() {
+        let size = height / 7;
+        let w = d.measure_text(title, size);
+        let color = if app.bottle_name().is_some() {
+            Color::new(255, 214, 120, (fade * 255.0) as u8)
+        } else {
+            Color::new(255, 190, 140, (fade * 255.0) as u8)
+        };
+        d.draw_text(title, (width - w) / 2, height / 3 - size / 2, size, color);
+    }
     if app.freeze.is_some() {
         let text =
             "FRUSTUM CONGELADO (F7): el culling y el LOD se calculan desde la camara amarilla";
@@ -245,7 +272,7 @@ pub fn draw(d: &mut RaylibDrawHandle, app: &App, fps: u32, hud: &Hud, tweaks: &T
             "Q/E: alabeo   Shift: turbo   C: camara   P: foto   Tab: soltar el mouse".to_string(),
             "X: freno de emergencia   Inicio: volver a Pira sin reiniciar el ciclo".to_string(),
             "L: modo local   O: crucero (rodea el planeta)   Y: trayectoria".to_string(),
-            "V: version chapina / OCASO   B: cambiar de nave botella (en la chapina)".to_string(),
+            "V: version chapina / OCASO   B o 1-6: nave botella (en la chapina)".to_string(),
             "T: ajustes en vivo   M: sonido".to_string(),
             "R: rebobinar   [ ]: -30/+30 s   J: final / renacer   RePag/AvPag: vistas fijas".to_string(),
             "F3: wireframe   F4: colores de LOD   F5: LOD on/off   F6: otra semilla   F7: congelar frustum".to_string(),
@@ -284,4 +311,87 @@ fn panel(
     for (i, line) in lines.iter().enumerate() {
         d.draw_text(line, x + 8, y + 6 + i as i32 * LINE, FONT, TEXT);
     }
+}
+
+/// Tamano y lugar del reproductor: abajo a la derecha.
+const PLAYER_SIZE: (i32, i32) = (380, 92);
+
+fn player_rect(screen: (i32, i32)) -> (i32, i32) {
+    (screen.0 - PLAYER_SIZE.0 - 10, screen.1 - PLAYER_SIZE.1 - 10)
+}
+
+/// Los tres botones (anterior, pausa, siguiente) y la barra de avance.
+fn player_controls(screen: (i32, i32)) -> ([Rectangle; 3], Rectangle) {
+    let (x, y) = player_rect(screen);
+    let button = |k: i32| Rectangle::new((x + 10 + k * 46) as f32, (y + 52) as f32, 40.0, 30.0);
+    let bar = Rectangle::new((x + 160) as f32, (y + 60) as f32, (PLAYER_SIZE.0 - 172) as f32, 12.0);
+    ([button(0), button(1), button(2)], bar)
+}
+
+/// Lo que se toco del reproductor con el mouse.
+pub enum PlayerHit {
+    Previous,
+    Toggle,
+    Next,
+    /// En la barra: a que fraccion de la cancion saltar.
+    Seek(f32),
+}
+
+pub fn player_hit(screen: (i32, i32), mouse: (f32, f32)) -> Option<PlayerHit> {
+    let (buttons, bar) = player_controls(screen);
+    let point = Vector2::new(mouse.0, mouse.1);
+    if buttons[0].check_collision_point_rec(point) {
+        return Some(PlayerHit::Previous);
+    }
+    if buttons[1].check_collision_point_rec(point) {
+        return Some(PlayerHit::Toggle);
+    }
+    if buttons[2].check_collision_point_rec(point) {
+        return Some(PlayerHit::Next);
+    }
+    let grown = Rectangle::new(bar.x, bar.y - 6.0, bar.width, bar.height + 12.0);
+    grown
+        .check_collision_point_rec(point)
+        .then(|| PlayerHit::Seek((mouse.0 - bar.x) / bar.width))
+}
+
+/// El mini reproductor: la cancion, los botones, el avance y el volumen.
+fn draw_player(d: &mut RaylibDrawHandle, view: &PlayerView, screen: (i32, i32)) {
+    let (x, y) = player_rect(screen);
+    d.draw_rectangle(x, y, PLAYER_SIZE.0, PLAYER_SIZE.1, PANEL);
+    let title = format!("{}/{}  {}", view.index + 1, view.count, view.title);
+    // Si el nombre no cabe, se corta.
+    let mut shown = title.clone();
+    while d.measure_text(&shown, FONT) > PLAYER_SIZE.0 - 20 && shown.len() > 4 {
+        shown.pop();
+    }
+    if shown.len() < title.len() {
+        shown.push_str("..");
+    }
+    d.draw_text(&shown, x + 10, y + 8, FONT, TEXT);
+    let hint = "K pausa  U/I cancion  -/+ volumen";
+    d.draw_text(hint, x + 10, y + 30, 14, Color::new(236, 226, 214, 150));
+    let (buttons, bar) = player_controls(screen);
+    let labels = ["<<", if view.playing { "||" } else { ">" }, ">>"];
+    for (rect, label) in buttons.iter().zip(labels) {
+        d.draw_rectangle_rec(*rect, Color::new(255, 214, 120, 60));
+        let w = d.measure_text(label, 20);
+        d.draw_text(label, rect.x as i32 + (rect.width as i32 - w) / 2, rect.y as i32 + 5, 20, MARKER);
+    }
+    d.draw_rectangle_rec(bar, Color::new(255, 255, 255, 40));
+    let clock = |s: f32| format!("{}:{:02}", (s / 60.0) as u32, (s % 60.0) as u32);
+    let (fill, time) = if view.length > 0.0 {
+        (
+            (view.time / view.length).clamp(0.0, 1.0),
+            format!("{} / {}", clock(view.time), clock(view.length)),
+        )
+    } else {
+        // La marimba no se acaba: la barra va y viene.
+        (0.5 + 0.5 * (view.time * 0.5).sin(), clock(view.time))
+    };
+    d.draw_rectangle(bar.x as i32, bar.y as i32, (bar.width * fill) as i32, bar.height as i32, MARKER);
+    d.draw_text(&time, bar.x as i32, bar.y as i32 + 14, 14, TEXT);
+    let volume = format!("vol {:.0}%", view.volume * 100.0);
+    let w = d.measure_text(&volume, 14);
+    d.draw_text(&volume, (bar.x + bar.width) as i32 - w, bar.y as i32 + 14, 14, TEXT);
 }
