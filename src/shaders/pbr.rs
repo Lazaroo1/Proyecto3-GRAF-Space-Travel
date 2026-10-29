@@ -56,7 +56,7 @@ pub fn shade_light(
     let fresnel = f0 + (Vec3::ONE - f0) * (1.0 - nv).powi(5);
     let env = u.sky.sample(reflect) * 0.5 + Vec3::new(0.015, 0.022, 0.030);
     let ao = f.ao * cavity;
-    color += (albedo * Vec3::new(0.055, 0.070, 0.085) * (1.0 - metal)
+    color += (albedo * Vec3::new(0.055, 0.070, 0.085) * (u.fill * (1.0 - metal))
         + env * fresnel * (1.0 - rough * 0.7))
         * ao;
     for point in u.points {

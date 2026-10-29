@@ -1,6 +1,6 @@
 //! Los Cuchumatanes (la version chapina de Argos): la sierra no volcanica
-//! mas alta de Centroamerica, con helada y pinos; en un llano, las estelas
-//! de Quirigua; en su anillo, los barriletes gigantes de Sumpango.
+//! mas alta de Centroamerica, con helada y pinos; en un llano, la iglesia de
+//! San Andres Xecul; en su anillo, los barriletes gigantes de Sumpango.
 //!
 //! # El relieve
 //! - **Altiplanicie**: un ruido grande decide donde la sierra sube a la
@@ -11,7 +11,7 @@
 //!   de Worley queda cerca de un punto) y lapiaz (crestas finas de roca).
 //! - **Canones**: donde un ruido cruza por cero, un perfil en V redondeada
 //!   corta la meseta, mas hondo donde la meseta es mas alta.
-//! - **El llano de Quirigua**: alrededor del lugar el relieve se aplana hacia
+//! - **El llano de Xecul**: alrededor del lugar el relieve se aplana hacia
 //!   la altura que tiene ahi, con un cinturon de bosque en la orilla.
 //!
 //! # El shader
@@ -25,14 +25,15 @@
 //! roja: con todo el rojo el bosque se veia cafe.
 //!
 //! # Los objetos
-//! Pinos de pisos (conos lisos con el borde irregular) y las estelas: un
-//! bloque simple; las tallas son del shader. Cada cara tiene una funcion de
-//! **altura del relieve** hecha de formas con distancia con signo (el
-//! gobernante con su tocado y su barra ceremonial al frente y atras, y
-//! columnas de glifos con numeros de barras y puntos a los lados). La
-//! normal sale de diferencias finitas de esa altura con un paso del tamano
-//! de un pixel, y los bordes se suavizan con ese mismo tamano: de lejos la
-//! talla se funde en su promedio y no parpadea.
+//! Pinos de pisos (conos lisos con el borde irregular) y la iglesia de San
+//! Andres Xecul: una nave con techo de teja y cupula de gajos, la fachada
+//! alta con dos remates y dos torres con su cupula. Todo lo que hace famosa
+//! a la fachada lo pinta el shader con formas de distancia con signo en los
+//! ejes del modelo: columnas con franjas de colores en espiral, cornisas
+//! blancas con una linea roja, angeles con alas en cada tablero, la
+//! enredadera con uvas y mazorcas que corre bajo las cornisas, el medallon
+//! del remate y la puerta en arco. Los bordes se suavizan con el tamano de
+//! un pixel: de lejos se funde en su promedio y no parpadea.
 //!
 //! # Los barriletes
 //! En el plano del anillo, celdas en polares que giran en bloque. Cada
@@ -81,11 +82,11 @@ pub fn spec() -> Spec {
 
 // El relieve ----------------------------------------------------------------
 
-/// Donde estan las estelas de Quirigua (en el espacio del planeta) y hacia
+/// Donde esta la iglesia de San Andres Xecul (en el espacio del planeta) y hacia
 /// donde se mira al llegar. Cerca del polo: la estrella nunca sube mucho y
 /// la luz rasante marca las tallas a cualquier hora. A los 40 s la estrella
 /// queda baja, atras a la izquierda, y la Luna de Xelaju baja enfrente.
-const QUIRIGUA: Vec3 = Vec3::new(-0.3261, 0.9452, -0.0189);
+const XECUL: Vec3 = Vec3::new(-0.3261, 0.9452, -0.0189);
 const TOWARD: Vec3 = Vec3::new(-0.1534, -0.0726, -0.9855);
 /// Radio angular del llano: plano hasta el primero, se junta con la sierra
 /// hasta el segundo.
@@ -114,7 +115,7 @@ impl Sierra {
             noise: Perlin::new(seed),
             plaza: 0.0,
         };
-        sierra.plaza = sierra.relief(QUIRIGUA.normalize()).height;
+        sierra.plaza = sierra.relief(XECUL.normalize()).height;
         sierra
     }
 
@@ -155,7 +156,7 @@ impl Sierra {
 impl HeightField for Sierra {
     fn sample(&self, dir: Vec3) -> TerrainSample {
         let mut s = self.relief(dir);
-        let angle = dir.dot(QUIRIGUA.normalize()).clamp(-1.0, 1.0).acos();
+        let angle = dir.dot(XECUL.normalize()).clamp(-1.0, 1.0).acos();
         if angle < PLAZA.1 {
             // El llano: casi plano, de zacate, con bosque en la orilla.
             let flat = smoothstep(PLAZA.1, PLAZA.0, angle);
@@ -275,93 +276,124 @@ pub fn rules() -> Vec<Scatter> {
 }
 
 pub fn site(_default: (DVec3, DVec3)) -> Option<(&'static str, DVec3, DVec3, Placer)> {
-    let normal = QUIRIGUA.normalize().as_dvec3();
+    let normal = XECUL.normalize().as_dvec3();
     let toward = TOWARD.as_dvec3();
     let forward = (toward - normal * toward.dot(normal)).normalize();
-    Some(("Quirigua", normal, forward, place))
+    Some(("San Andres Xecul", normal, forward, place))
 }
 
-/// Las estelas del llano: a `x` a la derecha y `z` al frente del lugar, su
-/// escala, y cuanto se giran hacia la estrella (que a la hora de la vista
-/// queda a la izquierda): la luz rasante marca la talla del frente.
-const STELAE: [(f64, f64, f32); 7] = [
-    // La estela E, la mas alta.
-    (0.0, 8.0, 1.4),
-    (-9.0, 17.0, 1.0),
-    (10.0, 15.0, 1.05),
-    (-17.0, 26.0, 0.95),
-    (17.0, 24.0, 1.1),
-    (-6.0, 32.0, 0.8),
-    (6.0, 36.0, 0.9),
-];
+/// Que tan adelante del lugar esta la fachada de la iglesia.
+const CHURCH_AHEAD: f64 = 14.0;
 
-/// Quirigua: estelas en un llano de zacate, mirando hacia quien llega.
-fn place(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField, seed: u32, frame: (DVec3, DVec3, DVec3)) {
-    let (n, forward, right) = frame;
-    clear_site(instances, radius, n, 50.0);
-    // Quien llega mira desde atras del lugar.
-    let viewer = -forward * 40.0;
-    for (k, &(x, z, scale)) in STELAE.iter().enumerate() {
-        let dir = (n + (right * x + forward * z) / radius).normalize();
-        let base = upright_rotation(dir, 0.0);
-        let (x0, z0) = (base.rotate(DVec3::X), base.rotate(DVec3::Z));
-        let offset = right * x + forward * z;
-        let to_viewer = (viewer - offset - dir * (viewer - offset).dot(dir)).normalize();
-        // Girada hacia la izquierda (la estrella), con un poco de azar.
-        let jitter = (hash_u32(seed ^ k as u32 ^ 0x57E1) >> 8) as f64 / 16_777_216.0 - 0.5;
-        let turn = -0.55 + 0.3 * jitter;
-        let facing = to_viewer * turn.cos() + dir.cross(to_viewer) * turn.sin();
-        let yaw = facing.dot(x0).atan2(facing.dot(z0));
-        instances.push(at_site(radius, field, frame, PropKind::Estela, x, z, scale, yaw, 0.08));
-    }
+/// San Andres Xecul: la iglesia en medio del llano, con la fachada hacia
+/// quien llega (que mira desde atras del lugar).
+fn place(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField, _seed: u32, frame: (DVec3, DVec3, DVec3)) {
+    let (n, forward, _) = frame;
+    clear_site(instances, radius, n, 55.0);
+    let dir = (n + forward * (CHURCH_AHEAD / radius)).normalize();
+    let base = upright_rotation(dir, 0.0);
+    let (x0, z0) = (base.rotate(DVec3::X), base.rotate(DVec3::Z));
+    let toward = (-forward - dir * (-forward).dot(dir)).normalize();
+    let yaw = toward.dot(x0).atan2(toward.dot(z0));
+    instances.push(at_site(radius, field, frame, PropKind::Iglesia, 0.0, CHURCH_AHEAD, 1.0, yaw, 0.3));
 }
 
-/// Medio ancho, alto y medio grueso del fuste de una estela, en el modelo.
-const STELA: Vec3 = Vec3::new(0.85, 10.0, 0.68);
+/// La iglesia, en el modelo (la fachada mira hacia +z): medio ancho de la
+/// fachada, su alto, el largo de la nave y el alto de sus paredes.
+const FACADE: (f32, f32) = (7.0, 15.0);
+const NAVE: (f32, f32) = (20.0, 10.0);
+/// Las torres: cuanto se separan del centro, su medio ancho y su alto.
+const TOWER: (f32, f32, f32) = (8.6, 1.6, 17.0);
+
 /// Altura de la punta de los pinos, en el modelo.
 const PINE_TOP: f32 = 10.0;
 
 // Colores de vertice: marcan el material.
-const CARVED: Vec3 = Vec3::new(1.0, 0.0, 0.0);
-const PLAIN: Vec3 = Vec3::new(0.0, 0.0, 0.0);
 const BARK: Vec3 = Vec3::new(1.0, 1.0, 0.0);
+/// En la iglesia: la fachada pintada, las paredes lisas, la teja, las
+/// cupulas, lo blanco y la piedra de las gradas.
+const FRONT: Vec3 = Vec3::new(1.0, 0.0, 0.0);
+const WALL: Vec3 = Vec3::new(0.0, 1.0, 0.0);
+const TILE: Vec3 = Vec3::new(0.0, 0.0, 1.0);
+const DOME: Vec3 = Vec3::new(1.0, 0.0, 1.0);
+const WHITE: Vec3 = Vec3::new(1.0, 1.0, 1.0);
+const STEPS: Vec3 = Vec3::new(0.0, 1.0, 1.0);
 
 pub fn mesh(kind: PropKind, detail: usize) -> Mesh {
     match kind {
-        PropKind::Estela => stela(detail),
+        PropKind::Iglesia => church(detail),
         _ => pine(detail),
     }
 }
 
-/// Una estela: un fuste de piedra (enterrado un poco) sobre una losa. Las
-/// tallas las pone el shader.
-fn stela(detail: usize) -> Mesh {
+/// La iglesia: la nave con su techo de dos aguas y su cupula, la fachada
+/// mas alta que la nave con dos remates escalonados y una cruz, dos torres
+/// con cupula y las gradas del atrio. El detalle se pinta en el shader.
+fn church(detail: usize) -> Mesh {
     let mut b = MeshBuilder::new();
     let axes = [Vec3::X, Vec3::Y, Vec3::Z];
-    b.color(CARVED);
-    b.cuboid(Vec3::new(0.0, (STELA.y - 1.0) * 0.5, 0.0), axes, Vec3::new(STELA.x, (STELA.y + 1.0) * 0.5, STELA.z));
-    b.color(PLAIN);
-    b.cuboid(Vec3::new(0.0, 0.05, 0.0), axes, Vec3::new(STELA.x * 1.9, 0.3, STELA.z * 2.4));
-    if detail >= 1 {
-        // La corona: un bloque apenas mas angosto encima.
-        b.color(CARVED);
-        b.cuboid(Vec3::new(0.0, STELA.y + 0.12, 0.0), axes, Vec3::new(STELA.x * 0.92, 0.12, STELA.z * 0.9));
+    let (w, h) = FACADE;
+    let (length, wall) = NAVE;
+    let (rings, segments) = [(3, 8), (4, 12), (6, 16)][detail];
+    // La nave, detras de la fachada.
+    b.color(WALL);
+    b.cuboid(Vec3::new(0.0, wall * 0.5 - 0.5, -length * 0.5), axes, Vec3::new(w - 0.6, wall * 0.5 + 0.5, length * 0.5));
+    // El techo de dos aguas.
+    b.color(TILE);
+    let (eave, ridge, half) = (wall, wall + 3.0, w - 0.2);
+    let back = -length - 0.3;
+    b.quad(
+        Vec3::new(-half, eave, 0.0),
+        Vec3::new(-half, eave, back),
+        Vec3::new(0.0, ridge, back),
+        Vec3::new(0.0, ridge, 0.0),
+    );
+    b.quad(
+        Vec3::new(half, eave, back),
+        Vec3::new(half, eave, 0.0),
+        Vec3::new(0.0, ridge, 0.0),
+        Vec3::new(0.0, ridge, back),
+    );
+    b.color(WALL);
+    b.triangle(Vec3::new(-half, eave, back), Vec3::new(half, eave, back), Vec3::new(0.0, ridge, back));
+    // La cupula sobre el crucero, en su tambor.
+    b.frustum(Vec3::new(0.0, wall, -length * 0.7), Vec3::Y, 3.6, 3.4, 3.4, segments, true, (false, false));
+    b.color(DOME);
+    b.ellipsoid(Vec3::new(0.0, wall + 3.6, -length * 0.7), Vec3::new(3.5, 3.2, 3.5), rings, segments, true);
+    // La fachada y sus remates.
+    b.color(FRONT);
+    b.cuboid(Vec3::new(0.0, h * 0.5 - 0.5, 0.6), axes, Vec3::new(w, h * 0.5 + 0.5, 0.6));
+    b.cuboid(Vec3::new(0.0, h + 1.5, 0.5), axes, Vec3::new(w * 0.58, 1.5, 0.5));
+    b.cuboid(Vec3::new(0.0, h + 3.8, 0.45), axes, Vec3::new(w * 0.28, 0.8, 0.45));
+    b.color(WHITE);
+    // Cornisas que sobresalen.
+    for y in [5.0, 10.0, h] {
+        b.cuboid(Vec3::new(0.0, y, 0.7), axes, Vec3::new(w + 0.25, 0.22, 0.75));
     }
-    if detail >= 2 {
-        // Piedras sueltas al pie.
-        b.color(PLAIN);
-        for k in 0..4u32 {
-            let h = hash_u32(0x57E1A ^ k.wrapping_mul(0x9E37));
-            let unit = |shift: u32| ((h >> shift) & 0xFF) as f32 / 255.0;
-            let a = (k as f32 + 0.5 * unit(0)) / 4.0 * TAU;
-            let r = 2.1 + 0.6 * unit(8);
-            let (s, c) = (a * 1.7).sin_cos();
-            b.cuboid(
-                Vec3::new(a.cos() * r, 0.15, a.sin() * r),
-                [Vec3::new(c, 0.0, s), Vec3::Y, Vec3::new(-s, 0.0, c)],
-                Vec3::new(0.3 + 0.2 * unit(16), 0.2 + 0.12 * unit(24), 0.25 + 0.15 * unit(4)),
-            );
+    if detail >= 1 {
+        // La cruz de arriba.
+        b.cuboid(Vec3::new(0.0, h + 5.6, 0.45), axes, Vec3::new(0.12, 1.0, 0.12));
+        b.cuboid(Vec3::new(0.0, h + 5.9, 0.45), axes, Vec3::new(0.5, 0.12, 0.12));
+    }
+    // Las torres con su cupula y su linterna.
+    let (side, tower, top) = TOWER;
+    for x in [-side, side] {
+        b.color(FRONT);
+        b.cuboid(Vec3::new(x, top * 0.5 - 0.5, 0.0), axes, Vec3::new(tower, top * 0.5 + 0.5, tower));
+        b.color(WHITE);
+        b.cuboid(Vec3::new(x, top, 0.0), axes, Vec3::new(tower + 0.2, 0.2, tower + 0.2));
+        b.color(DOME);
+        b.ellipsoid(Vec3::new(x, top + 0.2, 0.0), Vec3::new(tower * 0.95, 1.9, tower * 0.95), rings, segments, true);
+        if detail >= 2 {
+            b.color(WHITE);
+            b.frustum(Vec3::new(x, top + 2.0, 0.0), Vec3::Y, 1.0, 0.3, 0.05, 6, false, (false, false));
         }
+    }
+    // Las gradas del atrio.
+    b.color(STEPS);
+    b.cuboid(Vec3::new(0.0, -0.1, 3.4), axes, Vec3::new(side + tower + 1.5, 0.45, 2.6));
+    if detail >= 1 {
+        b.cuboid(Vec3::new(0.0, 0.3, 2.0), axes, Vec3::new(side + tower + 0.5, 0.35, 1.2));
     }
     b.build()
 }
@@ -404,7 +436,7 @@ fn pine(detail: usize) -> Mesh {
 pub fn shade_prop(kind: PropKind, f: &Fragment, u: &Uniforms, style: &PropStyle, sun: Vec3) -> Vec3 {
     let light = mountain_light(sun);
     match kind {
-        PropKind::Estela => stela_shade(f, u, style, light),
+        PropKind::Iglesia => church_shade(f, u, style, light),
         _ => pine_shade(f, u, style, light),
     }
 }
@@ -455,7 +487,7 @@ fn pine_shade(f: &Fragment, u: &Uniforms, style: &PropStyle, light: Vec3) -> Vec
     lit + albedo * light * (back * 0.25 * tips)
 }
 
-// La talla de las estelas -----------------------------------------------------
+// La fachada de la iglesia -----------------------------------------------------
 
 /// Distancia con signo a una caja centrada en `c` con medias medidas `h` y
 /// esquinas redondeadas `r`.
@@ -466,175 +498,161 @@ fn rounded_box(x: f32, y: f32, c: (f32, f32), h: (f32, f32), r: f32) -> f32 {
     qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r
 }
 
-/// Distancia con signo a un segmento de `a` a `b` con grosor `r`.
-#[inline]
-fn capsule(x: f32, y: f32, a: (f32, f32), b: (f32, f32), r: f32) -> f32 {
-    let (px, py) = (x - a.0, y - a.1);
-    let (bx, by) = (b.0 - a.0, b.1 - a.1);
-    let t = ((px * bx + py * by) / (bx * bx + by * by)).clamp(0.0, 1.0);
-    (px - bx * t).hypot(py - by * t) - r
-}
 
 #[inline]
 fn circle(x: f32, y: f32, c: (f32, f32), r: f32) -> f32 {
     (x - c.0).hypot(y - c.1) - r
 }
 
-/// Relieve redondeado de una forma: 1 adentro, 0 afuera, con un borde que
-/// baja en `soft` (nunca menos que un pixel).
+
+/// Lo amarillo de la iglesia (cal pintada) y los colores de la fachada.
+const YELLOW: Vec3 = Vec3::new(0.82, 0.55, 0.05);
+const LIME: Vec3 = Vec3::new(0.82, 0.8, 0.74);
+const ROSE: Vec3 = Vec3::new(0.85, 0.32, 0.38);
+const RED: Vec3 = Vec3::new(0.7, 0.05, 0.05);
+const BLUE: Vec3 = Vec3::new(0.06, 0.24, 0.62);
+const SKY_BLUE: Vec3 = Vec3::new(0.3, 0.55, 0.85);
+const GREEN: Vec3 = Vec3::new(0.08, 0.42, 0.16);
+const PURPLE: Vec3 = Vec3::new(0.32, 0.08, 0.42);
+const WOOD: Vec3 = Vec3::new(0.12, 0.05, 0.02);
+const TERRACOTTA: Vec3 = Vec3::new(0.55, 0.2, 0.08);
+
+/// Una forma pintada en la fachada: cubre `color` donde la distancia con
+/// signo `d` es negativa, con el borde suavizado un pixel (`soft`).
 #[inline]
-fn raised(d: f32, soft: f32) -> f32 {
-    smoothstep(soft, -soft, d)
+fn paint(base: Vec3, color: Vec3, d: f32, soft: f32) -> Vec3 {
+    base.lerp(color, smoothstep(soft, -soft, d))
 }
 
-/// La cara ancha: el gobernante de pie, de frente, con la barra ceremonial
-/// en los brazos y un tocado enorme de plumas. `x` de lado a lado y `y`
-/// hacia arriba, en unidades del modelo. Devuelve la altura del relieve: 1
-/// es la cara de la piedra, 0 el fondo tallado.
-fn ruler(x: f32, y: f32, soft: f32, noise: &Perlin) -> f32 {
-    let w = STELA.x;
-    let ax = x.abs();
-    // El marco: la piedra queda entera en el borde y abajo.
-    let field = raised(rounded_box(x, y, (0.0, 5.25), (w - 0.07, 4.65), 0.05), soft);
-    // El fondo esta lleno de volutas (curvas donde un ruido cruza por cero).
-    let scroll = 1.0 - noise.noise(Vec3::new(x * 2.6, y * 2.6, 3.7)).abs();
-    let mut h = 0.35 * smoothstep(0.8, 0.9, scroll);
-    // Pies, piernas, el faldellin con sus franjas y el cinturon con mascaras.
-    let feet = rounded_box(ax, y, (0.3, 0.85), (0.22, 0.22), 0.08);
-    let legs = capsule(ax, y, (0.27, 1.1), (0.3, 3.0), 0.16);
-    let apron = rounded_box(x, y, (0.0, 2.9), (0.22, 1.5), 0.08);
-    let bands = 0.15 * smoothstep(0.35, 0.5, ((y * 2.5).fract() - 0.5).abs() * 2.0);
-    h = h.max(0.8 * raised(feet.min(legs), soft)).max((0.9 - bands) * raised(apron, soft));
-    let belt = rounded_box(x, y, (0.0, 4.45), (0.66, 0.2), 0.06);
-    h = h.max(raised(belt, soft));
-    let masks = circle(ax, y, (0.0, 4.45), 0.14).min(circle(ax, y, (0.42, 4.45), 0.12));
-    h = h.max(0.75 + 0.25 * raised(masks, soft) - 0.2 * raised(masks + 0.06, soft));
-    // El torso con el pectoral, los brazos y la barra con cabezas de serpiente.
-    let torso = rounded_box(x, y, (0.0, 5.25), (0.46, 0.65), 0.18);
-    let arms = capsule(ax, y, (0.5, 5.9), (0.42, 5.25), 0.13);
-    h = h.max(0.85 * raised(torso.min(arms), soft));
-    let bar = rounded_box(x, y, (0.0, 5.2), (0.62, 0.11), 0.05).min(circle(ax, y, (0.66, 5.2), 0.17));
-    h = h.max(raised(bar, soft));
-    let pectoral = circle(x, y, (0.0, 5.65), 0.2);
-    h = h.max(0.9 + 0.1 * raised(pectoral, soft) - 0.25 * raised(pectoral + 0.08, soft));
-    // La cabeza con orejeras y la cara.
-    let head = ((x / 0.3).powi(2) + ((y - 6.5) / 0.4).powi(2)).sqrt() - 1.0;
-    let spools = circle(ax, y, (0.4, 6.45), 0.12);
-    h = h.max(raised(head * 0.3, soft)).max(0.9 * raised(spools, soft));
-    let eyes = rounded_box(ax, y, (0.12, 6.58), (0.07, 0.03), 0.02);
-    let mouth = rounded_box(x, y, (0.0, 6.3), (0.1, 0.025), 0.02);
-    h -= 0.3 * raised(eyes.min(mouth), soft) * raised(head * 0.3, soft);
-    // El tocado: bandas, una mascara al centro y un abanico de plumas.
-    let crown = rounded_box(x, y, (0.0, 7.45), (0.74, 0.5), 0.15);
-    let crown_bands = 0.12 * smoothstep(0.3, 0.45, ((y * 3.0).fract() - 0.5).abs() * 2.0);
-    h = h.max((0.85 - crown_bands) * raised(crown, soft));
-    let mask = circle(x, y, (0.0, 7.5), 0.3);
-    h = h.max(raised(mask, soft) - 0.35 * raised(circle(ax, y, (0.12, 7.56), 0.06), soft));
-    let (fx, fy) = (x, y - 7.9);
-    let angle = fx.atan2(fy);
-    let reach = fx.hypot(fy);
-    let fan = smoothstep(1.25, 0.9, angle.abs()) * raised(reach - 1.75, soft) * smoothstep(0.35, 0.5, reach);
-    let feathers = 1.0 - 0.3 * smoothstep(0.25, 0.5, ((angle * 4.5).fract() - 0.5).abs() * 2.0);
-    h = h.max(0.8 * fan * feathers);
-    // La talla queda adentro del marco; el resto es la piedra entera.
-    1.0 + (h - 1.0) * field
-}
-
-/// Una cara angosta: dos columnas de glifos en cartuchos. Cada glifo sale
-/// de su numero: una cabeza con un prefijo, un numero de barras y puntos
-/// con su signo, o cuatro signos chicos.
-fn glyphs(x: f32, y: f32, soft: f32) -> f32 {
-    let w = STELA.z;
-    let field = raised(rounded_box(x, y, (0.0, 5.25), (w - 0.07, 4.65), 0.05), soft);
-    let cell = (w - 0.07) / 1.0;
-    let (cx, cy) = ((x / cell + 1.0).floor(), ((y - 0.6) / 0.62).floor());
-    if !(0.0..=1.0).contains(&cx) || !(0.0..14.0).contains(&cy) {
-        return 1.0 + (0.0 - 1.0) * field;
+/// El frente de la fachada en `(x, y)` (unidades del modelo, `x` de lado a
+/// lado, `y` hacia arriba): todo lo que la hace famosa.
+fn facade(x: f32, y: f32, soft: f32) -> Vec3 {
+    let (w, h) = FACADE;
+    let mut c = YELLOW;
+    // Columnas con franjas en espiral: rojo, blanco, azul y verde.
+    for column in [-6.4f32, -4.0, -1.8, 1.8, 4.0, 6.4] {
+        let d = (x - column).abs() - 0.38;
+        if d < soft && y < h {
+            let band = ((y + (x - column) * 0.8) * 1.6).rem_euclid(4.0) as u32;
+            let stripe = [RED, LIME, BLUE, GREEN][band as usize % 4];
+            c = paint(c, stripe, d, soft);
+        }
     }
-    let center = ((cx - 0.5) * cell, 0.6 + (cy + 0.5) * 0.62);
-    let (lx, ly) = (x - center.0, y - center.1);
-    let block = rounded_box(lx, ly, (0.0, 0.0), (cell * 0.43, 0.27), 0.07);
-    let mut h = 0.9 * raised(block, soft);
-    let id = hash_u32((cx as u32) ^ (cy as u32).wrapping_mul(0x9E37_79B9) ^ 0x61F);
-    let inner = match id % 3 {
-        // Cabeza de perfil con un prefijo delgado a la izquierda.
-        0 => circle(lx, ly, (0.05, -0.01), 0.17).min(rounded_box(lx, ly, (-0.19, 0.0), (0.04, 0.17), 0.03)),
-        // Numero: barras (cinco) y puntos (uno) a la izquierda y el signo.
-        1 => {
-            let bars = 1 + (id >> 4) % 3;
-            let mut d = rounded_box(lx, ly, (0.08, 0.0), (0.13, 0.15), 0.05);
-            for k in 0..bars {
-                d = d.min(rounded_box(lx, ly, (-0.12 - 0.07 * k as f32, 0.0), (0.025, 0.17), 0.015));
+    // Las cornisas: blancas con una linea roja.
+    for level in [5.0f32, 10.0, h] {
+        c = paint(c, LIME, (y - level).abs() - 0.3, soft);
+        c = paint(c, RED, (y - level - 0.38).abs() - 0.06, soft);
+    }
+    // La enredadera bajo cada cornisa: un tallo verde que ondula con hojas,
+    // uvas moradas y de vez en cuando una mazorca amarilla.
+    for level in [5.0f32, 10.0, h] {
+        let v = y - (level - 0.85 + 0.22 * (x * 2.2).sin());
+        c = paint(c, GREEN, v.abs() - 0.07, soft);
+        let leaf = (x * 2.2 / std::f32::consts::PI).round() * std::f32::consts::PI / 2.2;
+        c = paint(c, GREEN, circle(x, y, (leaf + 0.25, level - 0.6), 0.16), soft);
+        let k = (x * 1.1).floor();
+        let grape = (x * 1.1).fract() - 0.5;
+        if (k as i32).rem_euclid(3) == 0 {
+            c = paint(c, YELLOW * 1.2, rounded_box(grape, y - (level - 1.15), (0.0, 0.0), (0.12, 0.28), 0.1), soft);
+        } else {
+            for (gx, gy) in [(-0.12f32, 0.0f32), (0.12, 0.0), (0.0, -0.2)] {
+                c = paint(c, PURPLE, circle(grape, y - (level - 1.1), (gx, gy), 0.1), soft);
             }
-            d
         }
-        // Cuatro signos chicos.
-        _ => {
-            let (qx, qy) = (lx.abs() - 0.11, ly.abs() - 0.12);
-            rounded_box(qx, qy, (0.0, 0.0), (0.085, 0.09), 0.04)
-        }
-    };
-    // Los signos quedan en alto, separados del cartucho por un surco.
-    h -= 0.3 * raised(inner.abs() - 0.012, soft) * raised(block, soft);
-    1.0 + (h - 1.0) * field
-}
-
-/// Las caras de una estela.
-#[derive(Clone, Copy)]
-enum Face {
-    Broad,
-    Narrow,
-    Top,
-}
-
-/// Que tan hondo es el relieve de las estelas, en unidades del modelo.
-const CARVE: f32 = 0.09;
-
-/// Estela de Quirigua: arenisca cafe rojiza con liquen, tallada en alto
-/// relieve. La normal del relieve sale de diferencias finitas de su altura,
-/// con un paso del tamano de un pixel; los surcos se oscurecen.
-fn stela_shade(f: &Fragment, u: &Uniforms, style: &PropStyle, light: Vec3) -> Vec3 {
-    let p = f.local;
-    let footprint = model_footprint(f, u, style.scale);
-    let weather = u.noise.fbm(p * 1.3 + Vec3::splat(style.seed * 40.0), 3) * 0.5 + 0.5;
-    let lichen = smoothstep(0.55, 0.75, u.noise.fbm(p * 2.1 + Vec3::splat(9.0 + style.seed * 30.0), 3) * 0.5 + 0.5 + 0.25 * smoothstep(2.5, 0.0, p.y));
-    let sandstone = Vec3::new(0.36, 0.22, 0.14).lerp(Vec3::new(0.46, 0.32, 0.22), weather);
-    if f.color.x < 0.5 {
-        let tex = detail::rock(f, u, 0.6, footprint * style.scale, 0.7);
-        let albedo = sandstone * 0.8 * (0.6 + 0.6 * tex.color.luminance());
-        return pbr::shade_light(f, u, albedo, 0.9, 0.0, tex.normal, tex.ao, light);
     }
-    // En que cara cae: el eje dominante de la normal en el modelo. Las
-    // anchas llevan al gobernante (la de atras, de espejo); las angostas,
-    // glifos; arriba no hay talla.
-    let nm = to_model(f, f.normal);
-    let a = nm.abs();
-    let soft = (footprint * 0.8).max(0.012);
-    let (face, tu) = if a.z > a.x.max(a.y) {
-        (Face::Broad, Vec3::X * nm.z.signum())
-    } else if a.x > a.y {
-        (Face::Narrow, Vec3::Z * -nm.x.signum())
+    // Un angel en cada tablero entre columnas: cabeza, tunica de color, alas
+    // blancas abiertas. Los tableros del centro llevan la puerta y la ventana.
+    let panels = [(-5.2f32, BLUE), (-2.9, ROSE), (2.9, SKY_BLUE), (5.2, ROSE)];
+    for &(cx, robe) in &panels {
+        for (story, cy) in [(0u32, 2.2f32), (1, 7.2), (2, 12.2)] {
+            let robe = if story == 1 { GREEN } else { robe };
+            let wings = circle(x, y, (cx - 0.45, cy + 0.6), 0.45).min(circle(x, y, (cx + 0.45, cy + 0.6), 0.45));
+            c = paint(c, LIME, wings, soft);
+            c = paint(c, robe, rounded_box(x, y, (cx, cy), (0.32 + 0.15 * (cy + 0.5 - y).max(0.0), 0.75), 0.15), soft);
+            c = paint(c, ROSE * 1.1 + Vec3::splat(0.1), circle(x, y, (cx, cy + 1.05), 0.26), soft);
+            c = paint(c, YELLOW * 1.3, (circle(x, y, (cx, cy + 1.15), 0.4)).abs() - 0.04, soft);
+        }
+    }
+    // La puerta en arco con su marco blanco, y la ventana del coro.
+    let door = rounded_box(x, y, (0.0, 1.6), (1.15, 2.2), 0.0).min(circle(x, y, (0.0, 3.8), 1.15));
+    c = paint(c, LIME, door - 0.3, soft);
+    c = paint(c, WOOD, door, soft);
+    c = paint(c, WOOD * 0.6, (x.abs() - 0.04).max(door), soft);
+    let window = rounded_box(x, y, (0.0, 7.2), (0.6, 0.9), 0.0).min(circle(x, y, (0.0, 8.1), 0.6));
+    c = paint(c, LIME, window - 0.2, soft);
+    c = paint(c, Vec3::new(0.02, 0.03, 0.05), window, soft);
+    // El medallon del remate: azul con un sol blanco.
+    let medal = circle(x, y, (0.0, h + 1.5), 1.1);
+    c = paint(c, LIME, medal - 0.15, soft);
+    c = paint(c, BLUE, medal, soft);
+    c = paint(c, LIME, circle(x, y, (0.0, h + 1.5), 0.45), soft);
+    // El borde de la fachada: una franja roja.
+    c = paint(c, RED, w - 0.2 - x.abs(), soft);
+    c
+}
+
+/// Las torres por el frente: campanario con su arco oscuro arriba, una
+/// columna de franjas a cada lado y un angel.
+fn tower_front(x: f32, y: f32, soft: f32) -> Vec3 {
+    let (_, tower, top) = TOWER;
+    let mut c = YELLOW;
+    for edge in [-1.0f32, 1.0] {
+        let d = (x - edge * (tower - 0.3)).abs() - 0.22;
+        let band = ((y * 1.6).rem_euclid(3.0)) as usize;
+        c = paint(c, [RED, LIME, BLUE][band], d, soft);
+    }
+    let bell = rounded_box(x, y, (0.0, top - 3.2), (0.7, 1.0), 0.0).min(circle(x, y, (0.0, top - 2.2), 0.7));
+    c = paint(c, LIME, bell - 0.15, soft);
+    c = paint(c, Vec3::new(0.02, 0.02, 0.02), bell, soft);
+    c = paint(c, ROSE, circle(x, y, (0.0, 9.0), 0.5), soft);
+    c = paint(c, LIME, (y - 5.0).abs() - 0.25, soft);
+    c = paint(c, LIME, (y - 10.0).abs() - 0.25, soft);
+    c
+}
+
+/// La iglesia de San Andres Xecul: amarilla y pintada por delante, lisa a
+/// los lados; teja de barro, cupulas de gajos rojos y blancos, cal blanca y
+/// piedra en las gradas.
+fn church_shade(f: &Fragment, u: &Uniforms, style: &PropStyle, light: Vec3) -> Vec3 {
+    let p = f.local;
+    // El color de vertice llega interpolado (1.0000001 no es 1): se compara
+    // cada canal contra la mitad.
+    let code = |v: Vec3| (v.x > 0.5, v.y > 0.5, v.z > 0.5);
+    let c = code(f.color);
+    let is = |material: Vec3| c == code(material);
+    let footprint = model_footprint(f, u, style.scale);
+    let soft = (footprint * 0.7).max(0.02);
+    let grime = u.noise.fbm(p * 0.6, 3) * 0.5 + 0.5;
+    let (albedo, rough) = if is(FRONT) && to_model(f, f.normal).z > 0.7 {
+        let in_tower = p.x.abs() > TOWER.0 - TOWER.1 - 0.05;
+        let x = if in_tower { p.x - TOWER.0 * p.x.signum() } else { p.x };
+        let art = if in_tower { tower_front(x, p.y, soft) } else { facade(x, p.y, soft) };
+        (art * (0.85 + 0.2 * grime), 0.75)
+    } else if is(FRONT) || is(WALL) {
+        (YELLOW * (0.75 + 0.3 * grime), 0.85)
+    } else if is(TILE) {
+        let channel = ((p.x * 3.0).fract() - 0.5).abs() * 2.0;
+        (TERRACOTTA * (0.6 + 0.4 * channel) * (0.85 + 0.3 * grime), 0.75)
+    } else if is(DOME) {
+        // Gajos rojos y blancos alrededor del eje de cada cupula.
+        let center = if p.x.abs() > TOWER.0 * 0.5 { TOWER.0 * p.x.signum() } else { 0.0 };
+        let z = if center == 0.0 { p.z + NAVE.0 * 0.7 } else { p.z };
+        let gore = (0.5 + 0.5 * (z.atan2(p.x - center) * 8.0).cos()).powf(0.5);
+        (RED.lerp(LIME, smoothstep(0.45, 0.55, gore)), 0.45)
+    } else if is(WHITE) {
+        (LIME * (0.85 + 0.2 * grime), 0.8)
     } else {
-        (Face::Top, Vec3::X)
+        let tex = detail::rock(f, u, 0.5, footprint * style.scale, 0.6);
+        return pbr::shade_light(f, u, Vec3::new(0.32, 0.3, 0.28) * (0.6 + 0.6 * tex.color.luminance()), 0.9, 0.0, tex.normal, tex.ao, light);
     };
-    let relief = |x: f32, y: f32| match face {
-        Face::Broad => ruler(x, y, soft, u.noise),
-        Face::Narrow => glyphs(x, y, soft),
-        Face::Top => 1.0,
+    // La sombra se busca un poco afuera de la pared, y mas con la luz
+    // rasante: en las caras grandes y lisas el mapa de sombras hacia acne.
+    let grazing = 1.0 - f.normal.dot(f.light_dir(u)).abs();
+    let lifted = Fragment {
+        pos: f.pos + f.normal * ((0.08 + 0.003 * f.pos.length()) * (1.0 + 3.0 * grazing)),
+        ..*f
     };
-    let (x, y) = (p.dot(tu), p.y);
-    let h = relief(x, y);
-    // Diferencias finitas con el paso de un pixel: la pendiente del relieve
-    // (que tan hondo es: `CARVE` unidades del modelo) inclina la normal.
-    let dx = (relief(x + soft, y) - h) / soft;
-    let dy = (relief(x, y + soft) - h) / soft;
-    let slope = (tu * dx + Vec3::Y * dy) * CARVE;
-    let normal = (f.normal - f.object_to_world.mul_vec(slope)).normalize();
-    let (cavity, depth) = (0.45 + 0.55 * h, h);
-    let albedo = sandstone.lerp(Vec3::new(0.07, 0.08, 0.05), lichen * 0.65)
-        * (0.7 + 0.3 * depth)
-        * (0.85 + 0.3 * weather);
-    pbr::shade_light(f, u, albedo, 0.88, 0.0, normal, cavity, light)
+    pbr::shade_light(&lifted, u, albedo, rough, 0.0, f.normal, 1.0, light)
 }
 
 // Los barriletes de Sumpango -------------------------------------------------
@@ -871,7 +889,7 @@ mod tests {
         // Tambien alrededor del llano.
         let plaza = (0..400).map(|i| {
             let t = i as f32 * 0.61;
-            (QUIRIGUA.normalize() + Vec3::new(t.sin(), (t * 1.3).cos(), (t * 0.7).sin()) * (0.002 * i as f32)).normalize()
+            (XECUL.normalize() + Vec3::new(t.sin(), (t * 1.3).cos(), (t * 0.7).sin()) * (0.002 * i as f32)).normalize()
         });
         for dir in directions().chain(plaza) {
             let s = a.sample(dir);
@@ -881,26 +899,25 @@ mod tests {
         }
     }
 
-    /// Las estelas estan de pie en el llano de zacate, sin bosque, y el
-    /// lugar mira hacia donde dice.
+    /// La iglesia esta de pie en el llano de zacate, sin bosque, con la
+    /// fachada hacia quien llega.
     #[test]
-    fn the_stelae_stand_on_the_grassy_plaza() {
+    fn the_church_stands_on_the_grassy_plaza_facing_the_visitor() {
         let field = Sierra::new(11);
         let (_, normal, forward, place) = site((DVec3::Y, DVec3::Z)).unwrap();
         assert!(normal.dot(forward).abs() < 1e-9);
         let frame = (normal, forward, forward.cross(normal));
         let mut instances = Vec::new();
         place(&mut instances, 200.0, &field, 3, frame);
-        let stelae: Vec<_> = instances.iter().filter(|p| p.kind == PropKind::Estela).collect();
-        assert_eq!(stelae.len(), STELAE.len());
-        for stela in stelae {
-            let dir = stela.position.normalize();
-            let s = field.sample(dir.as_vec3());
-            assert!(s.attrs.x > 0.9 && s.attrs.z < 0.1, "{:?}", s.attrs);
-            let ground = 200.0 + s.height as f64;
-            assert!((stela.position.length() - ground).abs() < 0.5);
-            assert!(stela.rotation.rotate(DVec3::Y).dot(dir) > 0.999);
-        }
+        let churches: Vec<_> = instances.iter().filter(|p| p.kind == PropKind::Iglesia).collect();
+        assert_eq!(churches.len(), 1);
+        let church = churches[0];
+        let dir = church.position.normalize();
+        let s = field.sample(dir.as_vec3());
+        assert!(s.attrs.x > 0.9 && s.attrs.z < 0.1, "{:?}", s.attrs);
+        assert!(church.rotation.rotate(DVec3::Y).dot(dir) > 0.999);
+        // El frente del modelo (+z) mira hacia atras del lugar.
+        assert!(church.rotation.rotate(DVec3::Z).dot(-forward) > 0.99);
     }
 
     #[test]

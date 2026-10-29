@@ -41,20 +41,23 @@ con luces que alumbran lo de alrededor y algo que flota a su lado. La tecla
 ## La versión chapina (V)
 
 Con **V** el sistema entero se vuelve otro juego: Guatemala. Una cortina se
-abre desde el centro de la pantalla con un borde de tejido de huipil (al
-volver, una brasa) y aparece **GUATEMALA**. Las órbitas, los tamaños y la
+abre desde el centro de la pantalla con el borde de una faja tejida (orillas
+de picos y, sobre el rojo del huipil, quetzales, volcanes, mazorcas,
+barriletes y grecas mayas; al volver, una brasa) y aparece **GUATEMALA**. Las órbitas, los tamaños y la
 física son los mismos, así que la nave sigue donde estaba, pero no queda nada
 de OCASO a la vista: cada planeta tiene su propio relieve, su shader, sus
 objetos, sus anillos, su atmósfera y su lugar; el cielo es otro (una Vía
 Láctea dorada con la grieta oscura que los mayas veían como el camino a
 Xibalbá), el sol es **Kinich Ajaw**, que no late ni se apaga (J no hace
-nada), la nave es una **botella** y en vez del latido suena **música**.
+nada), la nave es una **botella** y en vez del latido suena **música**. Es
+de día: la luz del sol es más blanca y fuerte que la de la gigante roja y
+las sombras tienen más relleno.
 
 | | |
 | --- | --- |
 | ![Kinich Ajaw con el glifo k'in](media/53_kinich.png) | ![Antigua, el Arco y el Volcán de Fuego](media/42_antigua.png) |
 | ![Tikal: el Templo del Gran Jaguar sobre la selva](media/44_tikal.png) | ![Panajachel y los volcanes de Atitlán](media/46_panajachel.png) |
-| ![Semuc Champey: pozas turquesa](media/47_semuc.png) | ![Quiriguá y la Luna de Xelajú](media/49_quirigua.png) |
+| ![Semuc Champey: pozas turquesa](media/47_semuc.png) | ![San Andrés Xecul y la Luna de Xelajú](media/49_xecul.png) |
 | ![La capital y su anillo de camionetas](media/51_capital.png) | ![La Torre del Reformador](media/52_reformador.png) |
 
 | OCASO | Versión chapina | Lugar (N) |
@@ -64,7 +67,7 @@ nada), la nave es una **botella** y en vez del latido suena **música**.
 | Jardín | **Petén**: selva, ríos y lagos | **Tikal**: el Templo del Gran Jaguar saliendo sobre la selva, ceibas y luciérnagas |
 | Vigía | **Atitlán**: un mundo lago con los volcanes Atitlán, Tolimán y San Pedro; el agua refleja y en las tardes el Xocomil la pica | **Panajachel**: el muelle y las lanchas que se mecen con las olas |
 | Párpado | **Semuc Champey**: pozas turquesa en terrazas de caliza entre la selva | **Las pozas** |
-| Argos | **Los Cuchumatanes**: sierra con helada al amanecer y pinos; en su anillo, los barriletes gigantes de Sumpango | **Quiriguá**: las estelas talladas (las tallas son del shader) |
+| Argos | **Los Cuchumatanes**: sierra con helada al amanecer y pinos; en su anillo, los barriletes gigantes de Sumpango | **San Andrés Xecul**: la iglesia amarilla con sus columnas de colores, ángeles, enredaderas y cúpulas de gajos (todo pintado por el shader) |
 | — | **La Luna de Xelajú**, luna de los Cuchumatanes, con un tejido de huipil que brilla de noche | — |
 | Cementerio | **La capital**: barrancos, cuadras y luces; en su anillo, camionetas y tuc-tucs dando vueltas | **El Reformador**: la torre, camionetas extraurbanas y edificios |
 

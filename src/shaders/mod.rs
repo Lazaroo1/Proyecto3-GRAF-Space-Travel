@@ -175,6 +175,9 @@ pub struct Uniforms<'a> {
     pub clouds: Option<&'a CoronaClouds>,
     /// Si se ve la version chapina (la corona de Kinich Ajaw es otra).
     pub chapin: bool,
+    /// Cuanta luz de relleno hay en las sombras (1 en OCASO; mas en la
+    /// version chapina, que es de dia).
+    pub fill: f32,
     pub debug: DebugView,
 }
 

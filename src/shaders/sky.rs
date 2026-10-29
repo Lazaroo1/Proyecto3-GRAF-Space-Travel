@@ -47,8 +47,8 @@ pub enum SkyStyle {
     Chapin,
 }
 
-/// Fondo de la version chapina: un indigo apenas verdoso.
-const BACKGROUND_CHAPIN: Vec3 = Vec3::new(0.0002, 0.0004, 0.0008);
+/// Fondo de la version chapina: el azul de una noche despejada.
+const BACKGROUND_CHAPIN: Vec3 = Vec3::new(0.0012, 0.0026, 0.0075);
 
 impl SkyCube {
     /// Hornea el cielo en paralelo. Cada texel evalua las estrellas en su
@@ -322,7 +322,7 @@ fn milky_way(dir: Vec3, noise: &Perlin) -> Vec3 {
     let rift = 1.0 - 0.92 * (-((latitude + 0.04 * warp) / (0.03 + 0.03 * bulge)).powi(2)).exp();
     let dust = smoothstep(0.5, 0.7, noise.fbm(dir * 16.0 + Vec3::new(9.0, 3.0, 1.0), 4) * 0.5 + 0.5);
     let warm = Vec3::new(0.52, 0.47, 0.38).lerp(Vec3::new(0.62, 0.5, 0.32), bulge);
-    warm * (band * clouds.powi(2) * (0.6 + 1.6 * bulge) * rift * (1.0 - 0.7 * dust) * 0.2)
+    warm * (band * clouds.powi(2) * (0.6 + 1.6 * bulge) * rift * (1.0 - 0.7 * dust) * 0.11)
 }
 
 /// La corona de Kinich Ajaw (version chapina): un halo dorado, rayos que
@@ -464,6 +464,7 @@ mod tests {
             gains: Default::default(),
             clouds: None,
             chapin: false,
+            fill: 1.0,
             debug: Default::default(),
         };
         let n = 2_000_000;

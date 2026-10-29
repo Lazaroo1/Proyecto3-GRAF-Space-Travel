@@ -570,7 +570,7 @@ pub const PRESETS: [Preset; 48] = [
         chapin: true,
     },
     Preset {
-        name: "49_quirigua",
+        name: "49_xecul",
         shot: Shot::Site {
             body: "Argos",
             altitude: 14.0,
@@ -1415,9 +1415,14 @@ impl App {
         });
         // De donde sale la luz: la estrella o, despues, el disco de Gargantua.
         let disk_light = state.disk_density * (1.0 - state.star_glow);
-        let sun_light = planckian_rgb(state.star_temperature)
-            * (1.5 * (1.0 + 0.06 * beat) * state.star_light)
-            + planckian_rgb(state.disk_peak * 1.3) * (0.35 * disk_light);
+        // Kinich Ajaw es un sol de dia: luz mas blanca y mas fuerte que la de
+        // la gigante roja.
+        let sun_light = if ocaso {
+            planckian_rgb(state.star_temperature) * (1.5 * (1.0 + 0.06 * beat) * state.star_light)
+                + planckian_rgb(state.disk_peak * 1.3) * (0.35 * disk_light)
+        } else {
+            planckian_rgb(5200.0) * 2.4
+        };
         let light_radius = star_radius
             .max(state.disk_outer as f64 * state.rs * 0.5)
             .max(1.0);
@@ -1622,8 +1627,10 @@ impl App {
             _ => None,
         };
         self.renderer.p2_curve = state.rs > 0.5;
-        self.renderer.exposure =
-            self.exposure * state.exposure * if self.renderer.p2_curve { 5.0 } else { 1.0 };
+        self.renderer.exposure = self.exposure
+            * state.exposure
+            * if self.renderer.p2_curve { 5.0 } else { 1.0 }
+            * if ocaso { 1.0 } else { 1.15 };
         self.renderer.whiteout = state.whiteout;
         self.renderer.blackout = self.death_fade();
         // Lo que esta detras del agujero y cae en su sombra no se ve: las
@@ -1736,6 +1743,7 @@ impl App {
             gains: self.gains,
             clouds: corona.then_some(&self.clouds),
             chapin: !ocaso,
+            fill: if ocaso { 1.0 } else { 2.2 },
             debug: self.debug,
         };
         self.stats = self.renderer.render(&draws, &view, &uniforms);

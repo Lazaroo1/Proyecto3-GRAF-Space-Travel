@@ -180,6 +180,7 @@ fn run_window(options: &Options) -> Result<(), String> {
         hidden: false,
         preset: None,
         banner: None,
+        intro_over: false,
     };
     let mut preset_index: Option<usize> = None;
     let mut tweaks = tweaks::Tweaks::default();
@@ -349,6 +350,7 @@ fn run_window(options: &Options) -> Result<(), String> {
         }
         if rl.is_key_pressed(KeyboardKey::KEY_V) {
             app.toggle_version();
+            hud.intro_over = true;
         }
         if rl.is_key_pressed(KeyboardKey::KEY_B) {
             app.next_bottle();
