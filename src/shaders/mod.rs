@@ -44,7 +44,7 @@ pub use pbr::PointLight;
 pub use props::{BEACON_PERIOD, PropStyle, beacon_flash, vent_activity};
 pub use rings::{RingInfo, RingStyle};
 pub use ship::ShipStyle;
-pub use sky::{CoronaClouds, SkyCube, shade as sky};
+pub use sky::{CoronaClouds, SkyCube, SkyStyle, shade as sky};
 pub use sun::{SunStyle, heartbeat, heartbeat_phase};
 pub use textures::Textures;
 
@@ -173,6 +173,8 @@ pub struct Uniforms<'a> {
     pub gains: Gains,
     /// Nubes de la corona de la estrella, tabuladas en este frame.
     pub clouds: Option<&'a CoronaClouds>,
+    /// Si se ve la version chapina (la corona de Kinich Ajaw es otra).
+    pub chapin: bool,
     pub debug: DebugView,
 }
 

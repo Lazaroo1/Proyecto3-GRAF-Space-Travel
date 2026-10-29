@@ -18,7 +18,7 @@ use crate::config;
 use crate::math::{DQuat, DVec3, Perlin, Vec3};
 use crate::shaders::{
     ArgosLook, AtmosphereModel, AtmosphereParams, Material, RingStyle, ShipStyle, SkyCube,
-    SunStyle, Textures, heartbeat,
+    SkyStyle, SunStyle, Textures, heartbeat,
 };
 use crate::terrain::shapes::{
     ArgosField, CementerioField, JardinField, MIRROR_SHORE, ParpadoField, PiraField,
@@ -269,6 +269,8 @@ pub struct System {
     pub version: Version,
     other: Vec<Look>,
     other_sites: Vec<Site>,
+    /// El cielo de la otra version.
+    other_sky: SkyCube,
     /// Semilla con la que se colocaron los objetos de la otra version.
     other_seed: u32,
     /// Las naves botella de la version chapina.
@@ -623,7 +625,7 @@ impl System {
                 shininess: 40.0,
             }),
             noise: Perlin::new(seed),
-            sky: SkyCube::bake(config::SKY_SIZE, seed),
+            sky: SkyCube::bake(config::SKY_SIZE, seed, SkyStyle::Ocaso),
             textures: Textures::generate(),
             prop_models: props::build_models(),
             props: Vec::new(),
@@ -634,6 +636,7 @@ impl System {
             version: Version::Ocaso,
             other: Vec::new(),
             other_sites: Vec::new(),
+            other_sky: SkyCube::bake(config::SKY_SIZE, seed ^ 0xC4A9, SkyStyle::Chapin),
             other_seed: config::PROP_SEED,
             bottles,
         };
@@ -742,6 +745,7 @@ impl System {
             std::mem::swap(&mut self.props[i], &mut look.props);
         }
         std::mem::swap(&mut self.sites, &mut self.other_sites);
+        std::mem::swap(&mut self.sky, &mut self.other_sky);
         std::mem::swap(&mut self.prop_seed, &mut self.other_seed);
         self.version = match self.version {
             Version::Ocaso => Version::Chapin,

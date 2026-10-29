@@ -13,6 +13,7 @@ use crate::math::blackbody::planckian_rgb;
 use crate::math::geodesic::LensTable;
 use crate::math::{DMat3, DMat4, DQuat, DVec3, Vec3, hash_u32, smoothing, smoothstep};
 use crate::render::shadow::ShadowMap;
+use crate::render::transition::{self, Toward};
 use crate::render::{Draw, Particle, Renderer, Ripple, Stats, View};
 use crate::scene::camera::{Camera, CameraMode};
 use crate::scene::cycle::{self, CycleState, Timeline};
@@ -134,7 +135,7 @@ pub struct Preset {
     pub chapin: bool,
 }
 
-pub const PRESETS: [Preset; 49] = [
+pub const PRESETS: [Preset; 48] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
@@ -624,13 +625,6 @@ pub const PRESETS: [Preset; 49] = [
         chapin: true,
     },
     Preset {
-        name: "54_xibalba",
-        shot: Shot::BlackHole,
-        time: 835.0,
-        act: Some(139.0),
-        chapin: true,
-    },
-    Preset {
         name: "55_botella",
         shot: Shot::Ship { body: "Pira" },
         time: 40.0,
@@ -711,6 +705,13 @@ pub struct App {
     eye: DVec3,
     /// La nave botella elegida para la version chapina (B la cambia).
     pub bottle: usize,
+    /// El final de OCASO mientras se ve la version chapina (ahi no hay
+    /// final: Kinich Ajaw no se apaga).
+    ocaso_timeline: Timeline,
+    /// Si suena la marimba procedural (la elige el reproductor).
+    pub marimba_on: bool,
+    /// La transicion entre versiones, mientras dura.
+    transition: Option<Transition>,
     /// El ojo de Argos, en su espacio: a donde mira, el punto que tiene
     /// fijado, cuando puede saltar al siguiente y cuantos saltos lleva.
     stare: DVec3,
@@ -829,6 +830,9 @@ impl App {
             stare,
             fixation: stare,
             bottle: 0,
+            ocaso_timeline: Timeline::default(),
+            marimba_on: false,
+            transition: None,
             next_saccade: 0.0,
             saccades: 0,
             system,
@@ -992,6 +996,10 @@ impl App {
 
     /// J: desata el final de la estrella o, si ya empezo, su renacer.
     pub fn press_ending(&mut self) {
+        if self.system.version == Version::Chapin {
+            self.banner = Some("Kinich Ajaw no se apaga");
+            return;
+        }
         self.timeline.press(self.sim_time);
     }
 
@@ -1027,7 +1035,9 @@ impl App {
             _ => 36.7,
         };
         let state = cycle::at(t, &self.timeline, self.system.star_base);
-        let heart = if state.star_radius > 0.0 { 1.0 } else { 0.0 };
+        // En la version chapina no hay latido ni fondo: suena la musica.
+        let ocaso = self.system.version == Version::Ocaso;
+        let heart = if state.star_radius > 0.0 && ocaso { 1.0 } else { 0.0 };
         AudioParams {
             beat_phase: state.beat_phase,
             beat_rate: state.beat_rate,
@@ -1035,8 +1045,8 @@ impl App {
             throttle: self.throttle,
             wind: wind as f32,
             drone_hz,
-            drone: 0.6,
-            marimba: if self.system.version == Version::Chapin { 0.55 } else { 0.0 },
+            drone: if ocaso { 0.6 } else { 0.0 },
+            marimba: if !ocaso && self.marimba_on { 0.55 } else { 0.0 },
             master: if self.muted { 0.0 } else { 0.8 },
         }
     }
@@ -1046,14 +1056,54 @@ impl App {
         self.system.bodies.get(index).map_or("?", |b| b.label)
     }
 
-    /// Cambia de version (V): la nave sigue donde estaba.
+    /// Cambia de version (V) con la transicion: la imagen de ahora se
+    /// guarda y la nueva se abre encima. La nave sigue donde estaba.
     pub fn toggle_version(&mut self) {
+        let from = self.renderer.rgba().to_vec();
+        self.switch_version();
+        self.transition = Some(Transition {
+            from,
+            age: 0.0,
+            toward: match self.system.version {
+                Version::Chapin => Toward::Chapin,
+                Version::Ocaso => Toward::Ocaso,
+            },
+        });
+    }
+
+    /// Cambia de version sin transicion. En la chapina no hay final: se
+    /// guarda el de OCASO y se recupera al volver.
+    fn switch_version(&mut self) {
+        match self.system.version {
+            Version::Ocaso => {
+                self.ocaso_timeline = self.timeline;
+                self.timeline = Timeline::default();
+            }
+            Version::Chapin => self.timeline = self.ocaso_timeline,
+        }
         self.system.toggle_version();
         self.apply_ship();
-        self.banner = Some(match self.system.version {
-            Version::Ocaso => "OCASO",
-            Version::Chapin => "Version chapina",
-        });
+    }
+
+    /// El titulo grande de la transicion y su opacidad, mientras se ve.
+    pub fn transition_title(&self) -> Option<(&'static str, f32)> {
+        let tr = self.transition.as_ref()?;
+        let fade = smoothstep(0.2, 0.7, tr.age) * smoothstep(TITLE, TITLE - 0.8, tr.age);
+        let title = match tr.toward {
+            Toward::Chapin => "GUATEMALA",
+            Toward::Ocaso => "OCASO",
+        };
+        Some((title, fade))
+    }
+
+    /// Elige la nave botella `index` (teclas 1 a 6), en la version chapina.
+    pub fn select_bottle(&mut self, index: usize) {
+        if self.system.version != Version::Chapin || index >= self.system.bottles.len() {
+            return;
+        }
+        self.bottle = index;
+        self.apply_ship();
+        self.banner = Some(self.system.bottles[index].name);
     }
 
     /// La siguiente nave botella (B), solo en la version chapina.
@@ -1193,6 +1243,13 @@ impl App {
         let push = (input.thrust.length().min(1.0).max(cruise)
             * if input.boost { 1.0 } else { 0.6 }) as f32;
         self.throttle += (push - self.throttle) * smoothing(8.0, frame_dt) as f32;
+        // La transicion entre versiones avanza con el reloj de la ventana.
+        if let Some(tr) = &mut self.transition {
+            tr.age += frame_dt as f32;
+            if tr.age > TITLE {
+                self.transition = None;
+            }
+        }
         // El ojo de Vigia gira despacio hacia la nave.
         let target = eye_target(&self.system, self.ship.world_pos, self.sim_time);
         self.eye = self.eye.lerp(target, smoothing(0.35, frame_dt)).normalize();
@@ -1339,12 +1396,14 @@ impl App {
         }
         let star = &self.system.bodies[0];
         self.cycle = state;
-        let beat = if state.star_radius > 0.0 {
+        // El corazon es de la estrella de OCASO; Kinich Ajaw no late.
+        let ocaso = self.system.version == Version::Ocaso;
+        let beat = if state.star_radius > 0.0 && ocaso {
             heartbeat_phase(state.beat_phase) as f32
         } else {
             0.0
         };
-        let heart = if state.star_radius > 0.0 { 1.0 } else { 0.0 };
+        let heart = if state.star_radius > 0.0 && ocaso { 1.0 } else { 0.0 };
         // La estrella del ciclo: su radio late, se hincha y colapsa.
         // El panel de ajustes cambia el latido base (0.012 de diseno).
         let pulse = state.pulse * star.pulse / 0.012;
@@ -1607,7 +1666,7 @@ impl App {
             let reach = (star_radius * 3.0 / distance).min(1.0).asin();
             let half_diagonal = (view.tan_half_x as f64).hypot(view.tan_half_y as f64).atan();
             let cone = (half_diagonal + reach).min(std::f64::consts::PI);
-            state.star_glow > 0.001 && to_star.dot(camera.rot.forward()) > distance * cone.cos()
+            ocaso && state.star_glow > 0.001 && to_star.dot(camera.rot.forward()) > distance * cone.cos()
         };
         if corona {
             self.clouds.update(t as f32, &self.system.noise);
@@ -1622,7 +1681,7 @@ impl App {
             heart,
             star_glow: state.star_glow,
             flares: state.flares,
-            tail: pira_tail(&self.system, t, camera.pos, sun_light).filter(|_| state.star_glow > 0.01),
+            tail: pira_tail(&self.system, t, camera.pos, sun_light).filter(|_| ocaso && state.star_glow > 0.01),
             vapor: melting.and_then(|i| {
                 let pira = &self.system.bodies[i];
                 let center = pira.position(t);
@@ -1676,9 +1735,15 @@ impl App {
             biolum: self.gains.jardin * state.biolum,
             gains: self.gains,
             clouds: corona.then_some(&self.clouds),
+            chapin: !ocaso,
             debug: self.debug,
         };
         self.stats = self.renderer.render(&draws, &view, &uniforms);
+        if let Some(tr) = &self.transition {
+            let (width, height) = (self.renderer.width(), self.renderer.height());
+            let progress = tr.age / transition::WIPE;
+            transition::blend(self.renderer.rgba_mut(), &tr.from, width, height, progress, tr.toward);
+        }
         self.stats.ms_total = frame_start.elapsed().as_secs_f32() * 1000.0;
         self.stats
     }
@@ -1813,7 +1878,7 @@ impl App {
         out.clear();
         let system = &self.system;
         let star = &system.bodies[0];
-        if self.cycle.star_glow > 0.001 && star.radius > 1.0 {
+        if self.cycle.star_glow > 0.001 && star.radius > 1.0 && system.version == Version::Ocaso {
             let start = out.len();
             out.resize(start + effects::PROMINENCE_COUNT, blank);
             effects::prominences(
@@ -1972,9 +2037,9 @@ impl App {
     pub fn apply_preset(&mut self, preset: &Preset) {
         let want = if preset.chapin { Version::Chapin } else { Version::Ocaso };
         if self.system.version != want {
-            self.system.toggle_version();
-            self.apply_ship();
+            self.switch_version();
         }
+        self.transition = None;
         let t = preset.time;
         self.timeline = Timeline::at(t, preset.act);
         self.cinematic_fov = if matches!(preset.shot, Shot::BlackHole) {
@@ -2272,6 +2337,17 @@ impl App {
     }
 }
 
+/// La transicion entre versiones: la imagen de antes, cuanto lleva y a
+/// que version va.
+struct Transition {
+    from: Vec<u8>,
+    age: f32,
+    toward: Toward,
+}
+
+/// Segundos que se ve el titulo de la transicion (la cortina dura menos).
+const TITLE: f32 = 2.6;
+
 /// Un cuerpo en pantalla.
 #[derive(Clone, Debug)]
 pub struct Marker {
@@ -2319,10 +2395,10 @@ fn markers(
             if !on_screen || size > height as f64 * 0.2 {
                 return None;
             }
-            let name = match (i == 0 && state.rs > 0.0, system.version) {
-                (true, Version::Ocaso) => "Gargantua",
-                (true, Version::Chapin) => crate::chapin::HOLE_LABEL,
-                (false, _) => body.label,
+            let name = if i == 0 && state.rs > 0.0 {
+                "Gargantua"
+            } else {
+                body.label
             };
             Some(Marker {
                 name,

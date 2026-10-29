@@ -272,7 +272,8 @@ const LIMESTONE: Vec3 = Vec3::new(0.36, 0.36, 0.34);
 const ALGAE: Vec3 = Vec3::new(0.16, 0.2, 0.07);
 const CANOPY: Vec3 = Vec3::new(0.012, 0.05, 0.022);
 const CANOPY_LIGHT: Vec3 = Vec3::new(0.05, 0.14, 0.04);
-const BLOSSOM: Vec3 = Vec3::new(0.5, 0.12, 0.2);
+/// Copas en flor: el rosa lila del matilisguate.
+const BLOSSOM: Vec3 = Vec3::new(0.42, 0.2, 0.3);
 const FOAM: Vec3 = Vec3::new(0.85, 0.9, 0.88);
 /// Lo que el agua dispersa (el turquesa lechoso del carbonato) y cuanto
 /// apaga cada color por unidad de camino.
@@ -498,7 +499,8 @@ fn canopy(f: &Fragment, u: &Uniforms, footprint: f32) -> Vec3 {
     let patch = u.noise.fbm(f.local * 0.04, 2) * 0.5 + 0.5;
     let mut leaf = CANOPY.lerp(CANOPY_LIGHT, (0.25 + (tone - 0.5) * near * 0.8 + (patch - 0.5) * 0.9).clamp(0.0, 1.0));
     if id & 0xFF < 5 {
-        leaf = leaf.lerp(BLOSSOM, near);
+        // Solo en lo alto de la copa: la orilla queda verde.
+        leaf = leaf.lerp(BLOSSOM, near * near * 0.7);
     }
     // Sombra entre copas y entre las hojas.
     let gap = (1.0 - near * smoothstep(0.35, 0.0, edge) * 0.85) * (0.55 + 0.45 * leaves.height);

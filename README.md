@@ -38,6 +38,51 @@ con luces que alumbran lo de alrededor y algo que flota a su lado. La tecla
 | ![El ojo de Vigía de cerca](media/29_ojo_cerca.png) | **El ojo** (Vigía): sigue a la nave y, cuando se acerca, cierra la pupila, enciende el iris y los relámpagos se juntan debajo de ella. Jirones de nube pasan rozando. |
 | ![El claro de Jardín](media/11_hongos.png) | **El claro** (Jardín): colonias de hongos y corales que alumbran el suelo, con esporas flotando. |
 
+## La versión chapina (V)
+
+Con **V** el sistema entero se vuelve otro juego: Guatemala. Una cortina se
+abre desde el centro de la pantalla con un borde de tejido de huipil (al
+volver, una brasa) y aparece **GUATEMALA**. Las órbitas, los tamaños y la
+física son los mismos, así que la nave sigue donde estaba, pero no queda nada
+de OCASO a la vista: cada planeta tiene su propio relieve, su shader, sus
+objetos, sus anillos, su atmósfera y su lugar; el cielo es otro (una Vía
+Láctea dorada con la grieta oscura que los mayas veían como el camino a
+Xibalbá), el sol es **Kinich Ajaw**, que no late ni se apaga (J no hace
+nada), la nave es una **botella** y en vez del latido suena **música**.
+
+| | |
+| --- | --- |
+| ![Kinich Ajaw con el glifo k'in](media/53_kinich.png) | ![Antigua, el Arco y el Volcán de Fuego](media/42_antigua.png) |
+| ![Tikal: el Templo del Gran Jaguar sobre la selva](media/44_tikal.png) | ![Panajachel y los volcanes de Atitlán](media/46_panajachel.png) |
+| ![Semuc Champey: pozas turquesa](media/47_semuc.png) | ![Quiriguá y la Luna de Xelajú](media/49_quirigua.png) |
+| ![La capital y su anillo de camionetas](media/51_capital.png) | ![La Torre del Reformador](media/52_reformador.png) |
+
+| OCASO | Versión chapina | Lugar (N) |
+| --- | --- | --- |
+| La estrella | **Kinich Ajaw**, el sol maya: fuego dorado con el glifo k'in (la flor de cuatro pétalos) fijo en su superficie, corona dorada con rayos | — |
+| Pira | **Volcán de Fuego**: conos de ceniza negra, coladas de lava que laten y un cráter encendido; en el valle, Antigua | **Antigua**: el Arco de Santa Catalina con su reloj (las agujas avanzan), casas coloniales y alfombras de aserrín en la calle |
+| Jardín | **Petén**: selva, ríos y lagos | **Tikal**: el Templo del Gran Jaguar saliendo sobre la selva, ceibas y luciérnagas |
+| Vigía | **Atitlán**: un mundo lago con los volcanes Atitlán, Tolimán y San Pedro; el agua refleja y en las tardes el Xocomil la pica | **Panajachel**: el muelle y las lanchas que se mecen con las olas |
+| Párpado | **Semuc Champey**: pozas turquesa en terrazas de caliza entre la selva | **Las pozas** |
+| Argos | **Los Cuchumatanes**: sierra con helada al amanecer y pinos; en su anillo, los barriletes gigantes de Sumpango | **Quiriguá**: las estelas talladas (las tallas son del shader) |
+| — | **La Luna de Xelajú**, luna de los Cuchumatanes, con un tejido de huipil que brilla de noche | — |
+| Cementerio | **La capital**: barrancos, cuadras y luces; en su anillo, camionetas y tuc-tucs dando vueltas | **El Reformador**: la torre, camionetas extraurbanas y edificios |
+
+**Las naves botella** (modeladas en Blender para este proyecto): Gallo,
+Cabro Reserva, Jägermeister, Blue Label, Cubata Uva y Four Loko. **B** pasa a
+la siguiente y **1** a **6** eligen una; cada una echa algo distinto (espuma
+la cerveza, fuego verde el Jäger, azul el Blue Label, morado la Cubata,
+chispas de colores el Four Loko).
+
+**La música**: las canciones van en la carpeta [`musica/`](musica/LEEME.txt)
+(mp3, ogg, wav); suenan en orden por nombre y un `primera.txt` con el nombre
+de una canción hace que siempre empiece con esa. Al final de la lista está
+una **marimba procedural** escrita en código (síntesis modal de las teclas
+afinadas 1:4:10, el charleo de los tecomates y el redoble, en 6/8 con
+sesquialtera). Abajo a la derecha hay un mini reproductor: **K** pausa,
+**U** / **I** canción anterior / siguiente, **-** / **+** volumen, y con el
+mouse suelto (Tab) se les puede dar clic a los botones y a la barra.
+
 ## Video
 
 El repositorio incluye [un recorrido continuo](media/recorrido-continuo.mp4)
@@ -92,7 +137,10 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | Asistente de vuelo / gravedad | Z / G |
 | **Modo local** (vuelo relativo a la superficie) | L |
 | **Crucero**: rodea el planeta solo | O |
-| Trayectoria predicha (auto / siempre / nunca) | V |
+| Trayectoria predicha (auto / siempre / nunca) | Y |
+| **Versión chapina** / volver a OCASO | **V** |
+| Nave botella siguiente / elegir una (en la chapina) | B / 1 a 6 |
+| Música: pausa, anterior / siguiente, volumen (en la chapina) | K, U / I, - / + |
 | Rebobinar el tiempo | R sostenido |
 | Saltar 30 s atrás / adelante en el tiempo | [ / ] |
 | **Desatar el final** de la estrella / hacerla renacer | **J** |
@@ -161,7 +209,7 @@ Las vistas fijas se generan con `--captura` (nombres entre paréntesis).
 | **Generación de geometría** propia antes de rasterizar (10) | Quadtree de chunks del cubo-esfera generados en paralelo con faldones, icosfera por subdivisión, modelos con `MeshBuilder`, cintas para líneas, recorte de Sutherland-Hodgman. | F3, F4 |
 | **Modo de control local** (8) | Cerca de un planeta (L) el vuelo se mide contra su superficie que gira: la mira se nivela con la vertical del planeta y se transporta con la curvatura, la nave sostiene sola su altura sobre el terreno y el crucero (O) rodea el planeta. | L, O |
 | **Aceleración, frenado y giro progresivos** (8) | Física a paso fijo de 120 Hz con interpolación: igual a 30 o a 300 fps. El asistente pide velocidades con aceleración limitada; el giro persigue la mira con aceleración angular limitada. | Volar |
-| **Gravedad** que curva la trayectoria (10) | Gravedad del cuerpo dominante (G la apaga). Sin asistente (Z) se ve la trayectoria predicha (V), integrada con la misma física, con aviso de choque. | (15) |
+| **Gravedad** que curva la trayectoria (10) | Gravedad del cuerpo dominante (G la apaga). Sin asistente (Z) se ve la trayectoria predicha (Y), integrada con la misma física, con aviso de choque. | (15) |
 | **Colisión** con el planeta (4) | Contra la misma función de altura que se dibuja; la cámara tampoco entra al terreno. | Bajar a la superficie |
 | **Descarte** antes de rasterizar (7) | Esferas contra el frustum por objeto, chunks detrás del horizonte o fuera del frustum, objetos demasiado chicos, caras traseras. Contadores en el HUD (F2) y frustum congelado (F7). | F2, F7, (21) |
 | **Niveles de detalle** (8) | Terreno por distancia (quadtree) y objetos por tamaño en pantalla (3 niveles, se encogen al desaparecer). F4 colorea los niveles; F5 apaga el LOD y el HUD muestra cuántos triángulos más cuesta. | F4, F5 |
@@ -286,6 +334,12 @@ Trabajo individual: Lázaro Díaz (24713).
   excluyen del modelo opaco: evitamos que tapen el reactor como discos sólidos.
   El Blender fuente se conserva. El render, el terreno, los objetos, la
   animación del gas, el cielo y el sonido se calculan en CPU.
+- Las seis naves botella las modelé en Blender para la versión chapina, a
+  partir de fotos de referencia de las botellas y latas reales; sus `.blend`
+  y versiones detalladas están fuera del repositorio y aquí van las de menos
+  de 30 000 triángulos (`assets/botellas/`). Las marcas son de sus dueños.
+- Las canciones de `musica/` no se incluyen en el repositorio (pesan y tienen
+  derechos de autor); la marimba procedural sí es código propio.
 - Las fotografías de Júpiter y la Luna provienen de NASA; el basalto usa
   Rock Face 03 de Poly Haven (CC0). Créditos y enlaces en
   [assets/textures/FUENTES.txt](assets/textures/FUENTES.txt).

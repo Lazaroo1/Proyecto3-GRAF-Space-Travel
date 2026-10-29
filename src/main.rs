@@ -14,6 +14,7 @@ mod marimba;
 #[allow(dead_code)]
 mod math;
 mod parallel;
+mod player;
 mod render;
 mod scene;
 mod shaders;
@@ -178,6 +179,7 @@ fn run_window(options: &Options) -> Result<(), String> {
         age: 0.0,
         hidden: false,
         preset: None,
+        banner: None,
     };
     let mut preset_index: Option<usize> = None;
     let mut tweaks = tweaks::Tweaks::default();
@@ -192,6 +194,8 @@ fn run_window(options: &Options) -> Result<(), String> {
         stream
     });
     let mut synth = audio::Synth::new();
+    // Las canciones de la version chapina.
+    let mut player = player::Player::new(audio_device.as_ref(), &music_dir());
     let mut block = vec![0.0f32; AUDIO_BLOCK];
 
     while !rl.window_should_close() {
@@ -248,8 +252,42 @@ fn run_window(options: &Options) -> Result<(), String> {
             app.visit_next_site();
         }
         if let Some(text) = app.banner.take() {
-            hud.preset = Some((text, hud.age));
+            hud.banner = Some((text, hud.age));
         }
+        // El reproductor solo existe en la version chapina.
+        let chapin = app.system.version == scene::Version::Chapin;
+        player.set_active(chapin);
+        if chapin {
+            if rl.is_key_pressed(KeyboardKey::KEY_K) {
+                player.toggle();
+            }
+            if rl.is_key_pressed(KeyboardKey::KEY_I) {
+                player.next();
+            }
+            if rl.is_key_pressed(KeyboardKey::KEY_U) {
+                player.previous();
+            }
+            if rl.is_key_pressed(KeyboardKey::KEY_MINUS) || rl.is_key_pressed(KeyboardKey::KEY_KP_SUBTRACT) {
+                player.change_volume(-0.1);
+            }
+            if rl.is_key_pressed(KeyboardKey::KEY_EQUAL) || rl.is_key_pressed(KeyboardKey::KEY_KP_ADD) {
+                player.change_volume(0.1);
+            }
+            // Con el mouse suelto (Tab) tambien se le puede dar clic.
+            if !captured && rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
+                let mouse = rl.get_mouse_position();
+                let screen = (rl.get_screen_width(), rl.get_screen_height());
+                match hud::player_hit(screen, (mouse.x, mouse.y)) {
+                    Some(hud::PlayerHit::Previous) => player.previous(),
+                    Some(hud::PlayerHit::Toggle) => player.toggle(),
+                    Some(hud::PlayerHit::Next) => player.next(),
+                    Some(hud::PlayerHit::Seek(at)) => player.seek(at),
+                    None => {}
+                }
+            }
+        }
+        player.update(rl.get_frame_time());
+        app.marimba_on = player.marimba();
         if rl.is_key_pressed(KeyboardKey::KEY_F3) {
             app.debug.wireframe = !app.debug.wireframe;
         }
@@ -315,6 +353,19 @@ fn run_window(options: &Options) -> Result<(), String> {
         if rl.is_key_pressed(KeyboardKey::KEY_B) {
             app.next_bottle();
         }
+        let digits = [
+            KeyboardKey::KEY_ONE,
+            KeyboardKey::KEY_TWO,
+            KeyboardKey::KEY_THREE,
+            KeyboardKey::KEY_FOUR,
+            KeyboardKey::KEY_FIVE,
+            KeyboardKey::KEY_SIX,
+        ];
+        for (index, key) in digits.into_iter().enumerate() {
+            if rl.is_key_pressed(key) {
+                app.select_bottle(index);
+            }
+        }
         if rl.is_key_pressed(KeyboardKey::KEY_Y) {
             // AUTO -> ON -> OFF -> AUTO
             app.path_mode = match app.path_mode {
@@ -348,7 +399,8 @@ fn run_window(options: &Options) -> Result<(), String> {
         let mut d = rl.begin_drawing(&thread);
         d.clear_background(Color::BLACK);
         d.draw_texture(&texture, 0, 0, Color::WHITE);
-        hud::draw(&mut d, &app, fps, &hud, &tweaks);
+        let view = chapin.then(|| player.view());
+        hud::draw(&mut d, &app, fps, &hud, &tweaks, view.as_ref());
     }
     Ok(())
 }
@@ -599,4 +651,15 @@ fn run_bench(options: &Options, frames: usize) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+/// La carpeta de las canciones de la version chapina: la del directorio
+/// actual o, si se corre desde otro lado, la del proyecto.
+fn music_dir() -> PathBuf {
+    let local = PathBuf::from("musica");
+    if local.exists() {
+        local
+    } else {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("musica")
+    }
 }

@@ -93,8 +93,8 @@ const VOLCANOES: [Volcano; 8] = [
     // por la cara que se ve desde el pueblo.
     Volcano {
         center: Vec3::new(-0.1453, 0.3363, -0.9305),
-        height: 52.0,
-        base: 44.0,
+        height: 38.5,
+        base: 49.3,
         crater: 3.2,
         fire: 1.0,
         spin: 0.75,
@@ -104,8 +104,8 @@ const VOLCANOES: [Volcano; 8] = [
     // El Acatenango, su gemelo dormido, al lado.
     Volcano {
         center: Vec3::new(-0.0267, 0.5277, -0.849),
-        height: 50.0,
-        base: 46.0,
+        height: 33.0,
+        base: 51.5,
         crater: 2.6,
         fire: 0.0,
         spin: 0.4,
@@ -115,8 +115,8 @@ const VOLCANOES: [Volcano; 8] = [
     // El de Agua: el cono parejo del otro lado del valle.
     Volcano {
         center: Vec3::new(-0.9849, -0.1057, -0.1374),
-        height: 40.0,
-        base: 46.0,
+        height: 26.4,
+        base: 51.5,
         crater: 4.5,
         fire: 0.0,
         spin: 1.9,
@@ -126,8 +126,8 @@ const VOLCANOES: [Volcano; 8] = [
     // Pacaya, chico y activo, del lado de la noche.
     Volcano {
         center: Vec3::new(0.6221, -0.4013, -0.6723),
-        height: 20.0,
-        base: 26.0,
+        height: 13.2,
+        base: 29.1,
         crater: 2.4,
         fire: 0.7,
         spin: 0.3,
@@ -137,8 +137,8 @@ const VOLCANOES: [Volcano; 8] = [
     // Santa Maria y, en su falda, el domo del Santiaguito.
     Volcano {
         center: Vec3::new(-0.4509, -0.7816, -0.4309),
-        height: 34.0,
-        base: 34.0,
+        height: 22.4,
+        base: 38.1,
         crater: 2.2,
         fire: 0.0,
         spin: 2.2,
@@ -147,8 +147,8 @@ const VOLCANOES: [Volcano; 8] = [
     },
     Volcano {
         center: Vec3::new(-0.2646, -0.8445, -0.4656),
-        height: 11.0,
-        base: 15.0,
+        height: 7.3,
+        base: 16.8,
         crater: 2.0,
         fire: 0.5,
         spin: 1.5,
@@ -158,8 +158,8 @@ const VOLCANOES: [Volcano; 8] = [
     // Tajumulco y Tacana, lejos.
     Volcano {
         center: Vec3::new(-0.5507, 0.1502, 0.8211),
-        height: 36.0,
-        base: 40.0,
+        height: 23.8,
+        base: 44.8,
         crater: 2.4,
         fire: 0.0,
         spin: 0.9,
@@ -168,8 +168,8 @@ const VOLCANOES: [Volcano; 8] = [
     },
     Volcano {
         center: Vec3::new(0.5529, 0.5529, 0.6233),
-        height: 30.0,
-        base: 34.0,
+        height: 19.8,
+        base: 38.1,
         crater: 2.2,
         fire: 0.0,
         spin: 2.7,
@@ -323,7 +323,7 @@ pub struct FuegoField {
 
 /// Lo mas bajo y lo mas alto que puede quedar el relieve.
 const LOWEST: f32 = -4.0;
-const HIGHEST: f32 = 56.0;
+const HIGHEST: f32 = 42.0;
 
 impl FuegoField {
     pub fn new(seed: u32) -> Self {
