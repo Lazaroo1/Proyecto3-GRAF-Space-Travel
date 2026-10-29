@@ -15,7 +15,9 @@
 //!   la altura que tiene ahi, con un cinturon de bosque en la orilla.
 //!
 //! # El shader
-//! Zacate dorado en la meseta y verde abajo, bosque de pino oscuro con copas
+//! En el pueblo de Xecul, la plaza empedrada (lajas con juntas) frente a la
+//! iglesia y calles de tierra alrededor, en los mismos ejes con que se
+//! colocan las casas. Afuera, zacate dorado en la meseta y verde abajo, bosque de pino oscuro con copas
 //! (que de cerca deja ver el suelo de agujas), caliza palida en las paredes.
 //! La **helada** se forma en las hondonadas cuando la estrella esta baja: el
 //! lado de la manana se sabe por el giro del planeta (la superficie avanza
@@ -25,8 +27,10 @@
 //! roja: con todo el rojo el bosque se veia cafe.
 //!
 //! # Los objetos
-//! Pinos de pisos (conos lisos con el borde irregular) y la iglesia de San
-//! Andres Xecul: una nave con techo de teja y cupula de gajos, la fachada
+//! El pueblo: hileras de casas (las de Antigua) alrededor de la plaza, el
+//! mercado de puestos frente a la iglesia, pinos y camionetas. Pinos de
+//! pisos (conos lisos con el borde irregular) y la iglesia de San Andres
+//! Xecul: una nave con techo de teja y cupula de gajos, la fachada
 //! alta con dos remates y dos torres con su cupula. Todo lo que hace famosa
 //! a la fachada lo pinta el shader con formas de distancia con signo en los
 //! ejes del modelo: columnas con franjas de colores en espiral, cornisas
@@ -34,6 +38,13 @@
 //! enredadera con uvas y mazorcas que corre bajo las cornisas, el medallon
 //! del remate y la puerta en arco. Los bordes se suavizan con el tamano de
 //! un pixel: de lejos se funde en su promedio y no parpadea.
+//!
+//! Los **puestos del mercado** (tambien en Antigua): cuatro postes, una
+//! mesa con un corte tipico colgando al frente, montones de fruta y verdura
+//! y un toldo de lona inclinado hacia atras. El shader le da a cada puesto
+//! su lona (azul, roja, amarilla, verde o a rayas), al corte franjas de
+//! colores con un zigzag y a cada monton lo que vende (tomate, naranja,
+//! banano, aguacate, guisquil, cebolla morada), con los granos en celdas.
 //!
 //! # Los barriletes
 //! En el plano del anillo, celdas en polares que giran en bloque. Cada
@@ -91,6 +102,12 @@ const TOWARD: Vec3 = Vec3::new(-0.1534, -0.0726, -0.9855);
 /// Radio angular del llano: plano hasta el primero, se junta con la sierra
 /// hasta el segundo.
 const PLAZA: (f32, f32) = (0.2, 0.36);
+/// El pueblo, en el plano del lugar (x a la derecha, z hacia la iglesia):
+/// medio ancho de la plaza empedrada, de donde a donde va, el ancho de las
+/// calles que la rodean y donde empiezan las casas de los lados.
+const SQUARE: (f32, f32, f32) = (15.0, -16.0, 12.0);
+const LANE: f32 = 3.2;
+const HOUSES: f32 = SQUARE.0 + LANE + 0.4;
 
 /// La sierra. Atributos: `x` meseta (zacate alto), `y` hondonada (dolinas y
 /// fondo de los canones: ahi se junta la helada), `z` bosque.
@@ -224,6 +241,14 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     let canopy = canopy.lerp(NEEDLES, smoothstep(0.12, 0.03, footprint) * 0.7);
     let cover = smoothstep(0.25, 0.6, forest) * (1.0 - steep);
     let mut albedo = grass.lerp(canopy, cover);
+    // El pueblo: la plaza empedrada y las calles de tierra.
+    let (paving, street) = town_ground(p, footprint, n);
+    if paving.1 > 0.0 {
+        albedo = albedo.lerp(paving.0, paving.1);
+    }
+    if street.1 > 0.0 {
+        albedo = albedo.lerp(street.0, street.1);
+    }
     // Caliza en las paredes y donde asoma.
     let stone = LIMESTONE * (0.55 + 0.6 * rock.color.luminance());
     albedo = albedo.lerp(stone, steep.max(smoothstep(0.85, 1.0, plateau) * smoothstep(0.62, 0.8, rock.color.luminance()) * 0.6));
@@ -251,6 +276,49 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     let haze = MIST * light * (0.06 + 0.3 * smoothstep(-0.1, 0.3, sun_height));
     color = color.lerp(haze, mist);
     color + limb_haze(f, Vec3::new(0.25, 0.45, 0.8), 0.3, f.normal.dot(l))
+}
+
+/// Ejes del pueblo de Xecul: vertical, hacia la iglesia y a la derecha.
+fn town_axes() -> (Vec3, Vec3, Vec3) {
+    let up = XECUL.normalize();
+    let forward = (TOWARD - up * TOWARD.dot(up)).normalize();
+    (up, forward, forward.cross(up))
+}
+
+const FLAGSTONE: Vec3 = Vec3::new(0.3, 0.27, 0.24);
+const DIRT: Vec3 = Vec3::new(0.16, 0.11, 0.07);
+
+/// El suelo del pueblo en `p` (espacio del planeta): el color y cuanto
+/// cubre la plaza empedrada, y lo mismo de las calles de tierra.
+fn town_ground(p: Vec3, footprint: f32, n: &Perlin) -> ((Vec3, f32), (Vec3, f32)) {
+    let (up, forward, right) = town_axes();
+    let none = ((Vec3::ZERO, 0.0), (Vec3::ZERO, 0.0));
+    if p.normalize().dot(up) < 0.97 {
+        return none;
+    }
+    let (x, z) = (p.dot(right), p.dot(forward));
+    let aa = footprint.max(0.02);
+    let (half, z0, z1) = SQUARE;
+    // La plaza: un rectangulo hasta la iglesia.
+    let square = (x.abs() - half).max(z0 - z).max(z - z1 - 6.0);
+    let on_square = smoothstep(aa, -aa, square);
+    // Lajas: juntas en una cuadricula, cada laja con su tono.
+    let (gx, gz) = (x / 1.4, z / 0.9 + 0.5 * (x / 1.4).floor());
+    let joint = (gx - gx.round()).abs().min((gz - gz.round()).abs());
+    let mortar = smoothstep(0.06 + aa, 0.02, joint) * smoothstep(0.4, 0.1, aa);
+    let tone = n.noise(Vec3::new(gx.floor() * 3.1, gz.floor() * 2.3, 0.7)) * 0.5 + 0.5;
+    let flag = FLAGSTONE * (0.75 + 0.4 * tone) * (1.0 - 0.45 * mortar);
+    // Las calles: a los lados y enfrente de la plaza, la de entrada y la
+    // de atras de las casas de los lados.
+    let sides = ((x.abs() - half - LANE * 0.5).abs() - LANE * 0.5).max(z0 - LANE - z).max(z - 46.0);
+    let front = ((z - z0 + LANE * 0.5).abs() - LANE * 0.5).max(x.abs() - half - LANE);
+    let entry = (x.abs() - 2.5).max(z - z0).max(-60.0 - z);
+    let back = ((x.abs() - HOUSES - 16.0).abs() - 2.5).max(z0 - 4.0 - z).max(z - 46.0);
+    let road = sides.min(front).min(entry).min(back);
+    let on_road = smoothstep(aa, -aa, road) * (1.0 - on_square);
+    let ruts = n.fbm(Vec3::new(x * 0.6, z * 0.15, 4.2), 2) * 0.5 + 0.5;
+    let dirt = DIRT * (0.7 + 0.5 * ruts);
+    ((flag, on_square), (dirt, on_road))
 }
 
 pub const DEFORMS: bool = false;
@@ -285,17 +353,69 @@ pub fn site(_default: (DVec3, DVec3)) -> Option<(&'static str, DVec3, DVec3, Pla
 /// Que tan adelante del lugar esta la fachada de la iglesia.
 const CHURCH_AHEAD: f64 = 14.0;
 
-/// San Andres Xecul: la iglesia en medio del llano, con la fachada hacia
-/// quien llega (que mira desde atras del lugar).
-fn place(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField, _seed: u32, frame: (DVec3, DVec3, DVec3)) {
+/// San Andres Xecul: la iglesia al fondo de la plaza, con la fachada hacia
+/// quien llega (que mira desde atras del lugar); el mercado en la plaza,
+/// casas alrededor, pinos y camionetas.
+fn place(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField, seed: u32, frame: (DVec3, DVec3, DVec3)) {
     let (n, forward, _) = frame;
     clear_site(instances, radius, n, 55.0);
+    town(instances, radius, field, seed, frame);
     let dir = (n + forward * (CHURCH_AHEAD / radius)).normalize();
     let base = upright_rotation(dir, 0.0);
     let (x0, z0) = (base.rotate(DVec3::X), base.rotate(DVec3::Z));
     let toward = (-forward - dir * (-forward).dot(dir)).normalize();
     let yaw = toward.dot(x0).atan2(toward.dot(z0));
     instances.push(at_site(radius, field, frame, PropKind::Iglesia, 0.0, CHURCH_AHEAD, 1.0, yaw, 0.3));
+}
+
+/// Un numero de 0 a 1 para el elemento `k` de algo con semilla `seed`.
+#[inline]
+fn chance(seed: u32, k: u32) -> f64 {
+    (hash_u32(seed ^ k.wrapping_mul(0x9E37_79B9)) >> 8) as f64 / 16_777_216.0
+}
+
+/// El pueblo alrededor de la plaza.
+fn town(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField, seed: u32, frame: (DVec3, DVec3, DVec3)) {
+    use super::fuego::{Lot, place_lots, row};
+    let (half, z0, z1) = (SQUARE.0 as f64, SQUARE.1 as f64, SQUARE.2 as f64);
+    let houses = HOUSES as f64;
+    let mut lots = Vec::new();
+    for side in [-1.0, 1.0] {
+        let s = seed ^ (side > 0.0) as u32 * 0x5151;
+        // Las casas de los lados de la plaza y, detras, otra hilera de
+        // espaldas a una calle mas.
+        row(&mut lots, (side * houses, z0 - 4.0), (side * houses, 46.0), (-side, 0.0), s ^ 0x1);
+        row(&mut lots, (side * (houses + 13.0), z0 - 4.0), (side * (houses + 13.0), 46.0), (side, 0.0), s ^ 0x2);
+        row(&mut lots, (side * (houses + 19.0), z0 - 4.0), (side * (houses + 19.0), 40.0), (-side, 0.0), s ^ 0x3);
+        // Del lado de quien llega, a los lados de la calle de entrada.
+        row(&mut lots, (side * 4.0, z0 - LANE as f64 - 0.5), (side * (houses + 10.0), z0 - LANE as f64 - 0.5), (0.0, 1.0), s ^ 0x4);
+        // El mercado: filas de puestos a los lados del paso central, de
+        // frente al paso.
+        for (r, z) in [-11.0, -6.0, -1.0, 4.0].into_iter().enumerate() {
+            for (k, x) in [4.5, 8.0, 11.5].into_iter().enumerate() {
+                let h = s ^ (r as u32) << 4 ^ (k as u32) << 8;
+                if chance(h, 0) < 0.12 {
+                    continue;
+                }
+                lots.push(Lot { kind: PropKind::Puesto, x: side * x, z, scale: 1.2, facing: (-side, 0.0) });
+            }
+        }
+        // Pinos entre las casas y el bosque.
+        for i in 0..14u32 {
+            let h = s ^ 0x9140 ^ i << 6;
+            let x = side * (houses + 24.0 + 12.0 * chance(h, 0));
+            let z = z0 - 10.0 + 70.0 * chance(h, 1);
+            let way = chance(h, 2) * std::f64::consts::TAU;
+            lots.push(Lot { kind: PropKind::Pino, x, z, scale: (0.8 + 0.5 * chance(h, 3)) as f32, facing: (way.cos(), way.sin()) });
+        }
+        // Una camioneta en la calle de la plaza.
+        let way = if side > 0.0 { 1.0 } else { -1.0 };
+        lots.push(Lot { kind: PropKind::Camioneta, x: side * (half + LANE as f64 * 0.5), z: -2.0 + 10.0 * chance(s, 9), scale: 2.0, facing: (0.0, way) });
+    }
+    // Detras de la iglesia, casas de espaldas a la sierra.
+    row(&mut lots, (-houses, 48.0), (houses, 48.0), (0.0, -1.0), seed ^ 0xBAC);
+    let _ = z1;
+    place_lots(instances, radius, field, frame, &lots, 1.0);
 }
 
 /// La iglesia, en el modelo (la fachada mira hacia +z): medio ancho de la
@@ -322,8 +442,61 @@ const STEPS: Vec3 = Vec3::new(0.0, 1.0, 1.0);
 pub fn mesh(kind: PropKind, detail: usize) -> Mesh {
     match kind {
         PropKind::Iglesia => church(detail),
+        PropKind::Puesto => stall(detail),
         _ => pine(detail),
     }
+}
+
+/// Un puesto, en el modelo (mira hacia +z): medio ancho y medio fondo, alto
+/// de la mesa y de los postes de adelante (los de atras son mas altos).
+const STALL: (f32, f32) = (1.1, 0.85);
+const TABLE: f32 = 0.6;
+const POSTS: f32 = 1.6;
+/// Materiales del puesto (por color de vertice).
+const POST: Vec3 = Vec3::new(1.0, 0.0, 0.0);
+const BOARD: Vec3 = Vec3::new(0.0, 1.0, 0.0);
+const CLOTH: Vec3 = Vec3::new(0.0, 0.0, 1.0);
+const GOODS: Vec3 = Vec3::new(1.0, 1.0, 0.0);
+const TARP: Vec3 = Vec3::new(1.0, 0.0, 1.0);
+
+fn stall(detail: usize) -> Mesh {
+    let mut b = MeshBuilder::new();
+    let (hx, hz) = STALL;
+    let axes = [Vec3::X, Vec3::Y, Vec3::Z];
+    let back = POSTS + 0.35;
+    b.color(POST);
+    for (x, z) in [(-hx, -hz), (hx, -hz), (-hx, hz), (hx, hz)] {
+        let top = if z < 0.0 { back } else { POSTS };
+        b.cuboid(Vec3::new(x, top * 0.5, z), axes, Vec3::new(0.04, top * 0.5, 0.04));
+    }
+    // La mesa y el corte que cuelga al frente.
+    b.color(BOARD);
+    b.cuboid(Vec3::new(0.0, TABLE - 0.03, 0.1), axes, Vec3::new(hx - 0.06, 0.03, hz * 0.6));
+    if detail >= 1 {
+        b.color(CLOTH);
+        b.cuboid(Vec3::new(0.0, TABLE * 0.5, 0.1 + hz * 0.6 + 0.01), axes, Vec3::new(hx - 0.06, TABLE * 0.5 - 0.02, 0.01));
+    }
+    // Los montones de lo que se vende, en dos filas.
+    b.color(GOODS);
+    let per_row = [2, 3, 4][detail];
+    let rows = if detail == 0 { 1 } else { 2 };
+    let (rings, segments) = ([2, 3, 4][detail], [5, 7, 9][detail]);
+    let width = (2.0 * hx - 0.3) / per_row as f32;
+    for row in 0..rows {
+        for k in 0..per_row {
+            let x = -hx + 0.15 + width * (k as f32 + 0.5);
+            let z = if rows == 1 { 0.1 } else { -0.15 + 0.45 * row as f32 };
+            b.ellipsoid(Vec3::new(x, TABLE, z), Vec3::new(width * 0.42, 0.14, 0.2), rings, segments, true);
+        }
+    }
+    // El toldo: una lona inclinada, mas alta atras, que sobresale.
+    b.color(TARP);
+    let slope = Vec3::new(0.0, back - POSTS, -2.0 * hz).normalize();
+    let up = Vec3::X.cross(slope);
+    let length = (2.0 * hz + 0.5) * 0.5;
+    let middle = Vec3::new(0.0, (back + POSTS) * 0.5 + 0.03, 0.0) + slope * 0.0;
+    b.cuboid(middle, [Vec3::X, up, slope], Vec3::new(hx + 0.18, 0.015, length));
+    b.build()
 }
 
 /// La iglesia: la nave con su techo de dos aguas y su cupula, la fachada
@@ -437,8 +610,72 @@ pub fn shade_prop(kind: PropKind, f: &Fragment, u: &Uniforms, style: &PropStyle,
     let light = mountain_light(sun);
     match kind {
         PropKind::Iglesia => church_shade(f, u, style, light),
+        PropKind::Puesto => stall_shade(f, u, style, sun),
         _ => pine_shade(f, u, style, light),
     }
+}
+
+/// Lonas de los toldos: la azul de siempre, roja, amarilla, verde y
+/// anaranjada.
+const TARPS: [Vec3; 5] = [
+    Vec3::new(0.03, 0.16, 0.55),
+    Vec3::new(0.6, 0.04, 0.035),
+    Vec3::new(0.75, 0.48, 0.02),
+    Vec3::new(0.04, 0.32, 0.1),
+    Vec3::new(0.8, 0.22, 0.02),
+];
+/// Lo que se vende: tomate, naranja, banano, aguacate, guisquil y cebolla
+/// morada.
+const PRODUCE: [Vec3; 6] = [
+    Vec3::new(0.6, 0.03, 0.02),
+    Vec3::new(0.8, 0.28, 0.01),
+    Vec3::new(0.75, 0.6, 0.06),
+    Vec3::new(0.03, 0.08, 0.02),
+    Vec3::new(0.25, 0.42, 0.08),
+    Vec3::new(0.3, 0.04, 0.2),
+];
+/// Hilos del corte tipico.
+const THREADS: [Vec3; 6] = [RED, BLUE, PURPLE, GREEN, YELLOW, ROSE];
+
+fn stall_shade(f: &Fragment, u: &Uniforms, style: &PropStyle, sun: Vec3) -> Vec3 {
+    let p = f.local;
+    let code = |v: Vec3| (v.x > 0.5, v.y > 0.5, v.z > 0.5);
+    let is = |material: Vec3| code(f.color) == code(material);
+    let id = (style.seed * 16_777_216.0) as u32;
+    let pick = |k: u32| hash_u32(id ^ k.wrapping_mul(0x9E37_79B9));
+    let soft = (model_footprint(f, u, style.scale) * 0.7).max(0.01);
+    let (albedo, rough) = if is(TARP) {
+        let tarp = TARPS[(pick(1) % TARPS.len() as u32) as usize];
+        // Unas a rayas con blanco.
+        let striped = pick(2) % 3 == 0;
+        let stripe = if striped { smoothstep(-soft, soft, (p.x * 2.5).fract() - 0.5) } else { 0.0 };
+        let worn = u.noise.fbm(p * 3.0 + Vec3::splat(style.seed * 20.0), 2) * 0.5 + 0.5;
+        (tarp.lerp(LIME, stripe) * (0.75 + 0.35 * worn), 0.7)
+    } else if is(CLOTH) {
+        // Franjas de colores con un zigzag, como un corte.
+        let row = (p.y * 18.0).floor();
+        let thread = THREADS[(hash_u32(id ^ row as i32 as u32) % THREADS.len() as u32) as usize];
+        let zig = ((p.x * 6.0).fract() - 0.5).abs() * 2.0;
+        let band = ((p.y * 6.0).fract() - zig * 0.5).abs();
+        (thread.lerp(LIME, smoothstep(0.08 + soft, 0.08, band) * 0.8), 0.95)
+    } else if is(GOODS) {
+        // Cada monton es de una cosa; los granos son celdas de Worley.
+        let pile = ((p.x + STALL.0) * 1.6).floor() + 3.0 * (p.z > 0.05) as u8 as f32;
+        let fruit = PRODUCE[(hash_u32(id ^ pile as i32 as u32 ^ 0xF00D) % PRODUCE.len() as u32) as usize];
+        let (f1, f2) = u.noise.cells(p * 9.0);
+        let grain = smoothstep(0.05, 0.2, f2 - f1) * smoothstep(0.04, 0.012, soft);
+        (fruit * (0.55 + 0.45 * (1.0 - f1).max(0.0)) * (1.0 - 0.4 * (1.0 - grain) * smoothstep(0.04, 0.012, soft)), 0.45)
+    } else {
+        let streaks = u.noise.noise(Vec3::new(p.x * 9.0, p.y * 2.0, p.z * 9.0)) * 0.5 + 0.5;
+        (WOOD * (0.8 + 0.6 * streaks), 0.85)
+    };
+    let lit = pbr::shade_light(f, u, albedo, rough, 0.0, f.normal, 1.0, sun);
+    if is(TARP) {
+        // La lona deja pasar la luz: vista desde abajo se enciende.
+        let through = (-f.normal.dot(f.light_dir(u))).max(0.0);
+        return lit + albedo * sun * (through * 0.35);
+    }
+    lit
 }
 
 /// Una direccion del mundo en los ejes del modelo (la inversa de su giro).
@@ -918,6 +1155,38 @@ mod tests {
         assert!(church.rotation.rotate(DVec3::Y).dot(dir) > 0.999);
         // El frente del modelo (+z) mira hacia atras del lugar.
         assert!(church.rotation.rotate(DVec3::Z).dot(-forward) > 0.99);
+    }
+
+    /// Los puestos del mercado quedan sobre la plaza empedrada y las casas
+    /// alrededor: ninguna en la plaza ni en la iglesia.
+    #[test]
+    fn the_market_is_on_the_square_and_the_houses_stay_around_it() {
+        let field = Sierra::new(11);
+        let (_, normal, forward, place) = site((DVec3::Y, DVec3::Z)).unwrap();
+        let frame = (normal, forward, forward.cross(normal));
+        let mut instances = Vec::new();
+        place(&mut instances, 200.0, &field, 3, frame);
+        let noise = Perlin::new(1);
+        let (mut stalls, mut houses) = (0, 0);
+        for i in &instances {
+            let p = (i.position.normalize() * 200.0).as_vec3();
+            let (x, z) = (p.dot(frame.2.as_vec3()), p.dot(forward.as_vec3()));
+            match i.kind {
+                PropKind::Puesto => {
+                    stalls += 1;
+                    let ((_, paved), _) = town_ground(p, 0.05, &noise);
+                    assert!(paved > 0.99, "puesto fuera de la plaza en {x} {z}");
+                }
+                PropKind::Casa => {
+                    houses += 1;
+                    let in_square = x.abs() < SQUARE.0 && z > SQUARE.1 && z < SQUARE.2;
+                    let in_church = x.abs() < 12.0 && z > 12.0 && z < 36.0;
+                    assert!(!in_square && !in_church, "casa en {x} {z}");
+                }
+                _ => {}
+            }
+        }
+        assert!(stalls > 12 && houses > 30, "{stalls} puestos, {houses} casas");
     }
 
     #[test]

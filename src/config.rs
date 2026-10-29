@@ -69,6 +69,9 @@ pub const REWIND_SPEED: f64 = 8.0;
 
 /// Largo de la nave en unidades del mundo (el modelo se escala a esto).
 pub const SHIP_LENGTH: f64 = 4.0;
+/// Largo de las naves botella: mas grandes que la OCASO-1 para que se lea
+/// la etiqueta.
+pub const BOTTLE_LENGTH: f64 = SHIP_LENGTH * 1.6;
 /// La velocidad maxima crece con la altitud: lejos se cruza el sistema en
 /// segundos y junto a la superficie se vuela con precision. Como la nave
 /// tambien frena con la altitud, nunca llega al suelo a toda velocidad.
@@ -84,6 +87,8 @@ pub const BRAKE_MIN_ACCEL: f64 = 100.0;
 pub const SYSTEM_MARGIN: f64 = 3200.0;
 /// Aceleracion maxima como fraccion de la velocidad maxima, por segundo.
 pub const ACCEL_PER_SPEED: f64 = 1.2;
+/// Lo mismo sin asistente: mas suave, porque nadie frena por el piloto.
+pub const MANUAL_ACCEL_PER_SPEED: f64 = 0.6;
 /// Ganancia del asistente de vuelo (1/s): que tan rapido corrige la velocidad.
 pub const ASSIST_GAIN: f64 = 3.0;
 /// Giro: la nave persigue la mira con velocidad y aceleracion angular limitadas.
@@ -101,6 +106,12 @@ pub const RESTITUTION: f64 = 0.25;
 pub const LOCAL_RANGE: f64 = 1.5;
 /// Ganancia (1/s) con la que el modo local recupera la altura que sostiene.
 pub const HOLD_GAIN: f64 = 1.5;
+/// En el modo local, cuanto hay que mirar hacia arriba o hacia abajo (el
+/// seno del angulo, unos 11 grados) para que W suba o baje por donde se
+/// mira; menos que eso cuenta como vuelo nivelado y la altura se sostiene.
+pub const LOCAL_LEVEL: f64 = 0.2;
+/// Bajando en el modo local, lo mas cerca del suelo que deja llegar.
+pub const LOCAL_FLOOR: f64 = 3.5;
 /// Empuje hacia adelante del crucero (fraccion de la velocidad maxima).
 pub const CRUISE_THRUST: f64 = 0.6;
 
@@ -108,6 +119,10 @@ pub const CRUISE_THRUST: f64 = 0.6;
 
 pub const CHASE_HEIGHT: f64 = 2.8;
 pub const CHASE_DISTANCE: f64 = 8.8;
+/// La camara de persecucion con las botellas (a la derecha, arriba y
+/// atras): mas atras y mas baja que con la OCASO-1, asi la botella queda
+/// mas adelante en la imagen y entera, sin cortarse abajo.
+pub const BOTTLE_CHASE: [f64; 3] = [1.7, 2.0, 11.2];
 /// Posicion de la cabina respecto al centro de la nave.
 pub const COCKPIT_OFFSET: [f64; 3] = [0.0, 0.5, -0.6];
 /// Distancia minima entre la camara y la superficie de un cuerpo.

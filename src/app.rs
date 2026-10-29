@@ -135,7 +135,7 @@ pub struct Preset {
     pub chapin: bool,
 }
 
-pub const PRESETS: [Preset; 48] = [
+pub const PRESETS: [Preset; 52] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
@@ -631,6 +631,54 @@ pub const PRESETS: [Preset; 48] = [
         act: None,
         chapin: true,
     },
+    Preset {
+        name: "56_columna_de_ceniza",
+        shot: Shot::Site {
+            body: "Pira",
+            altitude: 40.0,
+            back: 75.0,
+            lift: 0.0,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "57_mercado_de_xecul",
+        shot: Shot::Site {
+            body: "Argos",
+            altitude: 22.0,
+            back: 45.0,
+            lift: 0.0,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "58_torres_de_la_capital",
+        shot: Shot::Site {
+            body: "Cementerio",
+            altitude: 30.0,
+            back: 80.0,
+            lift: 0.0,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+    },
+    Preset {
+        name: "59_vigia_de_noche",
+        shot: Shot::Orbit {
+            body: "Vigia",
+            distance: 2.4,
+            azimuth: 3.3,
+            elevation: 0.6,
+        },
+        time: 41.3,
+        act: None,
+        chapin: false,
+    },
 ];
 
 pub struct App {
@@ -656,6 +704,8 @@ pub struct App {
     next_site: usize,
     /// Un aviso para el HUD (el lugar al que se llego, la muerte...).
     pub banner: Option<&'static str>,
+    /// En que planeta esta el lugar del aviso (al llegar con N).
+    pub banner_where: Option<&'static str>,
     /// Donde estuvo la nave cada medio segundo, para rebobinar si muere.
     history: std::collections::VecDeque<(f64, ShipState, DQuat)>,
     /// Cuando cruzo el horizonte de Gargantua.
@@ -690,7 +740,7 @@ pub struct App {
     throttle: f32,
     /// Vertical del modo local en el frame anterior: al moverse sobre la
     /// curvatura, la mira se transporta con ella.
-    local_up: Option<DVec3>,
+    local_up: Option<(usize, DVec3)>,
     ship: ShipState,
     /// Estado del paso anterior: el render interpola entre los dos.
     ship_prev: ShipState,
@@ -855,6 +905,7 @@ impl App {
             timeline: Timeline::default(),
             next_site: usize::MAX,
             banner: None,
+            banner_where: None,
             history: std::collections::VecDeque::new(),
             dying: None,
             lens: None,
@@ -949,6 +1000,7 @@ impl App {
             chapin: self.system.version == Version::Chapin,
         });
         self.banner = Some(site.name);
+        self.banner_where = Some(self.system.bodies[site.body].label);
     }
 
     /// Si la nave cruza el horizonte de Gargantua muere: la pantalla se va a
@@ -1177,6 +1229,28 @@ impl App {
         };
     }
 
+    /// La columna de ceniza del Volcan de Fuego en `t`, vista desde `eye`:
+    /// la boca del crater gira con el planeta.
+    fn fuego_plume(&self, t: f64, eye: DVec3, star: DVec3, sun_light: Vec3) -> Option<crate::chapin::plume::Plume> {
+        let body = &self.system.bodies[self.system.find("Pira")?];
+        let rotation = body.rotation(t);
+        let (crater, wind) = crate::chapin::fuego::plume_frame();
+        let up = rotation.rotate(crater.as_dvec3());
+        let center = body.position(t);
+        let mouth = center + up * (body.radius + body.surface_height(up, t) + 0.5);
+        let sun_dir = (star - mouth).normalize().as_vec3();
+        // Del lado de la noche la estrella no la alumbra.
+        let day = smoothstep(-0.25, 0.15, up.as_vec3().dot(sun_dir));
+        Some(crate::chapin::plume::Plume::new(
+            (mouth - eye).as_vec3(),
+            up.as_vec3(),
+            rotation.rotate(wind.as_dvec3()).as_vec3(),
+            sun_dir,
+            sun_light * day,
+            t as f32,
+        ))
+    }
+
     /// Recuperacion del piloto: vuelve junto a Pira, conserva el tiempo y el
     /// estado del sistema. No se usa para el recorrido continuo evaluado.
     pub fn return_to_system(&mut self) {
@@ -1318,12 +1392,16 @@ impl App {
         let body = &self.system.bodies[self.ship.frame];
         let up = (self.ship.world_pos - body.position(self.sim_time)).normalize();
         // El suelo gira: la mira gira con el (asi el rumbo no se desliza
-        // respecto al terreno) y despues sigue la curvatura.
+        // respecto al terreno) y despues sigue la curvatura. Si cambio el
+        // planeta de abajo (de un planeta a su luna), la vertical salta: no se
+        // transporta la mira, solo se nivela.
         let spin = DQuat::from_scaled_axis(ship::angular_velocity(body) * dt);
-        if let Some(previous) = self.local_up {
-            self.aim = DQuat::from_rotation_arc(spin.rotate(previous), up) * spin * self.aim;
+        if let Some((frame, previous)) = self.local_up {
+            if frame == self.ship.frame {
+                self.aim = DQuat::from_rotation_arc(spin.rotate(previous), up) * spin * self.aim;
+            }
         }
-        self.local_up = Some(up);
+        self.local_up = Some((self.ship.frame, up));
         let yaw = DQuat::from_axis_angle(up, -dx);
         let mut aim = yaw * self.aim * DQuat::from_axis_angle(DVec3::X, -dy);
         // Cabeceo de 75 grados como maximo. Si se paso (se entro al modo
@@ -1713,6 +1791,7 @@ impl App {
                     sun_light,
                 )
             }),
+            plume: if ocaso { None } else { self.fuego_plume(t, camera.pos, star_pos, sun_light) },
             nebula: shaders::Nebula::at(
                 state.shell_age,
                 (star_pos - camera.pos).as_vec3(),
@@ -1927,7 +2006,6 @@ impl App {
                 ("Pira", effects::Motes::Embers, 120.0),
                 ("Argos", effects::Motes::Drops, 120.0),
                 ("Cementerio", effects::Motes::Dust, 100.0),
-                ("Vigia", effects::Motes::Mist, 260.0),
                 ("Parpado", effects::Motes::Glints, 90.0),
             ],
             Version::Chapin => system
@@ -1988,7 +2066,7 @@ impl App {
                 ship_pos,
                 ship_rot * self.system.ship_fix,
                 self.throttle,
-                config::SHIP_LENGTH,
+                if self.system.version == Version::Chapin { config::BOTTLE_LENGTH } else { config::SHIP_LENGTH },
                 t,
                 camera.pos,
                 self.exhaust_style(),
@@ -2024,7 +2102,12 @@ impl App {
         let rot = (self.aim * look).normalize();
         let mut pos = match self.camera_mode {
             CameraMode::Chase => {
-                let offset = DVec3::new(2.2, config::CHASE_HEIGHT, config::CHASE_DISTANCE);
+                let offset = if self.system.version == Version::Chapin {
+                    let [x, y, z] = config::BOTTLE_CHASE;
+                    DVec3::new(x, y, z)
+                } else {
+                    DVec3::new(2.2, config::CHASE_HEIGHT, config::CHASE_DISTANCE)
+                };
                 ship_pos + rot.rotate(offset * self.zoom)
             }
             CameraMode::Cockpit => {
@@ -2343,6 +2426,15 @@ impl App {
 
     fn place(&mut self, pos: DVec3, rot: DQuat, t: f64) {
         self.ship = ShipState::new(&self.system.bodies, pos, rot, t);
+        // Junto a un planeta, quieta respecto al suelo que gira y no respecto
+        // a su centro: en los que giran rapido (en el ecuador de Vigia el
+        // suelo va a 38 u/s) el asistente tardaba segundos en alcanzar al
+        // suelo y la nave llegaba derrapando de lado.
+        let body = &self.system.bodies[self.ship.frame];
+        let altitude = self.ship.rel_pos.length() - body.radius;
+        if self.ship.frame != 0 && altitude < config::LOCAL_RANGE * body.radius {
+            self.ship.rel_vel = ship::angular_velocity(body).cross(self.ship.rel_pos);
+        }
         self.ship_prev = self.ship;
         self.aim = rot;
         // El render dibuja `sim_time - dt` cuando el acumulador esta vacio.
@@ -2630,9 +2722,12 @@ fn eye_crown(look: &ArgosLook, radius: f64, field: &dyn crate::terrain::HeightFi
 
 /// El primer instante desde `from` en que el sol esta bien alto sobre el
 /// lugar `site` (entre unos 27 y 53 grados): el planeta gira y orbita, asi
-/// que se busca hacia adelante, hasta un par de vueltas del planeta. Si en
-/// ese rato nunca se da (Pira le da siempre la misma cara a la estrella),
-/// se queda en `from`.
+/// que se busca hacia adelante, primero en un par de vueltas del planeta.
+/// Los lugares lejos del ecuador de un planeta inclinado tienen temporada de
+/// noche polar (San Andres Xecul, cerca del polo de los Cuchumatanes, se
+/// quedaba de noche): entonces se sigue buscando en lo que queda del ano del
+/// planeta. Si el sol nunca sube tanto (Pira le da siempre la misma cara a
+/// la estrella), se llega a la hora en que mas sube.
 fn daylight_at(system: &System, site: &crate::scene::Site, from: f64) -> f64 {
     let body = &system.bodies[site.body];
     let star = &system.bodies[0];
@@ -2641,12 +2736,27 @@ fn daylight_at(system: &System, site: &crate::scene::Site, from: f64) -> f64 {
         let ground = body.position(t) + up * body.radius;
         up.dot((star.position(t) - ground).normalize())
     };
-    let span = 2.5 * body.spin_period.abs().max(1.0);
-    let step = span / 600.0;
-    (0..=600)
-        .map(|k| from + k as f64 * step)
-        .find(|&t| (0.45..0.8).contains(&height(t)))
-        .unwrap_or(from)
+    let good = 0.45..0.8;
+    let spin = body.spin_period.abs().max(1.0);
+    let span = 2.5 * spin;
+    if let Some(t) = (0..=600).map(|k| from + k as f64 * span / 600.0).find(|&t| good.contains(&height(t))) {
+        return t;
+    }
+    // Un ano: el de su planeta si es una luna.
+    let year = body.host.as_ref().map_or(body.orbit_period, |h| h.period).abs().max(span);
+    let step = spin / 40.0;
+    let mut best = (from, f64::MIN);
+    for k in 0..=(year / step).ceil() as usize {
+        let t = from + span + k as f64 * step;
+        let h = height(t);
+        if good.contains(&h) {
+            return t;
+        }
+        if h > best.1 {
+            best = (t, h);
+        }
+    }
+    best.0
 }
 
 /// Gira `from` hacia `to` (unitarios) una fraccion del angulo entre ellos,
@@ -2970,20 +3080,52 @@ mod tests {
     fn in_the_chapin_version_sites_are_visited_in_daylight() {
         let mut app = App::new(64, 36).unwrap();
         let p = PRESETS.iter().find(|p| p.name == "40_chapin").unwrap();
-        app.apply_preset(p);
-        for _ in 0..app.system.sites.len() {
-            app.visit_next_site();
-            let site = app.system.sites[app.next_site];
-            let body = &app.system.bodies[site.body];
-            let t = app.sim_time;
-            let up = body.rotation(t).rotate(site.normal);
-            let ground = body.position(t) + up * body.radius;
-            let sun = up.dot((app.system.bodies[0].position(t) - ground).normalize());
-            assert!(sun > 0.2, "{}: el sol esta a {sun:.2}", site.name);
+        // A cualquier hora: tambien en la temporada en que el polo de los
+        // Cuchumatanes (Xecul) o el lugar de la capital quedan de noche.
+        for start in [40.0, 150.0, 500.0, 900.0, 1300.0, 1900.0] {
+            app.apply_preset(&Preset { time: start, ..*p });
+            for _ in 0..app.system.sites.len() {
+                app.visit_next_site();
+                let site = app.system.sites[app.next_site];
+                let body = &app.system.bodies[site.body];
+                let t = app.sim_time;
+                let up = body.rotation(t).rotate(site.normal);
+                let ground = body.position(t) + up * body.radius;
+                let sun = up.dot((app.system.bodies[0].position(t) - ground).normalize());
+                assert!(sun > 0.2, "{} desde {start}: el sol esta a {sun:.2}", site.name);
+            }
         }
     }
 
     use super::*;
+
+    /// Al llegar con N la nave queda quieta sobre el suelo, que gira: antes
+    /// llegaba quieta respecto al centro del planeta y en Atitlan (Vigia
+    /// gira rapido) derrapaba de lado mientras el asistente la alcanzaba.
+    #[test]
+    fn arriving_with_n_the_ship_stays_over_the_same_ground() {
+        for chapin in [false, true] {
+            let mut app = App::new(64, 36).unwrap();
+            app.apply_preset(&PRESETS[21]);
+            if chapin {
+                app.switch_version();
+            }
+            for _ in 0..app.system.sites.len() {
+                app.visit_next_site();
+                let site = app.system.sites[app.next_site];
+                let ground = |app: &App| {
+                    let body = &app.system.bodies[site.body];
+                    body.rotation(app.sim_time).conjugate().rotate(app.ship.world_pos - body.position(app.sim_time)).normalize()
+                };
+                let start = ground(&app);
+                for _ in 0..90 {
+                    app.update(1.0 / 30.0, &FrameInput::default());
+                }
+                let drift = ground(&app).dot(start).clamp(-1.0, 1.0).acos() * app.system.bodies[site.body].radius;
+                assert!(drift < 1.0, "{}: se deslizo {drift:.1} sobre el suelo", site.name);
+            }
+        }
+    }
 
     #[test]
     fn slow_frames_keep_the_cycle_clock_in_real_time() {

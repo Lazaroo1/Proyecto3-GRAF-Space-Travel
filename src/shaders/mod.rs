@@ -132,6 +132,8 @@ pub struct Uniforms<'a> {
     pub tail: Option<Tail>,
     /// Pira hirviendo mientras Gargantua se la come.
     pub vapor: Option<Vapor>,
+    /// La columna de ceniza del Volcan de Fuego (version chapina).
+    pub plume: Option<crate::chapin::plume::Plume>,
     /// Gargantua, cuando ya existe.
     pub black_hole: Option<&'a BlackHole<'a>>,
     /// Centro de la estrella, relativo a la camara.
@@ -347,6 +349,7 @@ pub fn has_volumes(u: &Uniforms) -> bool {
         || u.nebula.is_some()
         || u.tail.is_some()
         || u.vapor.is_some()
+        || u.plume.is_some()
 }
 
 /// Pasos de la atmosfera por pixel de cielo: ahi esta el detalle fino del
@@ -363,6 +366,9 @@ pub fn volumes(color: Vec3, dir: Vec3, depth: f32, sky: bool, u: &Uniforms) -> V
     let mut color = color;
     if let Some(vapor) = &u.vapor {
         color = vapor.apply(color, dir, depth, u.noise);
+    }
+    if let Some(plume) = &u.plume {
+        color = plume.apply(color, dir, depth, u.noise);
     }
     if let Some(nebula) = &u.nebula {
         color += nebula.light(dir, depth, u.noise);
