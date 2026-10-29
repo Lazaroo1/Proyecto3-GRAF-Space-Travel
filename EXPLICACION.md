@@ -229,6 +229,24 @@
   la tormenta y corre su color del rosa al violeta. Los relámpagos son
   destellos chicos dentro de las nubes del vórtice. Tiene **anillos
   delgados de polvo** que brillan a contraluz.
+- **Vigía ya no es una pelota lisa** ([shaders/vigia.rs](src/shaders/vigia.rs)):
+  - **Bandas** por latitud, cada una con su color y su corriente (al este o
+    al oeste). La latitud se tuerce con un fbm y con ondas de dos armónicos
+    a lo largo de la longitud (Kelvin-Helmholtz, como entre las bandas de
+    Saturno), y adentro de cada banda hay remolinos chicos cuando se
+    alcanzan a ver. Se doblan alrededor del ojo con menos giro que el
+    detalle de las nubes (con todo el giro el disco parecía una paleta de
+    dulce) y no se calculan debajo del iris, donde no se ven.
+  - **Ocho ojos chicos** que viajan con su banda, cada uno enroscando las
+    nubes a su alrededor. De lejos son una rendija; con la nave cerca se
+    abren (una almendra en los ejes de la tormenta) y la pupila se corre
+    hacia la nave. Cada pixel los descarta primero por latitud, que no
+    cuesta, y el ojo grande se los traga si les pasa encima.
+  - **Auroras**: una cinta que serpentea alrededor de cada polo, con
+    pliegues finos como cortinas, verde abajo y magenta arriba; laten con
+    la estrella y se ven sobre todo de noche y en el borde.
+  - **Relámpagos por todo el planeta**: celdas sobre la esfera que destellan
+    cada una a su hora, sobre todo en el lado de noche.
 - **Párpado y El espejo** ([shaders/parpado.rs](src/shaders/parpado.rs)): la
   luna de Vigía, acoplada por marea (le da siempre la misma cara), con
   cordilleras de cristal y lagos. Del lado de Vigía hay un lago grande: su
