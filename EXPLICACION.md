@@ -229,6 +229,18 @@
   la tormenta y corre su color del rosa al violeta. Los relámpagos son
   destellos chicos dentro de las nubes del vórtice. Tiene **anillos
   delgados de polvo** que brillan a contraluz.
+- **Los anillos de Vigía, como los de Saturno**
+  ([shaders/rings.rs](src/shaders/rings.rs) `dust`): por radio, un anillo
+  interior tenue y oscuro, uno ancho y denso con anillitos, la división
+  oscura (como la de Cassini) y el exterior con un hueco angosto y otro más
+  fino; cada zona con franjas de colores (lila, rosa, durazno, blanco hielo
+  y gris azulado). Eso mismo da la sombra de los anillos sobre el planeta.
+  Lo que depende del ángulo solo se dibuja: la lunita del hueco, que gira a
+  su velocidad de Kepler y deja las orillas onduladas detrás (las olas se
+  van calmando), un anillo de grumos por fuera que se trenza entre dos
+  lunitas pastoras, y rayos radiales sobre el anillo denso que giran con el
+  planeta y no con el anillo y aparecen y se desvanecen despacio. La sombra
+  del planeta sobre los anillos ya estaba.
 - **Vigía ya no es una pelota lisa** ([shaders/vigia.rs](src/shaders/vigia.rs)):
   - **Bandas** por latitud, cada una con su color y su corriente (al este o
     al oeste). La latitud se tuerce con un fbm y con ondas de dos armónicos
