@@ -80,11 +80,12 @@ la cerveza, fuego verde el Jäger, azul el Blue Label, morado la Cubata,
 chispas de colores el Four Loko).
 
 **La música**: las canciones van en la carpeta [`musica/`](musica/LEEME.txt)
-(mp3, ogg, wav); suenan en orden por nombre y un `primera.txt` con el nombre
-de una canción hace que siempre empiece con esa. Al final de la lista está
-una **marimba procedural** escrita en código (síntesis modal de las teclas
+(mp3, ogg, wav) y suenan en orden aleatorio, con un **crossfade** de 3.5 s
+entre una y otra; un `primera.txt` con el nombre de una canción (o un
+pedazo) hace que siempre empiece con esa. Al final de cada vuelta está una
+**marimba procedural** escrita en código (síntesis modal de las teclas
 afinadas 1:4:10, el charleo de los tecomates y el redoble, en 6/8 con
-sesquialtera). Abajo a la derecha hay un mini reproductor: **K** pausa,
+sesquialtera), a la que se llega con U / I. Abajo a la derecha hay un mini reproductor: **K** pausa,
 **U** / **I** canción anterior / siguiente, **-** / **+** volumen, y con el
 mouse suelto (Tab) se les puede dar clic a los botones y a la barra.
 

@@ -125,8 +125,14 @@
 - **El reproductor** ([player.rs](src/player.rs)): raylib solo decodifica y
   reproduce. Los archivos se leen con Rust y se le pasan desde memoria,
   porque en Windows raylib abre rutas con la página de códigos ANSI y una
-  ruta con tildes no se abriría. La marimba procedural
-  ([marimba.rs](src/marimba.rs)) es la última pista y la toca el sintetizador.
+  ruta con tildes no se abriría. Empieza con la canción de `primera.txt` y
+  luego las revuelve (Fisher-Yates con una semilla del reloj); al terminar
+  la vuelta las revuelve otra vez sin repetir de entrada la última. Cuando
+  a una canción le quedan 3.5 s empieza la siguiente: suenan dos streams a
+  la vez, uno baja con un coseno y el otro sube con un seno (potencia
+  constante, sin hueco de volumen en medio). La marimba procedural
+  ([marimba.rs](src/marimba.rs)) es la última pista de cada vuelta y la toca
+  el sintetizador; sola no entra al shuffle porque no se acaba nunca.
 
 # Cambios de la sexta revisión
 
