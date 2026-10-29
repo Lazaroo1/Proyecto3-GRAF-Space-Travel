@@ -14,9 +14,14 @@
 //!   el collado de La Horqueta.
 //! - **Barrancas**: canales que bajan de la cumbre, cada uno en un angulo
 //!   alrededor del cono y con meandros (senos de la distancia al centro). El
-//!   perfil es una V redondeada, mas honda a media ladera. Las coladas del
-//!   Fuego bajan por algunas de ellas: la misma funcion que talla la barranca
-//!   le dice al shader donde esta la lava.
+//!   perfil es una V, mas honda a media ladera. Las coladas del Fuego bajan
+//!   por algunas de ellas: la misma funcion que talla la barranca le dice al
+//!   shader donde esta la lava.
+//! - **Surcos**: entre las barrancas, muchos canales angostos: ruido en un
+//!   circulo alrededor del eje del cono (periodico en el angulo) que
+//!   serpentea al bajar; el fondo va donde el ruido cruza por cero. Dejan
+//!   aristas en la silueta. El shader agrega otros mas finos solo en la
+//!   normal.
 //! - **Lomas**: fbm con crestas viejas donde un ruido grande lo deja; en los
 //!   valles bajos crece lo verde.
 //! - **Antigua**: en un rectangulo redondeado alrededor del lugar el relieve
@@ -237,6 +242,20 @@ fn flow(v: &Volcano, k: usize, d: f32, side: f32, aa: f32) -> (f32, f32) {
     (across, (d / reach).min(1.0))
 }
 
+/// Cuantos surcos hay alrededor de un cono: frecuencia del circulo de ruido
+/// en el relieve y, mas finos, en el shader.
+const RIDGES: f32 = 3.0;
+const RILLS: f32 = 9.0;
+
+/// Los surcos de una ladera: ruido en un circulo alrededor del eje (asi es
+/// periodico en el angulo) que serpentea al bajar (`wander`). Vale 0 en el
+/// fondo de un surco.
+#[inline]
+fn furrow(noise: &Perlin, v: &Volcano, d: f32, phi: f32, freq: f32, wander: f32) -> f32 {
+    let ring = Vec3::new(phi.cos() * freq, phi.sin() * freq, d * wander + v.spin * 5.0);
+    noise.noise(ring).abs()
+}
+
 /// Mas suave que `a.min(b)`: el borde del crater queda redondo.
 #[inline]
 fn smooth_min(a: f32, b: f32, k: f32) -> f32 {
@@ -246,7 +265,7 @@ fn smooth_min(a: f32, b: f32, k: f32) -> f32 {
 
 /// Un volcan a la distancia `d` de su centro y en el angulo `phi`: altura
 /// y lava (0 a 1).
-fn cone(v: &Volcano, d: f32, phi: f32) -> (f32, f32) {
+fn cone(v: &Volcano, d: f32, phi: f32, noise: &Perlin) -> (f32, f32) {
     let s = d / v.base;
     let slope = v.height * (1.0 - s).max(0.0).powf(PROFILE);
     // El crater: un paraboloide invertido que corta la cumbre.
@@ -263,12 +282,15 @@ fn cone(v: &Volcano, d: f32, phi: f32) -> (f32, f32) {
             lava = 1.0;
         }
     }
-    // Barrancas: una V redondeada, honda a media ladera.
+    // Barrancas: una V, honda a media ladera.
     let (side, k) = nearest_channel(v, d, phi);
     let width = 2.0 + 0.1 * d;
     let carve = v.gully * smoothstep(v.crater, v.crater * 3.5, d) * smoothstep(1.0, 0.55, s);
-    let groove = (1.0 - (side / width).min(1.0)).powi(2);
+    let groove = (1.0 - (side / width).min(1.0)).powf(1.4);
     h -= carve * groove;
+    // Surcos entre las barrancas: angostos, mas hondos a media ladera.
+    let scour = 1.0 - smoothstep(0.0, 0.3, furrow(noise, v, d, phi, RIDGES, 0.04));
+    h -= scour * v.height * 0.045 * smoothstep(v.crater, v.crater * 2.5, d) * smoothstep(1.0, 0.6, s);
     let (molten, _) = flow(v, k, d, side, 0.2);
     (h.max(0.0), lava.max(molten))
 }
@@ -357,7 +379,7 @@ impl FuegoField {
             if d >= v.base {
                 continue;
             }
-            let (h, molten) = cone(v, d, phi);
+            let (h, molten) = cone(v, d, phi, n);
             peaks += h.powi(4);
             let s = d / v.base;
             cover = cover.max(smoothstep(1.0, 0.55, s));
@@ -402,7 +424,6 @@ pub fn field(seed: u32) -> Arc<dyn HeightField> {
 // El shader del suelo ---------------------------------------------------------
 
 const BASALT: Vec3 = Vec3::new(0.014, 0.0125, 0.0115);
-const BLACK_ASH: Vec3 = Vec3::new(0.0065, 0.0062, 0.006);
 /// Escoria oxidada de las cumbres.
 const SCORIA: Vec3 = Vec3::new(0.032, 0.015, 0.009);
 const SOIL: Vec3 = Vec3::new(0.032, 0.021, 0.014);
@@ -417,6 +438,15 @@ const CROPS: [Vec3; 5] = [
 ];
 /// Bruma del borde del planeta.
 const HAZE: Vec3 = Vec3::new(0.32, 0.36, 0.45);
+/// Las laderas de los volcanes: ceniza oscura de la cumbre del Fuego y la
+/// gris que rellena surcos y barrancas, pedregal de las cumbres dormidas,
+/// zacate, y el verde de las copas del bosque (en sombra y al sol).
+const ASH_DARK: Vec3 = Vec3::new(0.0048, 0.0045, 0.0043);
+const ASH_GREY: Vec3 = Vec3::new(0.013, 0.0125, 0.012);
+const SCREE: Vec3 = Vec3::new(0.016, 0.012, 0.009);
+const SCRUB: Vec3 = Vec3::new(0.017, 0.016, 0.008);
+const CANOPY: Vec3 = Vec3::new(0.0045, 0.016, 0.004);
+const CANOPY_LIGHT: Vec3 = Vec3::new(0.011, 0.028, 0.006);
 
 pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     let footprint = f.pos.length() * u.pixel_angle;
@@ -491,37 +521,99 @@ fn land(f: &Fragment, u: &Uniforms, dir: Vec3, footprint: f32) -> Vec3 {
     let steep = smoothstep(0.3, 0.6, f.uv.y);
     let rock = detail::rock(f, u, 0.12, footprint, 0.8);
     let grain = 0.6 + 0.8 * rock.color.luminance() / 0.16;
-    // Lomas: roca vieja arriba y tierra abajo.
+    // Lomas: roca vieja arriba y tierra abajo; lo verde de los valles son
+    // parcelas.
     let mut albedo = BASALT.lerp(SOIL, smoothstep(0.55, 0.3, f.uv.x) * 0.8) * grain;
-    let mut rocky = 1.0;
-    let veg = match host(dir) {
-        Some((v, d, phi)) => {
-            // Los conos: vetas que bajan por la ladera (ruido en el angulo
-            // alrededor del cono, estirado hacia abajo), sin la textura de
-            // roca: ceniza negra en los activos y pedregal en los dormidos.
-            let s = d / v.base;
-            let streak = n.noise(Vec3::new(phi.cos() * 22.0, phi.sin() * 22.0, d * 0.05)) * 0.5 + 0.5;
-            let broad = n.noise(Vec3::new(phi.cos() * 5.0, phi.sin() * 5.0, d * 0.03 + 2.0)) * 0.5 + 0.5;
-            let cone = if v.fire > 0.0 {
-                BLACK_ASH * (0.55 + 0.6 * streak + 0.35 * broad)
-            } else {
-                BASALT.lerp(SCORIA, broad * 0.6) * (0.7 + 0.5 * streak)
-            };
-            // Escoria rojiza alrededor del crater.
-            let cone = cone.lerp(SCORIA * (0.8 + 0.4 * streak), smoothstep(0.2, 0.08, s) * 0.7);
-            let on_cone = smoothstep(1.0, 0.7, s);
-            albedo = albedo.lerp(cone, on_cone * (1.0 - 0.7 * steep));
-            rocky = 1.0 - on_cone * (1.0 - steep);
-            FOREST * (0.7 + 0.6 * broad)
-        }
-        // Lo verde de los valles: parcelas.
-        None => crops(p, dir, footprint, n),
-    };
-    albedo = albedo.lerp(veg, smoothstep(0.25, 0.6, green) * (1.0 - steep));
-    let normal = f.normal.lerp(rock.normal, 0.15 + 0.85 * rocky).normalize();
+    albedo = albedo.lerp(crops(p, dir, footprint, n), smoothstep(0.25, 0.6, green) * (1.0 - steep));
+    let mut normal = rock.normal;
+    if let Some((v, d, phi)) = host(dir) {
+        // Los conos: su propia ladera, con la textura de roca solo en lo
+        // empinado.
+        let (slope, slope_normal) = flank(f, u, v, d, phi, footprint);
+        let on_cone = smoothstep(1.0, 0.75, d / v.base);
+        albedo = albedo.lerp(slope, on_cone);
+        let rocky = (rock.normal - f.normal) * (0.15 + 0.6 * steep);
+        normal = normal.lerp(slope_normal + rocky, on_cone).normalize();
+    }
     let (glow, molten) = fire(f, u, dir, footprint);
     let lit = pbr::shade(f, u, albedo * (1.0 - molten), 0.92, 0.0, normal, rock.ao);
     lit + glow
+}
+
+/// La ladera de un volcan: arriba la cumbre pelona (ceniza oscura en los
+/// activos, pedregal en los dormidos) con surcos rellenos de ceniza gris,
+/// luego zacate y abajo el bosque. Las barrancas grandes del Fuego cortan
+/// el bosque como franjas de ceniza gris, como se ven desde Antigua; en los
+/// dormidos son solo sombra. Devuelve el albedo y la normal, inclinada por
+/// los surcos finos.
+fn flank(f: &Fragment, u: &Uniforms, v: &Volcano, d: f32, phi: f32, footprint: f32) -> (Vec3, Vec3) {
+    let n = u.noise;
+    let s = d / v.base;
+    let active = v.fire > 0.0;
+    // Hasta donde llega lo pelon y desde donde hay bosque, torcidos con
+    // ruido: el bosque sube mas en los dormidos.
+    let around = Vec3::new(phi.cos(), phi.sin(), v.spin);
+    let wobble = 0.06 * n.noise(around * 3.0) + 0.03 * n.noise(f.local * 0.35);
+    let bare_line = if active { 0.36 } else { 0.22 } + wobble;
+    let bare = smoothstep(bare_line + 0.05, bare_line - 0.03, s);
+    let woods = smoothstep(bare_line + 0.08, bare_line + 0.2, s);
+    // Vetas a lo largo de la pendiente: ruido en el angulo, estirado hacia
+    // abajo.
+    let streak = n.noise(Vec3::new(phi.cos() * 22.0, phi.sin() * 22.0, d * 0.05)) * 0.5 + 0.5;
+    let broad = n.noise(Vec3::new(phi.cos() * 5.0, phi.sin() * 5.0, d * 0.03 + 2.0)) * 0.5 + 0.5;
+    // Surcos finos, solo en el sombreado: el fondo con ceniza gris y la
+    // pendiente de lado inclina la normal. Se apagan cuando miden pocos
+    // pixeles y bajo el bosque.
+    let spacing = d.max(1.0) / RILLS;
+    let fine = smoothstep(3.0, 8.0, spacing / footprint.max(1e-4)) * (1.0 - woods);
+    let (mut rill, mut tilt) = (0.0, 0.0);
+    if fine > 0.0 {
+        let profile = |phi: f32| smoothstep(0.0, 0.3, furrow(n, v, d, phi, RILLS, 0.09));
+        let e = 0.004;
+        rill = (1.0 - profile(phi)) * fine;
+        let depth = 0.25 + 0.012 * d;
+        tilt = (profile(phi + e) - profile(phi - e)) / (2.0 * e * d.max(1.0)) * depth * fine;
+    }
+    // El fondo de las barrancas grandes.
+    let (side, _) = nearest_channel(v, d, phi);
+    let width = 2.0 + 0.1 * d;
+    let bed = smoothstep(width * 0.5, width * 0.12, side) * smoothstep(v.crater * 1.5, v.crater * 4.0, d);
+
+    let summit = if active {
+        ASH_DARK.lerp(ASH_GREY, (0.25 * streak + 0.7 * rill + 0.3 * bed).min(1.0)) * (0.8 + 0.35 * broad)
+    } else {
+        SCREE.lerp(ASH_GREY, 0.4 * rill + 0.3 * streak) * (0.75 + 0.4 * broad)
+    };
+    // Escoria rojiza alrededor del crater.
+    let summit = summit.lerp(SCORIA * (0.6 + 0.4 * streak), smoothstep(0.16, 0.06, s) * 0.6);
+    let scrub = SCRUB.lerp(CANOPY, 0.5 * broad) * (0.8 + 0.4 * streak);
+    let mut albedo = summit.lerp(scrub, 1.0 - bare).lerp(canopy(f, n, footprint, broad), woods);
+    if active {
+        albedo = albedo.lerp(ASH_GREY * (0.85 + 0.3 * streak), bed * 0.85);
+    } else {
+        albedo *= 1.0 - 0.35 * bed;
+    }
+    // La normal: de lado, alrededor del eje del cono.
+    let (e1, e2) = perpendiculars(v.center);
+    let across = e2 * phi.cos() - e1 * phi.sin();
+    let normal = (f.normal - f.object_to_world.mul_vec(across) * tilt).normalize();
+    (albedo, normal)
+}
+
+/// Copas de arboles: celdas de Worley, oscuras en el borde, con verdes
+/// distintos por manchas. De lejos, el promedio.
+fn canopy(f: &Fragment, n: &Perlin, footprint: f32, patch: f32) -> Vec3 {
+    const CROWN: f32 = 1.8;
+    let average = CANOPY.lerp(CANOPY_LIGHT, 0.2 + 0.4 * patch);
+    let near = smoothstep(CROWN * 0.1, CROWN * 0.04, footprint);
+    if near <= 0.0 {
+        return average;
+    }
+    let (f1, f2) = n.cells(f.local / CROWN);
+    let tone = n.noise(f.local * 0.9) * 0.5 + 0.5;
+    let leaf = CANOPY.lerp(CANOPY_LIGHT, (0.1 + 0.7 * tone + 0.3 * (patch - 0.5)).clamp(0.0, 1.0));
+    let gap = 1.0 - 0.3 * smoothstep(0.2, 0.0, f2 - f1) - 0.2 * f1.min(1.0);
+    average.lerp(leaf * gap, near)
 }
 
 /// Una explosion del Fuego: cada `BURST` segundos mas o menos (con azar),

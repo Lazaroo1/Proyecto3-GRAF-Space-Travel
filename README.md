@@ -63,13 +63,13 @@ las sombras tienen más relleno.
 | OCASO | Versión chapina | Lugar (N) |
 | --- | --- | --- |
 | La estrella | **Kinich Ajaw**, el sol maya: fuego dorado con el glifo k'in (la flor de cuatro pétalos) fijo en su superficie, corona dorada con rayos | — |
-| Pira | **Volcán de Fuego**: conos de ceniza negra, coladas de lava que laten y un cráter encendido; en el valle, Antigua | **Antigua**: el Arco de Santa Catalina con su reloj (las agujas avanzan), casas coloniales y alfombras de aserrín en la calle |
+| Pira | **Volcán de Fuego**: el Fuego con la cumbre de ceniza oscura llena de surcos, barrancas de ceniza gris que bajan entre el bosque, coladas de lava que laten y un cráter encendido; a su lado el Acatenango, dormido, con bosque hasta arriba; en el valle, Antigua | **Antigua**: el Arco de Santa Catalina con su reloj (las agujas avanzan), casas coloniales y alfombras de aserrín en la calle |
 | Jardín | **Petén**: selva, ríos y lagos | **Tikal**: el Templo del Gran Jaguar saliendo sobre la selva, ceibas y luciérnagas |
-| Vigía | **Atitlán**: un mundo lago con los volcanes Atitlán, Tolimán y San Pedro; el agua refleja y en las tardes el Xocomil la pica | **Panajachel**: el muelle y las lanchas que se mecen con las olas |
+| Vigía | **Atitlán**: un mundo lago con los volcanes Atitlán, Tolimán y San Pedro, con bosque casi hasta la punta y barrancos; el agua refleja y en las tardes el Xocomil la pica | **Panajachel**: el muelle y las lanchas que se mecen con las olas |
 | Párpado | **Semuc Champey**: pozas turquesa en terrazas de caliza entre la selva | **Las pozas** |
 | Argos | **Los Cuchumatanes**: sierra con helada al amanecer y pinos; en su anillo, los barriletes gigantes de Sumpango | **San Andrés Xecul**: la iglesia amarilla con sus columnas de colores, ángeles, enredaderas y cúpulas de gajos (todo pintado por el shader) |
 | — | **La Luna de Xelajú**, luna de los Cuchumatanes, con un tejido de huipil que brilla de noche | — |
-| Cementerio | **La capital**: barrancos, cuadras y luces; en su anillo, camionetas y tuc-tucs dando vueltas | **El Reformador**: la torre de acero tipo Eiffel con sus arcos sobre la 7a Avenida, camionetas extraurbanas pasando abajo y edificios |
+| Cementerio | **La capital**: barrancos, cuadras y luces; en su anillo, camionetas y tuc-tucs dando vueltas | **El Reformador**: la torre de celosía como la de la foto (patas abiertas con arcos sobre la 7a Avenida, alas con círculos, torrecitas en el primer nivel, un círculo en cada tramo del fuste, campana y faro), camionetas extraurbanas pasando abajo y edificios |
 
 **Las naves botella** (modeladas en Blender para este proyecto): Gallo,
 Cabro Reserva, Jägermeister, Blue Label, Cubata Uva y Four Loko. **B** pasa a
@@ -133,14 +133,14 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | Alabeo | Q / E |
 | Turbo | Shift |
 | **Freno de emergencia** (prioridad sobre turbo y crucero) | **X sostenida** |
-| **Recuperar posicion** junto a Pira, conservando el ciclo | **Inicio / Home** |
+| **Recuperar posición** junto a Pira, conservando el ciclo | **H** (o Inicio / Home) |
 | **Viajar al siguiente lugar** (claro, géiseres, nido, baliza, espejo; en la versión chapina se llega de día) | **N** |
 | Acercar / alejar la cámara | Rueda |
 | Cámara de persecución / cabina | C |
 | Asistente de vuelo / gravedad | Z / G |
 | **Modo local** (vuelo relativo a la superficie) | L |
 | **Crucero**: rodea el planeta solo | O |
-| Trayectoria predicha (auto / siempre / nunca) | Y |
+| **Ruta predicha**: la línea de a dónde te lleva la gravedad (auto: solo sin asistencia / siempre / nunca) | Y |
 | **Versión chapina** / volver a OCASO | **V** |
 | Nave botella siguiente / elegir una (en la chapina) | B / 1 a 6 |
 | Música: pausa, anterior / siguiente, volumen (en la chapina) | K, U / I, - / + |
@@ -176,7 +176,7 @@ se muestran con F1; F2 abre contadores y F9 oculta el HUD.
 - Velocidad normal limitada a 420 u/s, turbo a 1.092 u/s; el frenado conserva
   autoridad al bajar la velocidad de aproximacion. Con asistencia, soltar las
   teclas detiene la nave; X tambien funciona sin asistencia.
-- La franja exterior impide escapar indefinidamente. Inicio/Home recupera una
+- La franja exterior impide escapar indefinidamente. H (o Inicio/Home) recupera una
   posicion segura: es una ayuda del piloto, no parte del recorrido evaluado.
 
 Vistas nuevas, accesibles tambien con AvPag/RePag:

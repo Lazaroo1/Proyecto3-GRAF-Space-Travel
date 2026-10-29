@@ -173,6 +173,7 @@ fn run_window(options: &Options) -> Result<(), String> {
     let mut texture = rl
         .load_texture_from_image(&thread, &image)
         .map_err(|e| format!("no se pudo crear la textura: {e:?}"))?;
+    let fonts = hud::Fonts::load(&mut rl, &thread);
     let mut hud = hud::Hud {
         help: false,
         stats: false,
@@ -246,7 +247,7 @@ fn run_window(options: &Options) -> Result<(), String> {
         if rl.is_key_pressed(KeyboardKey::KEY_C) {
             app.toggle_camera();
         }
-        if rl.is_key_pressed(KeyboardKey::KEY_HOME) {
+        if rl.is_key_pressed(KeyboardKey::KEY_HOME) || rl.is_key_pressed(KeyboardKey::KEY_H) {
             app.return_to_system();
         }
         if rl.is_key_pressed(KeyboardKey::KEY_N) {
@@ -402,7 +403,7 @@ fn run_window(options: &Options) -> Result<(), String> {
         d.clear_background(Color::BLACK);
         d.draw_texture(&texture, 0, 0, Color::WHITE);
         let view = chapin.then(|| player.view());
-        hud::draw(&mut d, &app, fps, &hud, &tweaks, view.as_ref());
+        hud::draw(&mut d, &app, fps, &hud, &tweaks, &fonts, view.as_ref());
     }
     Ok(())
 }

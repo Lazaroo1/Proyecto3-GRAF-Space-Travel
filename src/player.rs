@@ -143,7 +143,7 @@ impl<'a> Player<'a> {
             None => (self.marimba_time, 0.0),
         };
         PlayerView {
-            title: ascii(&self.tracks[self.current].name),
+            title: self.tracks[self.current].name.clone(),
             time,
             length,
             playing: self.playing,
@@ -228,14 +228,15 @@ fn playlist(dir: &Path) -> Vec<Track> {
         }
     }
     tracks.push(Track {
-        name: "Marimba procedural (hecha en codigo)".to_string(),
+        name: "Marimba procedural (hecha en código)".to_string(),
         path: None,
     });
     tracks
 }
 
-/// El nombre sin tildes ni enies: el texto de raylib solo dibuja ASCII.
-fn ascii(text: &str) -> String {
+/// El texto sin tildes ni enies, letra por letra: la letra de raylib solo
+/// dibuja ASCII (el HUD lo usa si no encuentra Segoe UI).
+pub(crate) fn ascii(text: &str) -> String {
     text.chars()
         .map(|c| match c {
             'á' | 'à' | 'ä' | 'â' => 'a',
