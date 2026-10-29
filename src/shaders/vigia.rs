@@ -262,11 +262,14 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     let storm = smoothstep(2.8 + 1.5 * u.eye_near, 1.3, r) * smoothstep(0.95, 1.2, r);
     if storm > 0.0 {
         let slot = (t * (2.5 + 4.0 * u.eye_near)).floor();
-        let spot = u.noise.noise(p * 26.0 + Vec3::splat(slot * 13.7));
+        // Manchas grandes y suaves: con ruido fino y un umbral duro salian
+        // esquirlas blancas que parecian pedazos de algo.
+        let spot = u.noise.noise(p * 9.0 + Vec3::splat(slot * 13.7));
         let gate = u.noise.noise(Vec3::new(slot * 0.71, 3.3, 1.1)) * 0.5 + 0.5;
-        let flash = smoothstep(0.5, 0.75, spot) * smoothstep(0.55 - 0.3 * u.eye_near, 0.85, gate) * storm;
-        // Detras de las nubes: se ven difusos y tenidos de violeta.
-        glow += Vec3::new(0.55, 0.45, 1.0) * (flash * (0.25 + 0.45 * u.eye_near) * (0.4 + 0.6 * lum));
+        let flash = smoothstep(0.25, 0.85, spot).powi(2) * smoothstep(0.55 - 0.3 * u.eye_near, 0.85, gate) * storm;
+        // Detras de las nubes: se ven difusos y tenidos de violeta, mas de
+        // noche.
+        glow += Vec3::new(0.55, 0.45, 1.0) * (flash * (0.12 + 0.3 * u.eye_near) * (0.3 + 0.7 * dark) * (0.4 + 0.6 * lum));
     }
 
     let n = f.normal;
