@@ -28,6 +28,25 @@ pub fn write(p: &mut [u8], c: Vec3) {
     p[3] = 255;
 }
 
+/// Escribe un color y cuanto emite (`e`, de 0 a 1). La emision va en el
+/// byte del alfa como `A = 255 - e * 255`: asi `write`, que deja `A = 255`,
+/// significa "no emite", y lo opaco que se pinta encima borra la emision
+/// de lo que tapa. El posproceso la lee para el brillo y despues deja todo
+/// opaco otra vez.
+#[inline]
+pub fn write_emit(p: &mut [u8], c: Vec3, e: f32) {
+    p[0] = (c.x.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    p[1] = (c.y.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    p[2] = (c.z.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    p[3] = 255 - (e.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+}
+
+/// Cuanto emite un pixel escrito con `write_emit` (de 0 a 1).
+#[inline]
+pub fn emission(p: &[u8]) -> f32 {
+    (255 - p[3]) as f32 * (1.0 / 255.0)
+}
+
 /// Cuanto cubre una figura a un pixel cuyo centro esta a `d` pixeles de su
 /// borde (negativo adentro).
 #[inline]
@@ -173,5 +192,20 @@ mod tests {
         let corner = read(&out[0..4]);
         assert!(corner.x < c.x);
         assert!(out.chunks_exact(4).all(|p| p[3] == 255));
+    }
+
+    #[test]
+    fn the_emission_rides_in_the_alpha_byte() {
+        let mut p = [0u8; 4];
+        write_emit(&mut p, Vec3::new(0.5, 0.25, 1.0), 0.6);
+        assert!((emission(&p) - 0.6).abs() < 1.0 / 255.0);
+        write_emit(&mut p, Vec3::ONE, 7.0);
+        assert_eq!(emission(&p), 1.0);
+        write_emit(&mut p, Vec3::ONE, -1.0);
+        assert_eq!(emission(&p), 0.0);
+        // Lo opaco borra la emision.
+        write_emit(&mut p, Vec3::ONE, 1.0);
+        write(&mut p, Vec3::ONE);
+        assert_eq!(emission(&p), 0.0);
     }
 }
