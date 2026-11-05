@@ -14,10 +14,10 @@
 //!   theta_pc = asin(sqrt(R / R_LC))    casquete de lineas abiertas
 //! ```
 //!
-//! En el juego 1 unidad es 1 km: Faro mide 12 unidades de radio y sus
-//! haces nacen a 120-210 unidades. Las proporciones de la estrella, sus
-//! casquetes, su magnetosfera y sus haces son las reales. El cilindro de
-//! luz (casi 100 000 km) queda fuera del sistema.
+//! Se dibuja con `SCALE` unidades por km (1 unidad = 500 m): Faro mide 24
+//! unidades de radio y sus haces nacen a 240-430 unidades. Las proporciones
+//! de la estrella, sus casquetes, su magnetosfera y sus haces son las reales.
+//! El cilindro de luz (casi 100 000 km) queda fuera del sistema.
 //!
 //! El tiempo tambien es el real: el giro, los estallidos de milisegundos y
 //! la cola de seis minutos de la gran llamarada.
@@ -40,6 +40,9 @@ const YEAR: f64 = 3.155_76e7;
 /// Masa (masas solares), radio (km), periodo (s) y campo dipolar (G).
 pub const MASS: f64 = 1.4;
 pub const RADIUS_KM: f64 = 12.0;
+/// Unidades del juego por km al dibujar a Faro, y su radio en unidades.
+pub const SCALE: f64 = 2.0;
+pub const RADIUS: f64 = RADIUS_KM * SCALE;
 pub const PERIOD: f64 = 2.0698;
 pub const DIPOLE_FIELD: f64 = 3.2e14;
 /// Inclinacion del eje magnetico respecto al de giro: casi ortogonal, asi
@@ -71,12 +74,16 @@ pub const GLARE_GAIN: f64 = 8.0;
 /// 2009: 1e9 a 1e10 V).
 const DISCHARGE_GV: f64 = 3.0;
 
-/// Radio de la esfera de apoyo para una camara a `distance` km: el del
-/// rayo rasante, `b_c sqrt(1 - rs/d)` con `b_c = R / sqrt(1 - rs/R)`.
+/// Radio de Schwarzschild en unidades del juego.
+pub fn rs() -> f64 {
+    model().rs_km * SCALE
+}
+
+/// Radio de la esfera de apoyo para una camara a `distance` unidades: el
+/// del rayo rasante, `b_c sqrt(1 - rs/d)` con `b_c = R / sqrt(1 - rs/R)`.
 pub fn apparent_radius(distance: f64) -> f64 {
-    let m = model();
-    let critical = RADIUS_KM / m.surface_lapse;
-    critical * (1.0 - m.rs_km / distance.max(RADIUS_KM)).max(0.0).sqrt() * 1.003
+    let critical = RADIUS / model().surface_lapse;
+    critical * (1.0 - rs() / distance.max(RADIUS)).max(0.0).sqrt() * 1.003
 }
 
 /// Lo que cambia con el tiempo.
@@ -444,7 +451,7 @@ pub fn field_lines(out: &mut Vec<GlowLine>, body: &Body, t: f64, flare: Option<f
     let (m, e1, e2) = magnetic_frame();
     // Del marco magnetico (z sobre el eje) al mundo relativo a la camara, en km.
     let to_world = |p: DVec3| -> Vec3 {
-        (center + crust.rotate((e1 * p.x + e2 * p.y + m * p.z) * RADIUS_KM)).as_vec3()
+        (center + crust.rotate((e1 * p.x + e2 * p.y + m * p.z) * RADIUS)).as_vec3()
     };
     // Mientras las lineas estan abiertas se estiran hacia afuera.
     let inflate = 1.0 + 25.0 * s.open;
@@ -544,7 +551,7 @@ pub fn fireball(out: &mut Vec<Particle>, body: &Body, t: f64, flare: Option<f64>
         // El plasma va y viene a lo largo de su linea.
         let along = 0.5 + 0.47 * (TAU * (u(3) + slosh * (0.6 + 0.8 * u(4)))).sin();
         let p = super::magnetosphere::line_point(0.3, theta_f, phi_f, along);
-        let local = (e1 * p.x + e2 * p.y + m * p.z) * RADIUS_KM;
+        let local = (e1 * p.x + e2 * p.y + m * p.z) * RADIUS;
         let heat = 1.0 - ((apex - 1.15) / (reach - 1.15).max(1e-3)) as f32;
         let tint = Vec3::new(1.4, 0.35, 1.5).lerp(Vec3::new(2.4, 1.3, 2.2), heat);
         out.push(Particle {

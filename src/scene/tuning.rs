@@ -166,7 +166,7 @@ mod tests {
     fn every_site_has_its_landmarks_and_vents_wake_up_near_the_ship() {
         use crate::scene::props::PropKind;
         let sys = system();
-        assert_eq!(sys.sites.len(), 4);
+        assert_eq!(sys.sites.len(), 5);
         for (body, kind, count) in [
             ("Pira", PropKind::Vent, 12),
             ("Argos", PropKind::Eye, 16),

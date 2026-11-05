@@ -221,9 +221,10 @@ fn run_window(options: &Options) -> Result<(), String> {
             hud.hidden = !hud.hidden;
         }
         // Vistas fijas en orden, para mostrar algo rapido en la demostracion.
-        let step = if rl.is_key_pressed(KeyboardKey::KEY_PAGE_DOWN) {
+        // En las laptops sin RePag/AvPag, la coma y el punto.
+        let step = if rl.is_key_pressed(KeyboardKey::KEY_PAGE_DOWN) || rl.is_key_pressed(KeyboardKey::KEY_PERIOD) {
             1
-        } else if rl.is_key_pressed(KeyboardKey::KEY_PAGE_UP) {
+        } else if rl.is_key_pressed(KeyboardKey::KEY_PAGE_UP) || rl.is_key_pressed(KeyboardKey::KEY_COMMA) {
             -1
         } else {
             0
