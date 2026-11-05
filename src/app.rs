@@ -3380,6 +3380,34 @@ mod tests {
 
     use super::*;
 
+    /// Ningun pixel de Faro sale NaN o infinito, desde ninguna distancia ni
+    /// angulo (un NaN se riega con el bloom y deja un cuadro negro).
+    #[test]
+    fn faro_never_renders_non_finite_pixels() {
+        let mut app = App::new(160, 90).unwrap();
+        let i = app.system.find("Faro").unwrap();
+        let mut bad = Vec::new();
+        for k in 0..400u32 {
+            let t = 40.0 + k as f64 * 0.37;
+            app.faro_flare = if k % 3 == 0 { Some(t - (k % 40) as f64 * 0.3) } else { None };
+            let center = app.system.bodies[i].position(t);
+            let h = |s: u32| crate::math::hash_u32(k * 7 + s) as f64 / 4_294_967_296.0;
+            let dir = DVec3::new(h(1) - 0.5, h(2) - 0.5, h(3) - 0.5).normalize();
+            let distance = 13.5 * (1.0 + 600.0 * h(4).powi(3));
+            let pos = center + dir * distance;
+            // Mirando a Faro con algo de desvio.
+            let look = (center - pos).normalize() + DVec3::new(h(5) - 0.5, h(6) - 0.5, h(7) - 0.5) * 0.6;
+            app.camera_mode = CameraMode::Cockpit;
+            app.place(pos, DQuat::look_rotation(look, DVec3::Y), t);
+            app.render();
+            let n = app.renderer.non_finite();
+            if !n.is_empty() {
+                bad.push((k, t, distance, n.len()));
+            }
+        }
+        assert!(bad.is_empty(), "{bad:?}");
+    }
+
     /// Al llegar con N la nave queda quieta sobre el suelo, que gira: antes
     /// llegaba quieta respecto al centro del planeta y en Atitlan (Vigia
     /// gira rapido) derrapaba de lado mientras el asistente la alcanzaba.

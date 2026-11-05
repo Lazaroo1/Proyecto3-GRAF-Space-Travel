@@ -307,7 +307,9 @@ pub fn shade(material: &Material, f: &Fragment, u: &Uniforms) -> Vec3 {
         Material::Bottle => ship::bottle(f, u),
         Material::Prop(style) => props::shade(style, f, u),
         Material::Line(color) => line(f, *color),
-        Material::Plasma => f.color * (1.0 - (f.uv.y * 2.0 - 1.0).abs()).sqrt(),
+        // En el borde, la interpolacion puede dar uv.y un poco fuera de [0, 1]:
+        // sin el max la raiz da NaN y el bloom lo riega en un cuadro negro.
+        Material::Plasma => f.color * (1.0 - (f.uv.y * 2.0 - 1.0).abs()).max(0.0).sqrt(),
     }
 }
 
@@ -316,7 +318,7 @@ pub fn shade(material: &Material, f: &Fragment, u: &Uniforms) -> Vec3 {
 /// hacia el final del camino (uv.x).
 #[inline]
 fn line(f: &Fragment, color: Vec3) -> Vec3 {
-    let core = 1.0 - (f.uv.y * 2.0 - 1.0).abs();
+    let core = (1.0 - (f.uv.y * 2.0 - 1.0).abs()).max(0.0);
     f.color * color * (core.sqrt() * (1.0 - 0.75 * f.uv.x))
 }
 
