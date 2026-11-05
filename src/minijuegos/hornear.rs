@@ -22,7 +22,7 @@
 //! - **Mapeo de tonos** al guardar (`1 - e^(-x)` y gamma 2.2): los colores
 //!   del `.mtl` son lineales.
 
-use crate::math::Vec3;
+use crate::math::{Vec3, smoothstep};
 use crate::parallel;
 use crate::scene::{Mesh, Surface};
 
@@ -42,6 +42,14 @@ pub struct Sprite {
     pub width: usize,
     pub height: usize,
     pub pixels: Vec<[u8; 4]>,
+    /// Cuanto emite cada pixel (de 0 a 255): solo las piezas con clase LED
+    /// del `.mtl`, no la laca ni el vidrio claros. Es lo que el posproceso
+    /// hace florecer.
+    pub emit: Vec<u8>,
+    /// Por fila, el tramo de columnas `[desde, hasta)` que tiene algo (la
+    /// imagen lleva margen para el resplandor y, de lado, la nave no llena
+    /// su caja): quien la pega no muestrea lo que esta vacio.
+    pub spans: Vec<(u16, u16)>,
     /// Donde toca el suelo el centro de la nave, en pixeles del sprite.
     pub anchor: (f32, f32),
     /// Pixeles por metro.
@@ -64,6 +72,16 @@ impl Sprite {
             [p[0] as f32, p[1] as f32, p[2] as f32, p[3] as f32]
         };
         let (x0, y0) = (x0 as i32, y0 as i32);
+        // Adentro (casi siempre): los cuatro de una vez, sin revisar cada
+        // uno, con los pesos `(1 - fx)(1 - fy)`, `fx (1 - fy)`, ...
+        if x0 >= 0 && y0 >= 0 && (x0 as usize) + 1 < self.width && (y0 as usize) + 1 < self.height {
+            let i = y0 as usize * self.width + x0 as usize;
+            let (a, b) = (self.pixels[i], self.pixels[i + 1]);
+            let (c, d) = (self.pixels[i + self.width], self.pixels[i + self.width + 1]);
+            let s = 1.0 / 255.0;
+            let (wa, wb, wc, wd) = ((1.0 - fx) * (1.0 - fy) * s, fx * (1.0 - fy) * s, (1.0 - fx) * fy * s, fx * fy * s);
+            return std::array::from_fn(|k| a[k] as f32 * wa + b[k] as f32 * wb + c[k] as f32 * wc + d[k] as f32 * wd);
+        }
         let (a, b, c, d) = (at(x0, y0), at(x0 + 1, y0), at(x0, y0 + 1), at(x0 + 1, y0 + 1));
         let mut out = [0.0; 4];
         for k in 0..4 {
@@ -72,6 +90,39 @@ impl Sprite {
             out[k] = (top + (bottom - top) * fy) * (1.0 / 255.0);
         }
         out
+    }
+
+    /// El tramo de `x` (en pixeles del sprite) donde `sample(x, y)` puede
+    /// no ser cero: el bilineal en `x` lee las columnas `floor(x - 0.5)` y
+    /// la siguiente, asi que un tramo `[a, b)` de las filas que toca da
+    /// `(a - 0.5, b + 0.5)`. Vacio si la fila no tiene nada.
+    pub fn span(&self, y: f32) -> (f32, f32) {
+        let y0 = (y - 0.5).floor();
+        let (mut lo, mut hi) = (u16::MAX, 0u16);
+        for yi in [y0, y0 + 1.0] {
+            if yi >= 0.0 && (yi as usize) < self.height {
+                let (a, b) = self.spans[yi as usize];
+                if b > a {
+                    lo = lo.min(a);
+                    hi = hi.max(b);
+                }
+            }
+        }
+        if hi <= lo { (0.0, 0.0) } else { (lo as f32 - 0.5, hi as f32 + 0.5) }
+    }
+
+    /// Cuanto emite el pixel que cae en `(x, y)` (vecino mas cercano, de 0
+    /// a 1): el brillo del posproceso lo difumina igual.
+    #[inline]
+    pub fn emit_at(&self, x: f32, y: f32) -> f32 {
+        if !(x >= 0.0 && y >= 0.0) {
+            return 0.0;
+        }
+        let (xi, yi) = (x as usize, y as usize);
+        if xi >= self.width || yi >= self.height {
+            return 0.0;
+        }
+        self.emit[yi * self.width + xi] as f32 * (1.0 / 255.0)
     }
 }
 
@@ -257,7 +308,7 @@ fn bake_one(mesh: &Mesh, finish: Finish, yaw: f32, elevation: f32, meters: f32, 
     for _ in 0..2 {
         halo = box_blur(&halo, width, height, 2);
     }
-    let pixels = (0..width * height)
+    let pixels: Vec<[u8; 4]> = (0..width * height)
         .map(|i| {
             // Premultiplicado: el color de la nave ya trae su cobertura.
             let c = tone(color[i] + light[i] * alpha[i]) + tone(halo[i] * 0.55);
@@ -265,10 +316,38 @@ fn bake_one(mesh: &Mesh, finish: Finish, yaw: f32, elevation: f32, meters: f32, 
             [byte(c.x), byte(c.y), byte(c.z), byte(a)]
         })
         .collect();
+    // La emision: `1 - e^(-3 max(luz))` de las LEDs (con su cobertura, que
+    // ya trae `light`). Donde las LEDs se amontonan (las tiras y columnas
+    // de focos de la camioneta) emite menos que un foco suelto: la
+    // densidad es la fraccion de pixeles con LED en una ventana de 7 x 7,
+    // y arriba de 0.2 se baja hasta a la mitad,
+    // `1 - 0.5 smoothstep(0.2, 0.5, densidad)`. Si no, decenas de focos
+    // juntos suman un velo blanco.
+    let lit: Vec<Vec3> = light.iter().map(|l| Vec3::splat(if l.max_element() > 0.05 { 1.0 } else { 0.0 })).collect();
+    let density = box_blur(&lit, width, height, 3);
+    let emit = (0..width * height)
+        .map(|i| {
+            let e = 1.0 - (-3.0 * light[i].max_element()).exp();
+            let crowd = 1.0 - 0.5 * smoothstep(0.2, 0.5, density[i].x);
+            byte(e * crowd)
+        })
+        .collect();
+    let spans = pixels
+        .chunks_exact(width.max(1))
+        .map(|row: &[[u8; 4]]| {
+            let any = |p: &[u8; 4]| p.iter().any(|&v| v != 0);
+            match (row.iter().position(any), row.iter().rposition(any)) {
+                (Some(a), Some(b)) => (a.min(u16::MAX as usize) as u16, (b + 1).min(u16::MAX as usize) as u16),
+                _ => (0, 0),
+            }
+        })
+        .collect();
     Sprite {
         width,
         height,
         pixels,
+        emit,
+        spans,
         anchor: (anchor_s.0 / SUPER as f32, anchor_s.1 / SUPER as f32),
         scale: ppm,
     }

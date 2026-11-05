@@ -19,9 +19,11 @@
 //! Los records se guardan en `minijuegos.txt`, junto al programa.
 
 pub mod carrera;
+pub mod ciudad;
 pub mod hornear;
 pub mod lienzo;
 pub mod marimba;
+pub mod posproceso;
 
 use std::path::PathBuf;
 

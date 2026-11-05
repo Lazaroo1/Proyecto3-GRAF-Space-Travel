@@ -25,7 +25,7 @@
 //! hilo reciba un bloque contiguo de memoria con `chunks_mut`.
 
 mod antialias;
-mod bloom;
+pub(crate) mod bloom;
 mod glow;
 mod particles;
 mod pipeline;
