@@ -37,17 +37,23 @@
 //! tiempo y fuerza sacadas de un hash (como musicos de verdad, pero siempre
 //! igual), y `next` solo avanza el reloj, dispara los golpes que tocan y
 //! suma las teclas que suenan: nada se reserva por muestra.
+//!
+//! El instrumento (`Instrument`: las teclas, el charleo, el toc y la sala)
+//! esta separado de quien lo toca. `Marimba` toca el son sola; el minijuego
+//! de la marimba (`minijuegos::marimba`) toca el mismo instrumento con la
+//! partitura escrita (`written`, cada golpe con su papel en el conjunto) y
+//! los golpes de quien juega.
 
 use crate::math::hash_u32;
 use std::f32::consts::{PI, TAU};
 
 /// Negras con puntillo por minuto: un compas de 6/8 tiene dos.
-const BPM: f64 = 132.0;
+pub const BPM: f64 = 132.0;
 /// Corcheas por segundo.
-const EIGHTHS_PER_SECOND: f64 = BPM * 3.0 / 60.0;
+pub const EIGHTHS_PER_SECOND: f64 = BPM * 3.0 / 60.0;
 /// Compases de la vuelta y su largo en corcheas.
 const BARS: usize = 32;
-const LOOP: f64 = BARS as f64 * 6.0;
+pub const LOOP: f64 = BARS as f64 * 6.0;
 /// Teclas que pueden sonar a la vez; si se acaban se roba la mas callada.
 const VOICES: usize = 32;
 /// Modos de una tecla de marimba afinada (1 : 4 : 10), un poco abiertos
@@ -254,8 +260,8 @@ impl Note {
 }
 
 /// Quien golpea: cada musico usa sus baquetas.
-#[derive(Clone, Copy, Debug)]
-enum Mallet {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mallet {
     Bajo,
     Centro,
     Tiple,
@@ -282,38 +288,63 @@ impl Mallet {
     }
 }
 
-/// Un golpe de la partitura.
-#[derive(Clone, Copy, Debug)]
-struct Hit {
-    /// Cuando, en corcheas desde el inicio de la vuelta.
-    at: f64,
-    key: u8,
-    force: f32,
-    mallet: Mallet,
+/// Que papel tiene un golpe en el conjunto (el minijuego de la marimba
+/// separa lo que toca quien juega de lo que toca la marimba sola).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// La nota del bajo en su tiempo.
+    Bajo,
+    /// La octava con que el bajista dobla la fundamental del compas.
+    Octava,
+    /// Las notas del acorde del centro.
+    Centro,
+    /// El ataque de una nota de la melodia del tiple.
+    Melodia,
+    /// La segunda voz del tiple, una tercera abajo.
+    Segunda,
+    /// Los golpes que sostienen una nota redoblada (de las dos voces).
+    Redoble,
+    /// El adorno, justo antes de su nota.
+    Adorno,
 }
 
-/// Arma la partitura completa (bajo, centro, tiple y su segunda voz), ya
-/// humanizada y ordenada en el tiempo.
-fn score() -> Vec<Hit> {
+/// Un golpe de la partitura.
+#[derive(Clone, Copy, Debug)]
+pub struct Hit {
+    /// Cuando, en corcheas desde el inicio de la vuelta.
+    pub at: f64,
+    pub key: u8,
+    pub force: f32,
+    pub mallet: Mallet,
+    pub role: Role,
+    /// Cuanto dura la nota en corcheas (las de la melodia; 0 las demas).
+    pub len: f64,
+    /// Si la nota de la melodia se redobla.
+    pub tremolo: bool,
+}
+
+/// La partitura como esta escrita (bajo, centro, tiple y su segunda voz),
+/// sin humanizar, compas por compas.
+pub fn written() -> Vec<Hit> {
     let mut hits = Vec::new();
     for (bar, (&chord, melody)) in HARMONY.iter().zip(MELODY).enumerate() {
         let start = bar as f64 * 6.0;
         let feel = FEEL[bar % 8];
         // Cada frase entra un poco mas fuerte que la anterior.
         let swell = 0.9 + 0.05 * (bar / 8) as f32;
-        let mut hit = |at: f64, key: u8, force: f32, mallet: Mallet| {
-            hits.push(Hit { at, key, force: force * swell, mallet });
+        let hit = |hits: &mut Vec<Hit>, at: f64, key: u8, force: f32, mallet: Mallet, role: Role| {
+            hits.push(Hit { at, key, force: force * swell, mallet, role, len: 0.0, tremolo: false });
         };
 
         let notes = chord.bass();
         for &(at, which, force) in feel.bass() {
-            hit(start + at, notes[which], force, Mallet::Bajo);
+            hit(&mut hits, start + at, notes[which], force, Mallet::Bajo, Role::Bajo);
         }
         // El bajista dobla la fundamental a la octava en el tiempo fuerte.
-        hit(start, notes[0] + 12, 0.5, Mallet::Bajo);
+        hit(&mut hits, start, notes[0] + 12, 0.5, Mallet::Bajo, Role::Octava);
         for &(at, force) in feel.centro() {
             for key in chord.centro() {
-                hit(start + at, key, force, Mallet::Centro);
+                hit(&mut hits, start + at, key, force, Mallet::Centro, Role::Centro);
             }
         }
 
@@ -323,23 +354,25 @@ fn score() -> Vec<Hit> {
             let end = at + note.len as f64;
             let second = diatonic(note.key, -2);
             if note.grace {
-                hit(at - GRACE, diatonic(note.key, 1), 0.45, Mallet::Tiple);
+                hit(&mut hits, at - GRACE, diatonic(note.key, 1), 0.45, Mallet::Tiple, Role::Adorno);
             }
             let accent = if at == start { 0.95 } else { 0.8 };
-            hit(at, note.key, accent, Mallet::Tiple);
-            hit(at, second, accent * 0.65, Mallet::Tiple);
+            hit(&mut hits, at, note.key, accent, Mallet::Tiple, Role::Melodia);
+            if let Some(lead) = hits.last_mut() {
+                lead.len = note.len as f64;
+                lead.tremolo = note.tremolo;
+            }
+            hit(&mut hits, at, second, accent * 0.65, Mallet::Tiple, Role::Segunda);
             if note.tremolo {
                 // Lo que la tecla pierde entre dos golpes es lo que cada golpe
                 // repone: asi el redoble queda parejo en grave y en agudo.
-                let gap = (TREMOLO / EIGHTHS_PER_SECOND) as f32;
-                let refill = |key: u8| 1.6 * (1.0 - (-gap / ring(key)).exp());
                 let mut beat = at + TREMOLO;
                 let mut hand = 0;
                 while beat < end - 0.25 {
                     // Una mano pega un poco mas fuerte que la otra.
                     let force = if hand == 0 { 0.85 } else { 0.75 };
-                    hit(beat, note.key, force * refill(note.key), Mallet::Tiple);
-                    hit(beat, second, 0.65 * force * refill(second), Mallet::Tiple);
+                    hit(&mut hits, beat, note.key, force * refill(note.key), Mallet::Tiple, Role::Redoble);
+                    hit(&mut hits, beat, second, 0.65 * force * refill(second), Mallet::Tiple, Role::Redoble);
                     beat += TREMOLO;
                     hand ^= 1;
                 }
@@ -347,7 +380,29 @@ fn score() -> Vec<Hit> {
             at = end;
         }
     }
+    hits
+}
 
+/// Cuanto repone un golpe del redoble de `key`: lo que la tecla pierde entre
+/// dos golpes. Asi el redoble queda parejo en grave y en agudo.
+pub fn refill(key: u8) -> f32 {
+    refill_after(key, (TREMOLO / EIGHTHS_PER_SECOND) as f32)
+}
+
+/// Lo mismo con `gap` segundos desde el golpe anterior (el redoble de quien
+/// juega no va a tiempo fijo).
+pub fn refill_after(key: u8, gap: f32) -> f32 {
+    1.6 * (1.0 - (-gap / ring(key)).exp())
+}
+
+/// La segunda voz de una nota de la melodia: una tercera de la escala abajo.
+pub fn second_voice(key: u8) -> u8 {
+    diatonic(key, -2)
+}
+
+/// Arma la partitura completa, ya humanizada y ordenada en el tiempo.
+fn score() -> Vec<Hit> {
+    let mut hits = written();
     // Nadie toca como metronomo: cada golpe se corre hasta ~3 ms y cambia
     // hasta 6 % de fuerza, siempre igual (hash del numero de golpe).
     for (i, hit) in hits.iter_mut().enumerate() {
@@ -538,12 +593,10 @@ impl Room {
     }
 }
 
-/// La marimba: el sintetizador le pide una muestra a la vez.
-pub struct Marimba {
-    score: Vec<Hit>,
-    /// Reloj de la partitura en corcheas y el siguiente golpe por disparar.
-    clock: f64,
-    cursor: usize,
+/// El instrumento: las teclas que suenan, el charleo, el toc y la sala.
+/// No sabe de partituras: se le pide golpear una tecla y una muestra a la
+/// vez (lo usan la marimba que toca sola y el minijuego).
+pub struct Instrument {
     voices: [Voice; VOICES],
     /// Muestras por segundo con que se afino todo (0 antes de la primera).
     rate: f32,
@@ -556,12 +609,9 @@ pub struct Marimba {
     noise: u32,
 }
 
-impl Marimba {
+impl Instrument {
     pub fn new() -> Self {
         Self {
-            score: score(),
-            clock: 0.0,
-            cursor: 0,
             voices: [Voice::default(); VOICES],
             rate: 0.0,
             knock_fade: 0.0,
@@ -572,8 +622,12 @@ impl Marimba {
         }
     }
 
-    /// Afina filtros y teclas para otra frecuencia de muestreo.
-    fn tune(&mut self, rate: f32) {
+    /// Afina filtros y teclas para `rate` muestras por segundo, si cambio.
+    /// Va antes de golpear: una tecla nueva se afina con esta frecuencia.
+    pub fn tune_to(&mut self, rate: f32) {
+        if rate == self.rate {
+            return;
+        }
         self.rate = rate;
         self.knock_fade = (-1.0 / (0.003 * rate)).exp();
         self.nasal = [Resonance::new(700.0, 4.0, rate), Resonance::new(2100.0, 6.0, rate)];
@@ -594,21 +648,11 @@ impl Marimba {
         (x >> 8) as f32 / 8_388_608.0 - 1.0
     }
 
-    /// Dispara los golpes de la partitura que ya llegaron.
-    fn fire(&mut self) {
-        while let Some(hit) = self.score.get(self.cursor).copied() {
-            if hit.at > self.clock {
-                break;
-            }
-            self.strike(hit);
-            self.cursor += 1;
-        }
-    }
-
     /// Golpea una tecla: la misma si ya suena (se suma al movimiento), una
     /// libre si no, o la mas callada si todas estan ocupadas.
-    fn strike(&mut self, hit: Hit) {
-        let ringing = self.voices.iter().position(|v| v.active && v.key == hit.key);
+    pub fn strike(&mut self, key: u8, force: f32, mallet: Mallet) {
+        debug_assert!(self.rate > 0.0, "afinar con tune_to antes de golpear");
+        let ringing = self.voices.iter().position(|v| v.active && v.key == key);
         let slot = ringing.unwrap_or_else(|| {
             self.voices.iter().position(|v| !v.active).unwrap_or_else(|| {
                 let quietest = self
@@ -620,27 +664,21 @@ impl Marimba {
             })
         });
         if ringing.is_none() {
-            self.voices[slot] = Voice::new(hit.key, self.rate);
+            self.voices[slot] = Voice::new(key, self.rate);
         }
-        self.voices[slot].strike(hit.force, hit.mallet);
+        self.voices[slot].strike(force, mallet);
     }
 
-    /// La siguiente muestra (mono, entre -0.6 y 0.6 aproximadamente), a
+    /// Teclas sonando ahora.
+    #[cfg(test)]
+    pub fn sounding(&self) -> usize {
+        self.voices.iter().filter(|v| v.active).count()
+    }
+
+    /// La siguiente muestra (mono, entre -0.6 y 0.6 aproximadamente) a
     /// `sample_rate` muestras por segundo.
     pub fn next(&mut self, sample_rate: f32) -> f32 {
-        if sample_rate != self.rate {
-            self.tune(sample_rate);
-        }
-        self.clock += EIGHTHS_PER_SECOND / sample_rate as f64;
-        self.fire();
-        // Fin de la vuelta: la partitura empieza otra vez, pero las teclas
-        // siguen sonando, asi no hay corte.
-        if self.clock >= LOOP {
-            self.clock -= LOOP;
-            self.cursor = 0;
-            self.fire();
-        }
-
+        self.tune_to(sample_rate);
         let mut bars = 0.0;
         let mut slaps = 0.0;
         let mut knock = 0.0;
@@ -664,6 +702,60 @@ impl Marimba {
         let dry = bars + BUZZ * buzz + knock;
         let wet = self.room.run(dry);
         (dry + WET * wet) * GAIN
+    }
+}
+
+impl Default for Instrument {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// La marimba que toca sola el son: el sintetizador le pide una muestra a
+/// la vez.
+pub struct Marimba {
+    score: Vec<Hit>,
+    /// Reloj de la partitura en corcheas y el siguiente golpe por disparar.
+    clock: f64,
+    cursor: usize,
+    instrument: Instrument,
+}
+
+impl Marimba {
+    pub fn new() -> Self {
+        Self {
+            score: score(),
+            clock: 0.0,
+            cursor: 0,
+            instrument: Instrument::new(),
+        }
+    }
+
+    /// Dispara los golpes de la partitura que ya llegaron.
+    fn fire(&mut self) {
+        while let Some(hit) = self.score.get(self.cursor).copied() {
+            if hit.at > self.clock {
+                break;
+            }
+            self.instrument.strike(hit.key, hit.force, hit.mallet);
+            self.cursor += 1;
+        }
+    }
+
+    /// La siguiente muestra (mono, entre -0.6 y 0.6 aproximadamente), a
+    /// `sample_rate` muestras por segundo.
+    pub fn next(&mut self, sample_rate: f32) -> f32 {
+        self.instrument.tune_to(sample_rate);
+        self.clock += EIGHTHS_PER_SECOND / sample_rate as f64;
+        self.fire();
+        // Fin de la vuelta: la partitura empieza otra vez, pero las teclas
+        // siguen sonando, asi no hay corte.
+        if self.clock >= LOOP {
+            self.clock -= LOOP;
+            self.cursor = 0;
+            self.fire();
+        }
+        self.instrument.next(sample_rate)
     }
 }
 
@@ -745,7 +837,7 @@ mod tests {
         let mut most = 0;
         for _ in 0..(LOOP / EIGHTHS_PER_SECOND * 1.2 * rate as f64) as usize {
             marimba.next(rate);
-            most = most.max(marimba.voices.iter().filter(|v| v.active).count());
+            most = most.max(marimba.instrument.sounding());
         }
         assert!(most < VOICES, "{most} teclas a la vez");
     }

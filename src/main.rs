@@ -13,6 +13,7 @@ mod hud;
 mod marimba;
 #[allow(dead_code)]
 mod math;
+mod minijuegos;
 mod parallel;
 mod player;
 mod render;
@@ -31,12 +32,18 @@ use math::DVec3;
 
 /// Muestras por bloque de audio (unos 46 ms a 44.1 kHz).
 const AUDIO_BLOCK: usize = 2048;
+/// Los minijuegos tienen su propio stream con bloques chicos (unos 12 ms):
+/// el golpe de una tecla tiene que sonar enseguida. Mientras se juega los
+/// frames son rapidos (el mundo esta congelado) y alcanzan a llenarlos.
+const GAME_BLOCK: usize = 512;
 
 enum Mode {
     Window,
     Capture(PathBuf),
     Bench(usize),
     Tour(PathBuf),
+    /// Fotos del minijuego de la marimba, sin ventana.
+    GameCapture(PathBuf),
 }
 
 struct Options {
@@ -47,6 +54,8 @@ struct Options {
     lod_colors: bool,
     fog_only: bool,
     preset: Option<usize>,
+    /// Abrir la marimba de la Luna al arrancar.
+    marimba: bool,
 }
 
 const USAGE: &str = "\
@@ -55,6 +64,8 @@ uso: ocaso [opciones]
   --captura CARPETA     guarda vistas fijas como PNG sin abrir ventana
   --vista NOMBRE       inicia o captura solo la vista elegida
   --recorrido MP4      graba vuelo, acercamiento, vuelta y alejamiento (ffmpeg)
+  --marimba             arranca en la Luna de Xelaju con la marimba abierta
+  --captura-marimba DIR guarda fotos del minijuego de la marimba sin ventana
   --bench FRAMES        mide cada vista fija FRAMES veces sin abrir ventana
   --wire                empieza con el wireframe encendido (F3)
   --lod                 empieza con los colores de LOD encendidos (F4)
@@ -69,6 +80,7 @@ fn parse_args() -> Result<Options, String> {
         lod_colors: false,
         fog_only: false,
         preset: None,
+        marimba: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -97,6 +109,11 @@ fn parse_args() -> Result<Options, String> {
                 options.mode = Mode::Bench(frames);
             }
             "--wire" => options.wireframe = true,
+            "--marimba" => options.marimba = true,
+            "--captura-marimba" => {
+                let dir = args.next().ok_or("--captura-marimba espera una carpeta")?;
+                options.mode = Mode::GameCapture(PathBuf::from(dir));
+            }
             "--vista" => {
                 let name = args.next().ok_or("--vista espera el nombre de una vista")?;
                 options.preset = Some(
@@ -133,6 +150,7 @@ fn main() {
         Mode::Capture(dir) => run_capture(&options, dir),
         Mode::Bench(frames) => run_bench(&options, *frames),
         Mode::Tour(path) => run_tour(&options, path),
+        Mode::GameCapture(dir) => run_game_capture(&options, dir),
     };
     if let Err(error) = result {
         eprintln!("error: {error}");
@@ -154,7 +172,9 @@ fn new_app(options: &Options) -> Result<App, String> {
 
 fn run_window(options: &Options) -> Result<(), String> {
     let mut app = new_app(options)?;
-    if options.preset.is_none() {
+    if options.marimba {
+        app.apply_preset(xela_preset());
+    } else if options.preset.is_none() {
         app.apply_preset(&PRESETS[21]);
     }
     let (mut rl, thread) = raylib::init()
@@ -163,6 +183,8 @@ fn run_window(options: &Options) -> Result<(), String> {
         .build();
     rl.set_target_fps(144);
     rl.disable_cursor();
+    // Esc cierra el juego solo fuera de un minijuego (adentro, sale de el).
+    rl.set_exit_key(None);
     let mut captured = true;
     // Al capturar el mouse, el primer movimiento trae el salto desde donde
     // estaba el cursor: se descarta para que la mira no pegue un brinco.
@@ -183,6 +205,7 @@ fn run_window(options: &Options) -> Result<(), String> {
         banner: None,
         banner_where: None,
         intro_over: false,
+        prompt: None,
     };
     let mut preset_index: Option<usize> = None;
     let mut tweaks = tweaks::Tweaks::default();
@@ -197,11 +220,79 @@ fn run_window(options: &Options) -> Result<(), String> {
         stream
     });
     let mut synth = audio::Synth::new();
+    let mut game_stream = audio_device.as_ref().map(|device| {
+        device.set_audio_stream_buffer_size_default(GAME_BLOCK as i32);
+        let stream = device.new_audio_stream(audio::SAMPLE_RATE, 32, 1);
+        // Las canciones del reproductor se crean despues con el tamano por
+        // defecto: con bloques chicos se cortarian en los frames lentos.
+        device.set_audio_stream_buffer_size_default(AUDIO_BLOCK as i32);
+        stream.play();
+        stream
+    });
+    let mut game_block = vec![0.0f32; GAME_BLOCK];
+    let mut minigame: Option<Box<dyn minijuegos::Minigame>> = None;
+    let mut game_frame = vec![0u8; options.width * options.height * 4];
+    if options.marimba {
+        app.render();
+        minigame = Some(minijuegos::start(minijuegos::Kind::Marimba, app.renderer.rgba(), options.width, options.height));
+        hud.intro_over = true;
+    }
     // Las canciones de la version chapina.
     let mut player = player::Player::new(audio_device.as_ref(), &music_dir());
     let mut block = vec![0.0f32; AUDIO_BLOCK];
 
     while !rl.window_should_close() {
+        let dt = rl.get_frame_time();
+        // Un minijuego abierto: el mundo se queda quieto y el juego tiene la
+        // pantalla, el teclado y su propio audio.
+        if let Some(game) = minigame.as_mut() {
+            hud.age += dt;
+            game.update(dt as f64, &read_game_keys(&rl));
+            match game_stream.as_mut() {
+                Some(stream) => {
+                    while stream.is_processed() {
+                        game.audio(&mut game_block);
+                        let _ = stream.update(&game_block);
+                    }
+                }
+                // Sin audio, su reloj igual tiene que avanzar.
+                None => game.audio(&mut vec![0.0; (dt * audio::SAMPLE_RATE as f32) as usize]),
+            }
+            if let Some(stream) = stream.as_mut() {
+                synth.set(audio::AudioParams { master: 0.0, ..audio::AudioParams::default() });
+                while stream.is_processed() {
+                    synth.fill(&mut block);
+                    let _ = stream.update(&block);
+                }
+            }
+            player.set_active(false);
+            game.draw(&mut game_frame);
+            texture
+                .update_texture(&game_frame)
+                .map_err(|e| format!("no se pudo actualizar la textura: {e:?}"))?;
+            let overlay = game.overlay();
+            let done = game.done();
+            let mut d = rl.begin_drawing(&thread);
+            d.clear_background(Color::BLACK);
+            d.draw_texture(&texture, 0, 0, Color::WHITE);
+            hud::minigame(&mut d, &fonts, &overlay);
+            drop(d);
+            if done {
+                minigame = None;
+                skip_mouse = true;
+            }
+            continue;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
+            break;
+        }
+        hud.prompt = minijuegos::available(&app).map(minijuegos::Kind::prompt);
+        if rl.is_key_pressed(KeyboardKey::KEY_ENTER) || rl.is_key_pressed(KeyboardKey::KEY_KP_ENTER) {
+            if let Some(kind) = minijuegos::available(&app) {
+                minigame = Some(minijuegos::start(kind, app.renderer.rgba(), options.width, options.height));
+                continue;
+            }
+        }
         if rl.is_key_pressed(KeyboardKey::KEY_TAB) {
             captured = !captured;
             if captured {
@@ -387,8 +478,8 @@ fn run_window(options: &Options) -> Result<(), String> {
 
         let input = read_input(&rl, captured && !skip_mouse);
         skip_mouse = false;
-        hud.age += rl.get_frame_time();
-        app.update(rl.get_frame_time() as f64, &input);
+        hud.age += dt;
+        app.update(dt as f64, &input);
         app.render();
         if let Some(stream) = stream.as_mut() {
             synth.set(app.audio_params());
@@ -411,6 +502,95 @@ fn run_window(options: &Options) -> Result<(), String> {
         let view = chapin.then(|| player.view());
         hud::draw(&mut d, &app, fps, &hud, &tweaks, &fonts, view.as_ref());
     }
+    Ok(())
+}
+
+/// Las teclas de un minijuego: D F J K, las flechas, Enter y Esc.
+fn read_game_keys(rl: &RaylibHandle) -> minijuegos::Keys {
+    use KeyboardKey::*;
+    let lanes = [KEY_D, KEY_F, KEY_J, KEY_K];
+    let pressed = |keys: &[KeyboardKey]| keys.iter().any(|&k| rl.is_key_pressed(k));
+    minijuegos::Keys {
+        lane_pressed: lanes.map(|k| rl.is_key_pressed(k)),
+        lane_down: lanes.map(|k| rl.is_key_down(k)),
+        up: pressed(&[KEY_UP, KEY_W]),
+        down: pressed(&[KEY_DOWN, KEY_S]),
+        left: pressed(&[KEY_LEFT]),
+        right: pressed(&[KEY_RIGHT]),
+        enter: pressed(&[KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]),
+        escape: pressed(&[KEY_ESCAPE, KEY_BACKSPACE]),
+    }
+}
+
+/// El lugar de la marimba en la Luna de Xelaju (version chapina): al
+/// salir del minijuego se queda junto a ella.
+fn xela_preset() -> &'static app::Preset {
+    PRESETS.iter().find(|p| p.name == "64_la_marimba").expect("la vista de la marimba")
+}
+
+/// Fotos del minijuego de la marimba: el menu, la entrada, el juego en cada
+/// parte (con algunas fallas a proposito) y los resultados. Solo lo que
+/// dibuja la CPU: el texto del HUD lo pone raylib en la ventana.
+fn run_game_capture(options: &Options, dir: &Path) -> Result<(), String> {
+    use minijuegos::Minigame;
+    use minijuegos::marimba::{Level, MarimbaTiles};
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut app = new_app(options)?;
+    app.apply_preset(xela_preset());
+    settle(&mut app);
+    app.render();
+    let (w, h) = (options.width, options.height);
+    let background = app.renderer.rgba().to_vec();
+    let mut frame = vec![0u8; w * h * 4];
+    let save = |game: &mut MarimbaTiles, frame: &mut Vec<u8>, name: &str| -> Result<(), String> {
+        let start = std::time::Instant::now();
+        game.draw(frame);
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        let path = dir.join(format!("{name}.png"));
+        render::png::write_rgba(&path, w as u32, h as u32, frame).map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("{name:<26} {ms:6.2} ms   -> {}", path.display());
+        Ok(())
+    };
+    // A 120 fps, con el audio llevando el reloj como en la ventana.
+    let dt = 1.0 / 120.0;
+    let mut block = vec![0.0f32; (dt * audio::SAMPLE_RATE as f64).round() as usize];
+    let step = |game: &mut MarimbaTiles, block: &mut Vec<f32>, keys: minijuegos::Keys| {
+        game.update(dt, &keys);
+        game.audio(block);
+    };
+
+    let mut game = MarimbaTiles::new(&background, w, h, minijuegos::Records::in_memory());
+    let mut keys = minijuegos::Keys::default();
+    keys.lane_pressed[1] = true;
+    step(&mut game, &mut block, keys);
+    for _ in 0..6 {
+        step(&mut game, &mut block, minijuegos::Keys::default());
+    }
+    save(&mut game, &mut frame, "marimba_1_menu")?;
+
+    let shots: [(Level, &[(f64, &str)]); 3] = [
+        (Level::Bajo, &[(4.4, "marimba_2_bajo")]),
+        (Level::Tiple, &[(1.6, "marimba_3_entrada"), (7.3, "marimba_4_tiple"), (33.0, "marimba_5_segunda_vuelta")]),
+        (Level::Redoble, &[(9.65, "marimba_6_redoble")]),
+    ];
+    for (level, moments) in shots {
+        game.play(level);
+        let mut elapsed = 0.0;
+        for &(at, name) in moments {
+            while elapsed < at {
+                let keys = game.demo_keys(dt, 9);
+                step(&mut game, &mut block, keys);
+                elapsed += dt;
+            }
+            save(&mut game, &mut frame, name)?;
+        }
+    }
+    // Hasta el final de la cancion, para los resultados.
+    for _ in 0..(120.0 / dt) as usize {
+        let keys = game.demo_keys(dt, 9);
+        step(&mut game, &mut block, keys);
+    }
+    save(&mut game, &mut frame, "marimba_7_resultados")?;
     Ok(())
 }
 

@@ -14,6 +14,7 @@ use std::path::Path;
 use raylib::prelude::*;
 
 use crate::app::{App, FaroReadout, FlarePhase};
+use crate::minijuegos::{Align, Font, Item, Overlay};
 use crate::parallel;
 use crate::player::PlayerView;
 use crate::scene::cycle::Phase;
@@ -36,6 +37,8 @@ pub struct Hud {
     /// Si el titulo del principio ya se quito (al cambiar de version se
     /// quita para que no se encime con el de la transicion).
     pub intro_over: bool,
+    /// El minijuego que se puede abrir aqui (Enter), si hay.
+    pub prompt: Option<&'static str>,
 }
 
 /// Segundos que dura el titulo al empezar.
@@ -46,7 +49,7 @@ const TOAST: f32 = 3.0;
 /// Donde estan las letras de Windows.
 const FONT_DIR: &str = "C:/Windows/Fonts";
 /// Lo que se carga de cada letra: ASCII y lo del espanol.
-const GLYPHS: &str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~áéíóúÁÉÍÓÚñÑüÜäöÄÖ¿¡°·–—−…’×√πψτ⁰¹²³⁴⁵⁶⁷⁸⁹⁻";
+const GLYPHS: &str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~áéíóúÁÉÍÓÚñÑüÜäöÄÖ¿¡°·–—−…’×√πψτ⁰¹²³⁴⁵⁶⁷⁸⁹⁻»←↑→↓";
 
 /// Los estilos de letra: archivo y tamano en pixeles. Cada uno se dibuja a
 /// su tamano, sin escalar.
@@ -389,6 +392,7 @@ pub fn draw(
             "L: modo local   ·   O: crucero (rodea el planeta)   ·   N: ir al siguiente lugar (también a Faro)".to_string(),
             "Y: ruta predicha, la línea de a dónde te lleva la gravedad (auto / siempre / nunca)".to_string(),
             "V: versión chapina / OCASO   ·   B o 1 a 6: nave botella (en la chapina)".to_string(),
+            "Enter: el minijuego del planeta, cuando el aviso de abajo lo ofrece (la marimba en la Luna de Xelajú)".to_string(),
             "K: pausa   ·   U / I: canción anterior / siguiente   ·   − / +: volumen (en la chapina)".to_string(),
             "T: ajustes en vivo   ·   M: sonido   ·   J: final / renacer   ·   F: gran llamarada de Faro".to_string(),
             "R: rebobinar   ·   [ ]: −30 / +30 s".to_string(),
@@ -407,8 +411,19 @@ pub fn draw(
         draw_player(d, fonts, view, (width as i32, height as i32), hud.age);
     }
 
-    // Los avisos: el del juego y el de la vista fija.
+    // Los avisos: el del minijuego de aqui, el del juego y el de la vista
+    // fija.
     let mut slot = 0.0;
+    if let Some(text) = hud.prompt {
+        // Siempre visible mientras se este cerca, con el borde que respira.
+        let w = fonts.width(text, Style::Heading) + 44.0;
+        let h = 46.0;
+        let rect = Rectangle::new((width - w) * 0.5, bottom - h, w, h);
+        let breath = (0.5 + 0.5 * (hud.age * 3.0).sin()) * 0.6 + 0.4;
+        pill(d, rect, PANEL, Some(Color::new(255, 204, 120, (200.0 * breath) as u8)));
+        fonts.draw(d, text, rect.x + 22.0, rect.y + 9.0, Style::Heading, ACCENT);
+        slot += 1.0;
+    }
     if let Some((text, since)) = hud.banner {
         if hud.age - since < TOAST {
             let text = match hud.banner_where {
@@ -435,6 +450,53 @@ pub fn draw(
             Color::new(255, 190, 140, (fade * 255.0) as u8)
         };
         fonts.draw_at(d, title, (width - w) * 0.5, top, Style::Title, size, color);
+    }
+}
+
+/// Lo que pone encima un minijuego: texto con sombra (para que se lea sobre
+/// lo que sea), paneles como los del HUD y barras.
+pub fn minigame(d: &mut RaylibDrawHandle, fonts: &Fonts, overlay: &Overlay) {
+    let rgba = |c: [u8; 4]| Color::new(c[0], c[1], c[2], c[3]);
+    for item in &overlay.items {
+        match item {
+            Item::Panel { x, y, w, h } => panel(d, Rectangle::new(*x, *y, *w, *h)),
+            Item::Bar { x, y, w, h, fill, color, vertical } => {
+                let rect = Rectangle::new(*x, *y, *w, *h);
+                let round = (12.0 / rect.width.min(rect.height)).min(1.0);
+                let fill = fill.clamp(0.0, 1.0);
+                if fill < 1.0 {
+                    d.draw_rectangle_rounded(rect, round, 8, Color::new(255, 255, 255, 34));
+                }
+                if fill > 0.0 {
+                    let part = if *vertical {
+                        let fh = (rect.height * fill).max(rect.width);
+                        Rectangle::new(rect.x, rect.y + rect.height - fh, rect.width, fh)
+                    } else {
+                        Rectangle::new(rect.x, rect.y, (rect.width * fill).max(rect.height), rect.height)
+                    };
+                    d.draw_rectangle_rounded(part, round, 8, rgba(*color));
+                }
+            }
+            Item::Text { text, x, y, font, color, align } => {
+                let (style, size) = match font {
+                    Font::Small => (Style::Small, 15.0),
+                    Font::Body => (Style::Body, 18.0),
+                    Font::Bold => (Style::Bold, 18.0),
+                    Font::Heading => (Style::Heading, 24.0),
+                    Font::Big(size) => (Style::Title, *size),
+                };
+                let w = fonts.width_at(text, style, size);
+                let x = match align {
+                    Align::Left => *x,
+                    Align::Center => x - w * 0.5,
+                    Align::Right => x - w,
+                };
+                let shadow = Color::new(0, 0, 0, (color[3] as f32 * 0.55) as u8);
+                let drop = (size / 18.0).clamp(1.0, 3.0);
+                fonts.draw_at(d, text, x + drop, y + drop, style, size, shadow);
+                fonts.draw_at(d, text, x, *y, style, size, rgba(*color));
+            }
+        }
     }
 }
 

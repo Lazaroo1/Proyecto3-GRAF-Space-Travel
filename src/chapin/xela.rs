@@ -15,13 +15,23 @@
 //!   redondeado. Brillan de noche; de dia apenas se ven como hilo grabado.
 //!   Cuando una puntada mide menos que un par de pixeles se dibuja su
 //!   promedio: de lejos la franja brilla pareja y no parpadea.
+//! - **La marimba** (el lugar, N): una marimba doble grande sobre el polvo,
+//!   con su fila de teclas naturales y la de alteradas mas alta atras, los
+//!   cajones resonadores debajo (mas largos en los graves), las patas y el
+//!   faldon de tela tipica al frente, con las mismas franjas del huipil de
+//!   la luna. Cerca de ella, Enter abre el minijuego (`minijuegos::marimba`).
+//!   Las teclas son de hormigo con la veta a lo largo; de noche los hilos
+//!   del faldon brillan como los de la luna.
 
 use std::f32::consts::TAU;
 use std::sync::Arc;
 
-use super::{Chapin, Spec};
-use crate::math::{Perlin, Vec3, smoothstep};
-use crate::shaders::{Fragment, Uniforms, detail, pbr};
+use super::{Chapin, Placer, Spec};
+use crate::math::{DVec3, Perlin, Vec3, smoothstep};
+use crate::scene::Mesh;
+use crate::scene::builder::MeshBuilder;
+use crate::scene::props::{Instance, PropKind, at_site, upright_rotation};
+use crate::shaders::{Fragment, PropStyle, Uniforms, detail, pbr};
 use crate::terrain::shapes::Craters;
 use crate::terrain::{HeightField, TerrainSample};
 
@@ -203,6 +213,170 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     let etched = 1.0 - 0.3 * thread.luminance().min(1.0) * (1.0 - night);
     let glow = thread * ((0.03 + 0.5 * night) * u.gains.argos);
     lit * etched + glow
+}
+
+// La marimba ------------------------------------------------------------------
+
+/// Como se llega a ver la marimba: cerca y un poco arriba (la luna mide 48
+/// de radio: a 90 de distancia, como en los otros lugares, ya no se ve).
+/// La vista mira 45 adelante (como en los otros lugares), que aqui ya es
+/// pasando el horizonte: la mirada se baja hasta la marimba.
+pub const SITE_VIEW: (f64, f64, f64) = (8.0, 9.0, -14.0);
+/// Que tan adelante del lugar esta la marimba y su tamano (el modelo mide
+/// 3 de largo, como una de verdad en metros: esta es de casi once).
+const MARIMBA_AHEAD: f64 = 10.0;
+const MARIMBA_SCALE: f32 = 3.6;
+/// Un poco a la derecha, para que la nave no la tape al llegar.
+const MARIMBA_RIGHT: f64 = 6.0;
+
+pub fn site(default: (DVec3, DVec3)) -> Option<(&'static str, DVec3, DVec3, Placer)> {
+    let (normal, forward) = default;
+    Some(("La marimba", normal, forward, place))
+}
+
+/// La marimba, con el faldon (+z del modelo) hacia quien llega.
+fn place(instances: &mut Vec<Instance>, radius: f64, field: &dyn crate::terrain::HeightField, _seed: u32, frame: (DVec3, DVec3, DVec3)) {
+    let (n, forward, right) = frame;
+    let dir = (n + (forward * MARIMBA_AHEAD + right * MARIMBA_RIGHT) / radius).normalize();
+    let base = upright_rotation(dir, 0.0);
+    let (x0, z0) = (base.rotate(DVec3::X), base.rotate(DVec3::Z));
+    // De frente a donde llega la nave (atras del lugar).
+    let toward = -forward * (MARIMBA_AHEAD + SITE_VIEW.1) - right * MARIMBA_RIGHT;
+    let toward = (toward - dir * toward.dot(dir)).normalize();
+    let yaw = toward.dot(x0).atan2(toward.dot(z0));
+    instances.push(at_site(radius, field, frame, PropKind::Marimba, MARIMBA_RIGHT, MARIMBA_AHEAD, MARIMBA_SCALE, yaw, 0.0));
+}
+
+/// Materiales de la marimba (por color de vertice).
+const BAR: Vec3 = Vec3::new(1.0, 0.0, 0.0);
+const FRAME: Vec3 = Vec3::new(0.0, 1.0, 0.0);
+const CLOTH: Vec3 = Vec3::new(0.0, 0.0, 1.0);
+const BOX: Vec3 = Vec3::new(1.0, 1.0, 0.0);
+/// Arriba de las teclas naturales y de las alteradas.
+const NATURALS_TOP: f32 = 0.92;
+const SHARPS_TOP: f32 = 1.0;
+/// El faldon: de donde a donde cuelga y el tamano de una puntada.
+const SKIRT: (f32, f32) = (0.88, 0.3);
+const STITCH: f32 = 0.04;
+
+/// La marimba doble: teclas naturales con la punta de quien toca alineada
+/// (-z) y mas largas en los graves (-x); las alteradas en una fila mas alta
+/// hacia el frente, en grupos de dos y tres como en un teclado; un cajon
+/// resonador debajo de cada natural; el marco, las patas y el faldon.
+pub fn mesh(detail: usize) -> Mesh {
+    let mut b = MeshBuilder::new();
+    let axes = [Vec3::X, Vec3::Y, Vec3::Z];
+    let naturals = [10, 18, 28][detail];
+    let span = 2.9;
+    let pitch = span / naturals as f32;
+    let width = pitch * 0.84;
+    let length = |t: f32| 0.62 - 0.3 * t;
+    for i in 0..naturals {
+        let t = i as f32 / (naturals - 1) as f32;
+        let x = -span * 0.5 + pitch * (i as f32 + 0.5);
+        let l = length(t);
+        b.color(BAR);
+        b.cuboid(Vec3::new(x, NATURALS_TOP - 0.02, -0.5 + l * 0.5), axes, Vec3::new(width * 0.5, 0.02, l * 0.5));
+        // El cajon resonador: mas largo en los graves.
+        b.color(BOX);
+        let depth = 0.62 - 0.5 * t;
+        b.cuboid(Vec3::new(x, 0.84 - depth * 0.5, -0.5 + l * 0.5), axes, Vec3::new(width * 0.42, depth * 0.5, 0.05));
+        // Las alteradas: despues de la 1a, 2a, 4a, 5a y 6a natural de cada
+        // septima (do#, re#, fa#, sol#, la#).
+        if detail >= 1 && i + 1 < naturals && matches!(i % 7, 0 | 1 | 3 | 4 | 5) {
+            let ls = l * 0.75;
+            b.color(BAR);
+            b.cuboid(Vec3::new(x + pitch * 0.5, SHARPS_TOP - 0.02, 0.42 - ls * 0.5), axes, Vec3::new(width * 0.42, 0.02, ls * 0.5));
+        }
+    }
+    b.color(FRAME);
+    // Los largueros de cada fila y los costados.
+    b.cuboid(Vec3::new(0.0, 0.85, -0.52), axes, Vec3::new(1.5, 0.05, 0.025));
+    b.cuboid(Vec3::new(0.0, 0.85, 0.12), axes, Vec3::new(1.5, 0.05, 0.025));
+    b.cuboid(Vec3::new(0.0, 0.94, 0.44), axes, Vec3::new(1.5, 0.04, 0.025));
+    for x in [-1.5, 1.5] {
+        b.cuboid(Vec3::new(x, 0.88, -0.04), axes, Vec3::new(0.03, 0.07, 0.5));
+    }
+    // Las patas y el travesano de abajo.
+    for (x, z) in [(-1.42, -0.48), (1.42, -0.48), (-1.42, 0.42), (1.42, 0.42)] {
+        b.cuboid(Vec3::new(x, 0.42, z), axes, Vec3::new(0.035, 0.42, 0.035));
+    }
+    if detail >= 1 {
+        b.cuboid(Vec3::new(0.0, 0.16, -0.48), axes, Vec3::new(1.42, 0.025, 0.02));
+    }
+    // El faldon de tela que cuelga al frente.
+    b.color(CLOTH);
+    let (top, bottom) = SKIRT;
+    b.cuboid(Vec3::new(0.0, (top + bottom) * 0.5, 0.48), axes, Vec3::new(1.52, (top - bottom) * 0.5, 0.006));
+    b.build()
+}
+
+/// El dibujo del faldon en la puntada (i, j) (fila 0 arriba): una linea de
+/// oro, una greca de dientes y una cadena de rombos morados con su punto de
+/// oro, sobre rojo. Puntadas grandes: se leen desde donde se llega.
+fn skirt_thread(i: i32, j: i32) -> Option<usize> {
+    match j {
+        0 => Some(2),
+        2..=6 => zigzag(i, j - 2),
+        8..=14 => {
+            let c = i.rem_euclid(8) - 4;
+            match c.abs() + (j - 11).abs() {
+                3 => Some(0),
+                1 => Some(1),
+                0 => Some(2),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+const HORMIGO: Vec3 = Vec3::new(0.3, 0.1, 0.04);
+const WOOD: Vec3 = Vec3::new(0.16, 0.07, 0.035);
+const HUIPIL_RED: Vec3 = Vec3::new(0.5, 0.03, 0.06);
+
+pub fn shade_prop(f: &Fragment, u: &Uniforms, style: &PropStyle, sun: Vec3) -> Vec3 {
+    let p = f.local;
+    let code = |v: Vec3| (v.x > 0.5, v.y > 0.5, v.z > 0.5);
+    let is = |material: Vec3| code(f.color) == code(material);
+    let ndv = f.normal.dot(f.view_dir()).abs().max(0.25);
+    let soft = f.pos.length() * u.pixel_angle / (ndv * style.scale);
+    let up = f.object_to_world.mul_vec(Vec3::Y);
+    let night = smoothstep(0.12, -0.2, up.dot(f.light_dir(u)));
+    let (albedo, rough, glow) = if is(BAR) {
+        // Hormigo con la veta a lo largo de la tecla; cada tecla con su tono.
+        let streak = u.noise.noise(Vec3::new(p.x * 60.0, p.y * 6.0, p.z * 5.0)) * 0.5 + 0.5;
+        let key = u.noise.noise(Vec3::new(p.x * 9.0, 3.1, 0.7)) * 0.5 + 0.5;
+        (HORMIGO * (0.7 + 0.5 * streak) * (0.85 + 0.3 * key), 0.35, Vec3::ZERO)
+    } else if is(CLOTH) {
+        let (top, _) = SKIRT;
+        let (column, row) = ((p.x + 2.0) / STITCH, (top - p.y) / STITCH);
+        let (i, j) = (column.floor(), row.floor());
+        let size = STITCH / soft;
+        let resolved = smoothstep(1.5, 3.0, size);
+        let mut color = HUIPIL_RED;
+        let mut thread = Vec3::ZERO;
+        if let Some(k) = skirt_thread(i as i32, j as i32) {
+            let (fx, fy) = (column - i - 0.5, row - j - 0.5);
+            let s = (0.5 / size).max(0.04);
+            let stitch = smoothstep(s, -s, fx.abs().max(fy.abs()) - 0.36);
+            thread = THREAD[k] * stitch;
+            color = HUIPIL_RED.lerp(THREAD[k], stitch);
+        }
+        // De lejos, el promedio de la tela.
+        let average = HUIPIL_RED.lerp((THREAD[0] + THREAD[1] + THREAD[2] + THREAD[3]) * 0.25, 0.3);
+        let albedo = average.lerp(color, resolved);
+        let thread = (average - HUIPIL_RED).max(Vec3::ZERO).lerp(thread, resolved);
+        (albedo * 0.8, 0.9, thread * ((0.04 + 0.6 * night) * u.gains.argos))
+    } else if is(BOX) {
+        let streak = u.noise.noise(Vec3::new(p.x * 30.0, p.y * 3.0, p.z * 30.0)) * 0.5 + 0.5;
+        (WOOD * (0.8 + 0.4 * streak), 0.7, Vec3::ZERO)
+    } else {
+        let streak = u.noise.noise(Vec3::new(p.x * 4.0, p.y * 25.0, p.z * 25.0)) * 0.5 + 0.5;
+        (WOOD * 1.2 * (0.8 + 0.4 * streak), 0.6, Vec3::ZERO)
+    };
+    let light = sun.lerp(Vec3::splat(sun.luminance()), 0.5);
+    pbr::shade_light(f, u, albedo, rough, 0.0, f.normal, 1.0, light) + glow
 }
 
 #[cfg(test)]

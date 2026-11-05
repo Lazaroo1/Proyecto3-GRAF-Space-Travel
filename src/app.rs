@@ -169,7 +169,7 @@ pub struct Preset {
     pub flare: Option<f64>,
 }
 
-pub const PRESETS: [Preset; 56] = [
+pub const PRESETS: [Preset; 57] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
@@ -815,6 +815,18 @@ pub const PRESETS: [Preset; 56] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
+    },    Preset {
+        name: "64_la_marimba",
+        shot: Shot::Site {
+            body: "Xela",
+            altitude: crate::chapin::xela::SITE_VIEW.0,
+            back: crate::chapin::xela::SITE_VIEW.1,
+            lift: crate::chapin::xela::SITE_VIEW.2,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
         flare: None,
     },
 ];

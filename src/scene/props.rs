@@ -69,10 +69,12 @@ pub enum PropKind {
     Torre,
     Edificio,
     Rascacielos,
+    /// La marimba de la Luna de Xelaju (donde se toca el minijuego).
+    Marimba,
 }
 
 impl PropKind {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::Eye,
         Self::Mushroom,
         Self::Coral,
@@ -93,6 +95,7 @@ impl PropKind {
         Self::Torre,
         Self::Edificio,
         Self::Rascacielos,
+        Self::Marimba,
     ];
 
     /// Posicion en `ALL` (y en la lista de modelos).
@@ -108,6 +111,7 @@ impl PropKind {
         match self {
             Self::Boulder => 1.0,
             Self::Arco | Self::Templo | Self::Torre | Self::Edificio | Self::Rascacielos | Self::Camioneta | Self::Iglesia => 1.0,
+            Self::Marimba => 1.0,
             Self::Eye | Self::Casa | Self::Ceiba | Self::Lancha | Self::Puesto => 0.75,
             Self::Arbol | Self::Pino => 0.5,
             Self::Mushroom | Self::Coral | Self::Spike | Self::Vent | Self::Crystal => 0.5,
