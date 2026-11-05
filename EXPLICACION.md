@@ -372,6 +372,148 @@ gran llamarada.
   ([marimba.rs](src/marimba.rs)) es la última pista de cada vuelta y la toca
   el sintetizador; sola no entra al shuffle porque no se acaba nunca.
 
+# Los minijuegos
+
+Cada planeta va a tener su minijuego ([minijuegos/](src/minijuegos)). Por
+ahora está el de la Luna de Xelajú: **la marimba de la Luna**.
+
+## El marco común ([minijuegos/mod.rs](src/minijuegos/mod.rs))
+
+- **Se ofrece cerca de su planeta**: `available` mira el cuerpo más cercano
+  y la altura de la nave. El HUD pone «Enter · …» abajo al centro y Enter lo
+  abre. En OCASO la Luna de Xelajú no existe, así que ahí no se ofrece.
+- **El mundo se congela**: al abrir un minijuego, la última imagen del render
+  pasa a ser el fondo (`lienzo::backdrop`). Se difumina con tres pasadas de
+  caja por filas y por columnas, que juntas aproximan una gaussiana (la suma
+  de tres variables uniformes ya tiene forma de campana). Después se
+  oscurece, se desatura un poco y lleva viñeta. La simulación no avanza
+  mientras se juega. Cada frame se copia el fondo y el juego se pinta encima,
+  en paralelo por filas: 3-5 ms en vez de los 50-140 del 3D, así que corre a
+  los fps de la pantalla. Eso importa en un juego de ritmo, porque el teclado
+  se lee una vez por frame.
+- **Su propio audio**: un segundo stream de raylib con bloques de 512
+  muestras (11.6 ms), contra los 2048 del sintetizador del vuelo. Mientras
+  se juega, el sintetizador del vuelo calla y el reproductor de música se
+  pausa.
+- **El texto encima** (`Overlay`): el juego dice qué texto, paneles y barras
+  van y dónde. `hud::minigame` los dibuja con la misma letra y paneles del
+  HUD, con sombra para que se lean sobre cualquier fondo. La lógica no sabe
+  de raylib, y por eso se puede probar y capturar sin ventana
+  (`--captura-marimba`).
+- **Récords** en `minijuegos.txt` (líneas `nombre valor`), junto con el
+  ajuste de tiempo.
+
+## La marimba de la Luna ([minijuegos/marimba.rs](src/minijuegos/marimba.rs))
+
+**La partitura es la del son.** `marimba.rs` se partió en dos:
+`Instrument`, que sabe golpear una tecla y dar muestras (las teclas
+modales, el charleo, el toc y la sala), y `Marimba`, el secuenciador que
+toca el son solo. La marimba que suena en el vuelo salió idéntica, muestra
+por muestra (se comparó el WAV de antes y de después). `written()` da la
+partitura sin humanizar, con el papel de cada golpe (`Role`): bajo, octava,
+centro, melodía, segunda voz, redoble o adorno. El juego reparte esos
+papeles. En *Bajo* quien juega lleva las notas del bajo (y la octava suena
+con la fundamental) y el resto es de la marimba sola. En *Tiple* lleva la
+melodía; la segunda voz suena con cada nota y el bajo, el centro y los
+adornos son de la marimba.
+
+**Tres vueltas que aceleran.** Un mapa de tempo por tramos convierte la
+corchea `e` de cada tramo en segundos, `t = t₀ + (e − e₀) / r`, con `r` las
+corcheas por segundo del tramo. Hay dos compases de entrada (el bajo y el
+centro solos), las tres vueltas a 0.9, 1.05 y 1.2 veces el tempo del son
+(119, 139 y 158 negras con puntillo por minuto) y un acorde final en Sol
+con el tiple redoblando compás y medio.
+
+**Los carriles siguen la melodía** (`contour`). Cada nota se ubica entre la
+más grave y la más aguda de una ventana de unas 11 notas a su alrededor:
+`carril = round(3 (nota − mín) / (máx − mín))`. Después se corrige contra la
+anterior: una nota repetida va en el mismo carril y una distinta en otro,
+hacia donde va la melodía (si sube, a la derecha). Solo en la orilla una
+nota distinta repite carril (una prueba lo revisa en todo el son). En el
+bajo, el carril sale del lugar de la nota entre las del bajo, de la más
+grave a la más aguda.
+
+**El reloj sale del audio.** El sintetizador del juego cuenta las muestras
+que genera y la canción vive en ese reloj: `t_audio = muestras / 44100 −
+preroll`. Lo sintetizado tarda en oírse lo que hay en la cola de raylib (un
+bloque y medio en promedio) más el periodo del dispositivo: unos 30 ms.
+Por eso lo que se ve va `t = t_audio − 0.03 − ajuste`, donde el ajuste lo
+pone quien juega en el menú (audífonos Bluetooth: 150-250 ms). El audio
+avanza a saltos de un bloque, así que el reloj visible corre con `dt` y se
+corrige hacia ese blanco con `t += (blanco − t)(1 − e^(−8 dt))`. Con un
+error mayor a 0.1 s (un tirón) salta directo. Así la ficha llega a la
+tecla cuando suena su nota aunque un frame tarde, y los golpes de quien
+juega entran al principio del siguiente bloque.
+
+**El juicio.** Un golpe en un carril se compara con la primera ficha que
+falta en ese carril: Perfecto a 45 ms, Bien a 90, Ok a 135. Una ficha que
+pasa de 135 ms sin golpe es falla. La racha multiplica los puntos (×1 a ×4,
+uno más cada 10). El ánimo empieza en 0.6, sube con los aciertos, baja 0.075
+con cada falla y, si llega a 0, la marimba sola calla y el público se va. Un
+golpe sin ficha suena con una tecla del acorde de Sol, más suave (se puede
+tocar libre en el menú).
+
+**El redoble.** En la marimba una nota larga no se sostiene apretando: se
+golpea rápido. Cada golpe le suma a la velocidad del modo de la tecla, del
+lado en que ya se mueve, lo que perdió desde el golpe anterior:
+`fuerza = 1.6 (1 − e^(−Δt / τ))`, con `τ` lo que tarda la fundamental de
+esa tecla en caer a 1/e (`refill_after`). Si se redobla lento, cada golpe
+repone más; si se deja de redoblar, la nota se apaga sola, que es lo que
+pasa en una marimba de verdad. En *Tiple con redobles* las fichas largas
+piden machacar la tecla. Durante un redoble, la nota que sigue en el mismo
+carril solo se toma con un golpe casi exacto, para que machacar no se la
+robe. En *Tiple* el redoble escrito suena solo al acertar la nota.
+
+**La pista en perspectiva, fila por fila.** La pista es un plano visto por
+una cámara: a la profundidad `z` (1 en la línea de golpe), la fila es
+`y = y_fuga + k / z` y todo mide `1 / z`. Al revés, cada fila de la pantalla
+tiene su profundidad `z = k / (y − y_fuga)` y, como las fichas bajan a
+velocidad constante, su instante de la canción:
+`τ(y) = (z − 1) / (z_lejos − 1) · T`, con `T` lo que tarda una ficha en
+bajar. Así que no se proyectan figuras: cada fila pregunta qué ficha, qué
+pulso y qué pedazo de la faja de los bordes le toca en su instante. Todo
+queda en perspectiva solo y se acorta con la distancia. Para suavizar los
+bordes se mide en pixeles: a lo ancho, `x / medio_ancho(z)`; a lo largo,
+el tiempo entre `dτ/dy = T k / ((z_lejos − 1)(y − y_fuga)²)`, los segundos
+que mide un pixel en esa fila. Con eso cada ficha es una caja redondeada
+con distancia con signo en pixeles, con su canto claro, un rombo con su
+punto al centro (como un brocado) y su halo. El cuerpo de las notas largas
+lleva una greca en zigzag que corre con la canción.
+
+**La marimba de abajo.** Las teclas son de hormigo, más largas en los
+graves, con veta de ruido a lo largo, laca cerca de la punta y luz de
+arriba a la izquierda. La tecla golpeada baja un poco y vuelve, y al
+acertar se aclara sin tapar la veta. Las cuerdas no se ven encima de las
+teclas porque pasan por dentro de la madera en sus nodos (a 22.4 % y
+77.6 % del largo, donde la tecla no vibra). Se ven en los huecos, de un
+nodo al de la tecla vecina, entre postes de bronce. Al frente cuelga el
+faldón de tela típica, con pliegues. Encima: chispas y un anillo que se
+abre en cada acierto, la luz del carril que sube al apretar la tecla y las
+marcas de dónde tiene que caer cada ficha.
+
+**La marimba de la luna** ([chapin/xela.rs](src/chapin/xela.rs)). El lugar
+de la Luna (N) tiene una marimba doble de casi 11 de largo
+(`PropKind::Marimba`, en tres niveles de detalle). Lleva la fila de teclas
+naturales con la punta de quien toca alineada y más largas en los graves,
+la fila de alteradas más alta en grupos de dos y tres como un teclado, un
+cajón resonador bajo cada natural, el marco, las patas y el faldón. El
+shader le da a cada tecla su tono de hormigo. En el faldón borda una
+línea de oro, una greca de dientes y una cadena de rombos con su punto,
+puntada por puntada. Cuando una puntada mide menos de un par de pixeles,
+pinta su promedio. De noche los hilos brillan como los del huipil de la
+luna. La luna mide 48 de radio y a 90 de distancia (la de los otros
+lugares) ya no se vería, así que se llega a ella desde cerca, con la
+mirada bajada.
+
+**Pruebas.** Cada parte tiene todas sus notas en orden y usa los cuatro
+carriles. Las vueltas aceleran y los carriles siguen la melodía. Tocando
+cada nota a su tiempo sale todo Perfecto en las tres partes (y el audio es
+finito, no satura y se oye). Sin tocar nada el público se va y no cuenta
+como récord. Un golpe 70 ms antes es Bien, y uno en otro carril no rompe
+la racha. Se dibuja sin huecos en el menú y jugando. Los récords se
+guardan y se leen, y con N se llega a la marimba y ahí se ofrece (en OCASO
+no).
+
 # Cambios de la sexta revisión
 
 - **Argos reemplaza a Réquiem** (misma órbita, radio 200): un planeta de

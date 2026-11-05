@@ -94,7 +94,7 @@ las sombras tienen más relleno.
 | Vigía | **Atitlán**: un mundo lago con los volcanes Atitlán, Tolimán y San Pedro, con bosque casi hasta la punta y barrancos; el agua refleja y en las tardes el Xocomil la pica | **Panajachel**: el muelle y las lanchas que se mecen con las olas |
 | Párpado | **Semuc Champey**: pozas turquesa en terrazas de caliza entre la selva | **Las pozas** |
 | Argos | **Los Cuchumatanes**: sierra con helada al amanecer y pinos; en su anillo, los barriletes gigantes de Sumpango | **San Andrés Xecul**: la iglesia amarilla con sus columnas de colores, ángeles, enredaderas y cúpulas de gajos (todo pintado por el shader), en un pueblo con plaza empedrada, mercado de puestos con toldos de colores, casas y camionetas |
-| — | **La Luna de Xelajú**, luna de los Cuchumatanes, con un tejido de huipil que brilla de noche | — |
+| — | **La Luna de Xelajú**, luna de los Cuchumatanes, con un tejido de huipil que brilla de noche | **La marimba**: una marimba doble gigante sobre el polvo, con su faldón típico; ahí se toca el minijuego (Enter) |
 | — | **La capital**: barrancos, cuadras y luces; en su anillo, camionetas y tuc-tucs dando vueltas | **El Reformador**: la torre de celosía como la de la foto (patas abiertas con arcos sobre la 7a Avenida, alas con círculos, torrecitas en el primer nivel, un círculo en cada tramo del fuste, campana y faro), lo más alto del centro; camionetas extraurbanas pasando abajo, edificios y torres de oficinas de vidrio |
 | Faro | — (en la versión chapina no existe) | — |
 
@@ -113,6 +113,19 @@ afinadas 1:4:10, el charleo de los tecomates y el redoble, en 6/8 con
 sesquialtera), a la que se llega con U / I. Abajo a la derecha hay un mini reproductor: **K** pausa,
 **U** / **I** canción anterior / siguiente, **-** / **+** volumen, y con el
 mouse suelto (Tab) se les puede dar clic a los botones y a la barra.
+
+## Minijuegos
+
+Cada planeta va a tener su minijuego. Cerca de su lugar, abajo aparece
+**«Enter · …»** y Enter lo abre; Esc vuelve al vuelo. Mientras se juega, el
+mundo se queda quieto: la última imagen del render se congela de fondo,
+difuminada, y el juego se dibuja encima en CPU como todo lo demás, a los
+fps de la pantalla (3-5 ms por frame; el 3D cuesta 50-140).
+
+| | |
+| --- | --- |
+| ![La marimba de la Luna](media/65_marimba.png) | **La marimba de la Luna** (Luna de Xelajú, versión chapina; con N se llega a **La marimba**). Fichas que bajan por cuatro carriles hasta las teclas de una marimba: **D F J K**, como Piano Tiles. Vos llevás una parte del conjunto y la marimba toca lo demás: **Bajo** (fácil), **Tiple** (la melodía) o **Tiple con redobles** (difícil: las notas largas se redoblan machacando la tecla, como en la marimba de verdad; si dejás de redoblar, la nota se apaga). Lo que no tocás no suena, y se oye. La canción es el son de la marimba procedural en **tres vueltas**, cada una más rápida (119, 139 y 158 por minuto). Perfecto, bien, ok o falla según el tiempo; la racha multiplica y, si el **ánimo** del público se acaba, el público se va. Al final: «¡De a huevo!», «¡Chilero!», «Va pues», «Púchica…» o «Ni modo, otra vez», y el récord de cada parte. |
+| ![La marimba en la Luna de Xelajú](media/64_la_marimba.png) | **Para jugar sin buscarla**: `Jugar_Marimba.cmd` (o `cargo run --release -- --marimba`) arranca con la marimba abierta. En el menú, ← / → ajustan el tiempo si las notas te suenan tarde (audífonos Bluetooth). Los récords quedan en `minijuegos.txt`. Cómo funciona (la pista en perspectiva hecha fila por fila, el reloj que sale del audio, el redoble): [EXPLICACION.md](EXPLICACION.md#los-minijuegos). |
 
 ## Video
 
@@ -144,7 +157,9 @@ Opciones:
 
 ```sh
 cargo run --release -- --res 1920x1080        # resolución del render (por defecto 1280x720)
-cargo run --release -- --captura capturas     # las 56 vistas fijas como PNG, sin abrir ventana
+cargo run --release -- --captura capturas     # las 57 vistas fijas como PNG, sin abrir ventana
+cargo run --release -- --marimba              # arranca en la Luna de Xelajú con la marimba abierta
+cargo run --release -- --captura-marimba fotos # fotos del minijuego de la marimba, sin ventana
 cargo run --release -- --bench 30             # mide cada vista fija y da medianas por etapa
 cargo run --release -- --wire --lod           # empieza con wireframe y colores de LOD
 cargo test --release                          # pruebas de vuelo, raster, sombras y gas volumétrico
@@ -162,7 +177,9 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | Turbo | Shift |
 | **Freno de emergencia** (prioridad sobre turbo y crucero) | **X sostenida** |
 | **Recuperar posición** junto a Pira, conservando el ciclo | **H** (o Inicio / Home) |
-| **Viajar al siguiente lugar** (claro, géiseres, nido, espejo y el faro; en la versión chapina se llega de día) | **N** |
+| **Viajar al siguiente lugar** (claro, géiseres, nido, espejo y el faro; en la versión chapina se llega de día, también a la marimba de la Luna) | **N** |
+| **Minijuego** del planeta, cuando abajo dice «Enter · …» | **Enter** |
+| En la marimba: tocar / elegir parte / ajuste de tiempo / tocar o repetir / salir | D F J K / ↑ ↓ / ← → / Enter / Esc |
 | Acercar / alejar la cámara | Rueda |
 | Cámara de persecución / cabina | C |
 | Asistente de vuelo / gravedad | Z / G |
@@ -185,7 +202,7 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | Foto en `capturas/` | P |
 | Soltar o capturar el mouse | Tab |
 | Ayuda / estadísticas / ocultar todo el HUD | F1 / F2 / F9 |
-| Salir | Esc |
+| Salir (en un minijuego, Esc sale del minijuego) | Esc |
 
 
 ## Revision visual y vuelo
@@ -233,7 +250,7 @@ Las vistas fijas se generan con `--captura` (nombres entre paréntesis).
 | Característica del menú | Cómo está hecho | Dónde verlo |
 | --- | --- | --- |
 | **5 planetas** que orbitan, rotan y se ven de cerca (50) | Pira (corteza negra en placas con lava que late, acoplada por marea; la estrella la está desintegrando y le arranca una cola de polvo, como a K2-22b), Jardín (mundo vivo que respira, con una red de luz bajo la piel), Vigía (gigante gaseoso morado con un ojo-tormenta de gas rosa que gira, sigue a la nave y dilata la pupila con el latido; anillos delgados de polvo y una luna, Párpado, de cristal y lagos que reflejan el ojo), Argos (un planeta de carne con un ojo enorme que gira dentro de ella para seguir a la nave por todo el sistema, con sacadas, parpadeos y una corona de ojos en sus párpados; volando bajo va debajo de la nave; la carne en pliegues está llena de ojos chicos que también la miran) y Párpado, la luna de Vigía, con su propio terreno y su lugar. Además **Faro**, la estrella de neutrones (arriba), en la órbita más lejana. Órbitas y giros son funciones del tiempo; las lunas giran alrededor de su planeta. | (02) a (08), (13); volar a cualquiera |
-| **20 tipos de modelos** propios en la superficie (20) | En OCASO: ojo de carne (Argos), hongo y coral (Jardín), espinas de obsidiana y géiser (Pira), racimo de cristal (Párpado) y rocas, armados con código en `scene/props.rs`. En la versión chapina, 13 más (el Arco, casas, el Templo del Gran Jaguar, ceibas, árboles, lanchas, la iglesia de San Andrés Xecul, pinos, puestos, camionetas, la Torre del Reformador, edificios y torres de oficinas), en `chapin/`. Cada uno en tres niveles de detalle. | (10) a (12), (28), (32), (42) a (58) |
+| **21 tipos de modelos** propios en la superficie (20) | En OCASO: ojo de carne (Argos), hongo y coral (Jardín), espinas de obsidiana y géiser (Pira), racimo de cristal (Párpado) y rocas, armados con código en `scene/props.rs`. En la versión chapina, 14 más (el Arco, casas, el Templo del Gran Jaguar, ceibas, árboles, lanchas, la iglesia de San Andrés Xecul, pinos, puestos, camionetas, la Torre del Reformador, edificios, torres de oficinas y la marimba de la Luna), en `chapin/`. Cada uno en tres niveles de detalle. | (10) a (12), (28), (32), (42) a (58), (64) |
 | **Distribución procedural** reproducible con ruido (10) | Una grilla por cara del cubo-esfera; cada celda propone un punto y lo acepta con una probabilidad de ruido fBm (grupos y claros) por las reglas del terreno (pendiente, surcos, lava, valles). Misma semilla, mismas ubicaciones. | F6 o T → semilla |
 | **Posición y orientación** sobre la superficie curva que gira (5) | Cada objeto vive en el espacio de su planeta, parado sobre la normal radial y hundido en el suelo; gira con el planeta y sube y baja con la respiración de Jardín. | Cualquier superficie |
 | **Shaders propios** distintos (24) | Estrella (fuego carmesí que hierve, con un ojo fijo en su superficie: un remolino alrededor de una pupila negra que late; borde en llamas que siguen en la corona, nubes de gas carmesí y magenta), Pira (placas de Voronoi y lava de cuerpo negro), Jardín (tejido con luz interna y poros), Vigía (bandas por latitud que corren a su ritmo con bordes turbulentos y ondas de Kelvin-Helmholtz, vórtice de Rodrigues, brazos en espiral, iris de gas turbulento, tormentas eléctricas con rayos adentro, auroras en los polos que laten con la estrella y relámpagos por todo el lado de noche; del mapa del Hubble solo se toma el detalle de las nubes), Párpado (lagos espejo que reflejan a Vigía con su propio shader, cristal), Argos (iris en polares con fibras, collareta y pupila; esclera con venas; carne mojada; párpados que se cierran), Faro (la corteza agrietada vista a través de su lente, con la ley de Greenstein-Hartke y los casquetes de Beloborodov; sus haces como volumen con el perfil de Rankin, el carrusel de chispas y hebras que corren; la bruma de su viento con integral exacta; el cielo curvado alrededor), anillos (los de Vigía como los de Saturno: zonas, divisiones, franjas de colores, lunitas pastoras con sus olas, un anillo de grumos trenzado y rayos radiales), ojos de carne que miran a la nave, cristales, Pira hirviendo (corona volumétrica), nebulosa del estertor y Gargantúa. | Todas las vistas |
@@ -251,6 +268,7 @@ Las vistas fijas se generan con `--captura` (nombres entre paréntesis).
 
 Además, fuera del menú:
 
+- **Minijuegos** ([src/minijuegos/](src/minijuegos)): la marimba de la Luna, con la pista en perspectiva dibujada fila por fila en CPU (cada fila es un instante de la canción), la partitura del son repartida entre quien juega y la marimba, y el reloj sacado del audio para que lo que se ve vaya con lo que se oye.
 - **Gargantúa** ([src/shaders/gargantua.rs](src/shaders/gargantua.rs)): el gas volumétrico de mi Proyecto 2 (RK4 de las geodésicas de Schwarzschild, Doppler, corrimiento gravitacional) atravesado por cada rayo, más una tabla de mil rayos que resuelve la lente del cielo sin integrar. El gas se calcula cada dos pixeles y se interpola donde no hay bordes; en la sombra, la orilla del disco y el anillo de fotones se traza completo.
 - **Faro** ([src/scene/faro.rs](src/scene/faro.rs), [src/scene/magnetosphere.rs](src/scene/magnetosphere.rs), [src/shaders/faro.rs](src/shaders/faro.rs), [src/math/neutron.rs](src/math/neutron.rs)): la estrella de neutrones de arriba; su lente, su magnetosfera, sus estallidos y su llamarada son funciones puras del tiempo, así que también se rebobinan.
 - **El ciclo** ([src/scene/cycle.rs](src/scene/cycle.rs)): una función pura del tiempo y del instante en que se presionó J, por eso se puede rebobinar.

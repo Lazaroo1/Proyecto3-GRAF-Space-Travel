@@ -761,7 +761,7 @@ impl System {
                     name,
                     normal,
                     forward,
-                    view: Self::SITE_VIEW,
+                    view: chapin::site_view(body.name).unwrap_or(Self::SITE_VIEW),
                 });
             }
         }
