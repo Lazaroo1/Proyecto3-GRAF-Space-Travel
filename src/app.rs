@@ -1242,7 +1242,7 @@ impl App {
             "Jardin" => 73.4,
             "Vigia" => 41.2,
             "Argos" => 49.0,
-            "Cementerio" => 61.7,
+            "Faro" => 61.7,
             "Parpado" => 46.2,
             _ => 36.7,
         };
@@ -1287,7 +1287,7 @@ impl App {
         let hear = |miss: f64| ((-(miss / width).powi(2)).exp() as f32) * near * state.radio as f32;
         AudioParams {
             pulsar_phase: faro::turn_at(body, t, self.faro_flare),
-            pulsar_rate: 1.0 / body.spin_period,
+            pulsar_rate: 1.0 / faro::period_at(t, self.faro_flare),
             pulse_at: (azimuth / (2.0 * PI)).rem_euclid(1.0) as f32,
             pulse_north: hear(zeta - faro::INCLINATION),
             pulse_south: hear(zeta - (PI - faro::INCLINATION)),
@@ -1310,10 +1310,7 @@ impl App {
         }
         let model = faro::model();
         let state = faro::state(t, self.faro_flare);
-        let period = match state.since_spike {
-            Some(_) => faro::PERIOD * (1.0 + faro::ANTIGLITCH),
-            None => faro::PERIOD,
-        };
+        let period = faro::period_at(t, self.faro_flare);
         let flare = match self.faro_flare.map(|f| t - f) {
             Some(age) if (0.0..faro::WIND_UP).contains(&age) => FlarePhase::Twisting,
             Some(_) if state.fireball > 0.0 => FlarePhase::Fireball,
@@ -1875,15 +1872,6 @@ impl App {
                 });
             }
         }
-        if let Some((top, _)) = beacon_lamp(&self.system, t) {
-            let near = smoothstep(300.0, 60.0, (top - ship_pos).length() as f32);
-            let flash = shaders::beacon_flash(t as f32, near);
-            points.push(crate::shaders::PointLight {
-                pos: (top - camera.pos).as_vec3(),
-                color: Vec3::new(2.4, 0.12, 0.05) * (400.0 * flash),
-                radius: 160.0,
-            });
-        }
         // Las mas cercanas primero: el shading recorre todas por pixel.
         points.sort_by(|a, b| a.pos.length_squared().total_cmp(&b.pos.length_squared()));
         points.truncate(12);
@@ -2269,19 +2257,6 @@ impl App {
             );
         }
 
-        if let Some((top, up)) = beacon_lamp(system, t) {
-            let start = out.len();
-            out.resize(start + effects::BEACON_COUNT, blank);
-            let near = smoothstep(300.0, 60.0, (top - ship_pos).length() as f32);
-            effects::beacon_waves(
-                &mut out[start..],
-                (top - camera.pos).as_vec3(),
-                up.as_vec3(),
-                t,
-                shaders::BEACON_PERIOD,
-                near,
-            );
-        }
         // La bola de fuego de la gran llamarada de Faro.
         if let Some(i) = system.find("Faro").filter(|&i| !system.bodies[i].hidden) {
             faro::fireball(&mut out, &system.bodies[i], t, self.faro_flare, camera.pos);
@@ -2291,7 +2266,6 @@ impl App {
             Version::Ocaso => vec![
                 ("Pira", effects::Motes::Embers, 120.0),
                 ("Argos", effects::Motes::Drops, 120.0),
-                ("Cementerio", effects::Motes::Dust, 100.0),
                 ("Parpado", effects::Motes::Glints, 90.0),
             ],
             Version::Chapin => system
@@ -2314,22 +2288,12 @@ impl App {
                 effects::motes(&mut out[start..], body, t, camera.pos, kind, strength);
             }
         }
-        // Los geiseres cerca de la camara echan lava; los naufragios
-        // despiertos, chispas.
-        let ship_rel = (ship_pos - camera.pos).as_vec3();
+        // Los geiseres cerca de la camara echan lava.
         for (mouth, up, activity, seed) in vents_near(system, t, camera.pos, ship_pos) {
             if activity > 0.05 {
                 let start = out.len();
                 out.resize(start + effects::FOUNTAIN_COUNT, blank);
                 effects::fountain(&mut out[start..], mouth, up, t, activity, seed);
-            }
-        }
-        for (at, up, seed) in wrecks_near(system, t, camera.pos) {
-            let near = smoothstep(160.0, 30.0, (at - ship_rel).length());
-            if near > 0.05 {
-                let start = out.len();
-                out.resize(start + effects::SPARK_COUNT, blank);
-                effects::sparks(&mut out[start..], at, up, t, near, seed);
             }
         }
         if let Some(i) = system.find("Jardin").filter(|_| system.version == Version::Ocaso) {
@@ -2974,32 +2938,6 @@ fn vents_near(system: &System, t: f64, camera: DVec3, ship: DVec3) -> Vec<(Vec3,
         .collect()
 }
 
-/// Naufragios de Cementerio cerca de la camara: un punto sobre el casco, la
-/// vertical y su numero.
-fn wrecks_near(system: &System, t: f64, camera: DVec3) -> Vec<(Vec3, Vec3, u32)> {
-    props_near(system, "Cementerio", PropKind::Wreck, 4.5, t, camera, 220.0)
-        .into_iter()
-        .map(|(at, up, seed, _)| (at, up, seed))
-        .collect()
-}
-
-/// La lampara de la baliza de Cementerio en el mundo y la vertical ahi.
-fn beacon_lamp(system: &System, t: f64) -> Option<(DVec3, DVec3)> {
-    let i = system.find("Cementerio")?;
-    let body = &system.bodies[i];
-    let beacon = system.props[i]
-        .instances
-        .iter()
-        .find(|p| p.kind == PropKind::Beacon)?;
-    let rotation = body.rotation(t);
-    let up = rotation.rotate(beacon.position.normalize());
-    let lamp = beacon.position
-        + beacon
-            .rotation
-            .rotate(DVec3::Y * (props::BEACON_TOP * beacon.scale) as f64);
-    Some((body.position(t) + rotation.rotate(lamp), up))
-}
-
 /// Direccion de la nave vista desde el centro de Vigia, en su propio espacio:
 /// hacia ahi quiere mirar el ojo.
 /// A donde quiere mirar Argos, en su espacio: a la nave o, con `fear`, a
@@ -3181,8 +3119,8 @@ fn ring_info(system: &System, t: f64, camera: DVec3) -> Vec<RingInfo> {
         .filter_map(|body| {
             let rings = body.rings?;
             let normal = body.rotation(t).rotate(DVec3::Y);
-            // Ejes del plano que no giran con el planeta: los restos orbitan
-            // solos.
+            // Ejes del plano que no giran con el planeta: lo que hay en el
+            // anillo orbita a su ritmo.
             let axis_a = normal.cross(DVec3::Z).normalize();
             Some(RingInfo {
                 style: rings.style,

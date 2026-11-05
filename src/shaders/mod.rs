@@ -13,7 +13,6 @@
 
 pub(crate) mod argos;
 pub mod atmosphere;
-mod cementerio;
 pub(crate) mod detail;
 pub mod faro;
 pub mod gargantua;
@@ -42,7 +41,7 @@ pub use nebula::Nebula;
 pub use tail::Tail;
 pub use vapor::Vapor;
 pub use pbr::PointLight;
-pub use props::{BEACON_PERIOD, PropStyle, beacon_flash, vent_activity};
+pub use props::{PropStyle, vent_activity};
 pub use rings::{RingInfo, RingStyle};
 pub use ship::ShipStyle;
 pub use sky::{CoronaClouds, SkyCube, SkyStyle, shade as sky};
@@ -62,8 +61,9 @@ pub struct DebugView {
 
 /// Intensidad del efecto propio de cada shader, ajustable en vivo (1 es la
 /// de diseno): la lava de Pira, la bioluminiscencia de Jardin, el ojo de
-/// Vigia, el iris de Argos, la chatarra de Cementerio y el brillo de la
-/// estrella.
+/// Vigia, el iris de Argos, las luces de la Capital y el brillo de la
+/// estrella. Los cuerpos de la version chapina usan la del cuerpo en cuyo
+/// lugar estan (Fuego la de Pira, Peten la de Jardin, etc.).
 #[derive(Clone, Copy, Debug)]
 pub struct Gains {
     pub sun: f32,
@@ -71,7 +71,8 @@ pub struct Gains {
     pub jardin: f32,
     pub vigia: f32,
     pub argos: f32,
-    pub cementerio: f32,
+    /// Las luces de la Capital (version chapina).
+    pub capital: f32,
 }
 
 impl Default for Gains {
@@ -82,7 +83,7 @@ impl Default for Gains {
             jardin: 1.0,
             vigia: 1.0,
             argos: 1.0,
-            cementerio: 1.0,
+            capital: 1.0,
         }
     }
 }
@@ -101,9 +102,8 @@ impl Gains {
                 crate::chapin::Chapin::Peten => &mut self.jardin,
                 crate::chapin::Chapin::Atitlan | crate::chapin::Chapin::Semuc => &mut self.vigia,
                 crate::chapin::Chapin::Cuchumatanes | crate::chapin::Chapin::Xela => &mut self.argos,
-                crate::chapin::Chapin::Capital => &mut self.cementerio,
+                crate::chapin::Chapin::Capital => &mut self.capital,
             }),
-            Material::Cementerio => Some(&mut self.cementerio),
             _ => None,
         }
     }
@@ -164,7 +164,7 @@ pub struct Uniforms<'a> {
     pub ship: Vec3,
     /// Cuanto se ha fundido Pira mientras Gargantua se la come (0 a 1).
     pub melt: f32,
-    /// Anillos de Cementerio, si existen.
+    /// Anillos de los cuerpos visibles que los tienen.
     pub rings: &'a [RingInfo],
     /// Atmosferas visibles, de la mas lejana a la mas cercana.
     pub atmospheres: &'a [AtmosphereFrame<'a>],
@@ -264,7 +264,6 @@ pub enum Material {
     Argos(ArgosLook),
     /// Un cuerpo de la version chapina (V).
     Chapin(crate::chapin::Chapin),
-    Cementerio,
     /// La estrella de neutrones: la esfera de apoyo del disco que se ve.
     Faro,
     /// La luna de Vigia: cristal y lagos espejo.
@@ -302,7 +301,6 @@ pub fn shade(material: &Material, f: &Fragment, u: &Uniforms) -> Vec3 {
         Material::Jardin => jardin::shade(f, u),
         Material::Vigia => vigia::shade(f, u),
         Material::Argos(look) => argos::shade(f, u, look),
-        Material::Cementerio => cementerio::shade(f, u),
         Material::Faro => faro::shade(f, u),
         Material::Parpado => parpado::shade(f, u),
         Material::Ship(style) => ship::shade(f, u, style),

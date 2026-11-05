@@ -1,8 +1,8 @@
-//! La Capital (la version chapina de Cementerio): la Ciudad de Guatemala
-//! sobre su meseta, partida por barrancos verdes y bajo el smog. En El
-//! Reformador, la torre de hierro sobre la 7a Avenida, con camionetas y
-//! edificios alrededor; en su anillo, camionetas y tuc-tucs dan vueltas como
-//! un trafico en orbita.
+//! La Capital (el cuerpo `Cementerio`, que en OCASO no existe: su orbita es
+//! de Faro): la Ciudad de Guatemala sobre su meseta, partida por barrancos
+//! verdes y bajo el smog. En El Reformador, la torre de hierro sobre la 7a
+//! Avenida, con camionetas y edificios alrededor; en su anillo, camionetas y
+//! tuc-tucs dan vueltas como un trafico en orbita.
 //!
 //! # El relieve
 //! - **La meseta**: lomas suaves; donde un ruido grande sube, cerros con
@@ -582,7 +582,7 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
         ground = ground.lerp(barranco(&c, z.as_ref(), gorge, shacks), wall);
     }
     let lit = pbr::shade_light(f, u, ground.albedo, ground.rough, 0.0, ground.normal, ground.ao, u.sun_light * ground.lit);
-    lit + ground.glow * u.gains.cementerio + limb_haze(f, Vec3::new(0.35, 0.28, 0.2), 0.35, f.normal.dot(f.light_dir(u)))
+    lit + ground.glow * u.gains.capital + limb_haze(f, Vec3::new(0.35, 0.28, 0.2), 0.35, f.normal.dot(f.light_dir(u)))
 }
 
 /// La ciudad: calles, banquetas y lotes de su zona, con la sombra de los
@@ -1446,7 +1446,7 @@ fn tower_shade(f: &Fragment, u: &Uniforms, _style: &PropStyle, sun: Vec3) -> Vec
         1 => pbr::shade_light(f, u, Vec3::new(0.55, 0.36, 0.16), 0.35, 1.0, f.normal, 1.0, sun),
         2 => {
             let flash = (-((u.time / 1.6).fract() * 1.6) / 0.25).exp();
-            Vec3::new(1.0, 0.1, 0.04) * ((0.6 + 14.0 * flash) * u.gains.cementerio)
+            Vec3::new(1.0, 0.1, 0.04) * ((0.6 + 14.0 * flash) * u.gains.capital)
         }
         _ => {
             let weather = u.noise.fbm(p * Vec3::new(1.5, 0.4, 1.5), 3) * 0.5 + 0.5;
@@ -1454,7 +1454,7 @@ fn tower_shade(f: &Fragment, u: &Uniforms, _style: &PropStyle, sun: Vec3) -> Vec
             let lit = pbr::shade_light(f, u, paint, 0.45, 0.6, f.normal, 1.0, sun);
             let night = prop_night(f, u);
             let flood = (1.0 - p.y / TOWER_TOP).max(0.0).powf(1.5);
-            lit + paint * Vec3::new(1.0, 0.8, 0.6) * (night * flood * 3.0 * u.gains.cementerio)
+            lit + paint * Vec3::new(1.0, 0.8, 0.6) * (night * flood * 3.0 * u.gains.capital)
         }
     }
 }
@@ -1501,7 +1501,7 @@ fn bus_shade(f: &Fragment, u: &Uniforms, style: &PropStyle, sun: Vec3) -> Vec3 {
             let front = p.z > 0.0;
             let night = prop_night(f, u);
             let glow = if front { Vec3::new(1.0, 0.85, 0.6) * (1.0 + 6.0 * night) } else { Vec3::new(1.0, 0.05, 0.02) * (0.6 + 3.0 * night) };
-            glow * u.gains.cementerio
+            glow * u.gains.capital
         }
         _ => {
             let (a, b, c) = (pick(1), pick(2), pick(3));
@@ -1537,7 +1537,7 @@ fn bus_shade(f: &Fragment, u: &Uniforms, style: &PropStyle, sun: Vec3) -> Vec3 {
             let chrome_trim = band(p.y, 0.475, 0.49, fp);
             paint = paint.lerp(Vec3::splat(0.7), chrome_trim);
             let lit = pbr::shade_light(f, u, paint, rough, metal, f.normal, 1.0, sun);
-            lit + Vec3::new(1.0, 0.9, 0.6) * (sign * (0.3 + 2.0 * prop_night(f, u)) * u.gains.cementerio)
+            lit + Vec3::new(1.0, 0.9, 0.6) * (sign * (0.3 + 2.0 * prop_night(f, u)) * u.gains.capital)
         }
     }
 }
@@ -1572,7 +1572,7 @@ fn building_shade(f: &Fragment, u: &Uniforms, style: &PropStyle, sun: Vec3) -> V
             let sign = PAINTS[(hash_u32(id ^ 0x5E) % PAINTS.len() as u32) as usize] * 1.2;
             let stripe = band((p.y - 0.8) / 0.3, 0.4, 0.6, fp / 0.3);
             let face = sign.lerp(Vec3::splat(0.75), stripe);
-            return pbr::shade_light(f, u, face, 0.4, 0.0, f.normal, 1.0, sun) + face * (night * 0.6 * u.gains.cementerio);
+            return pbr::shade_light(f, u, face, 0.4, 0.0, f.normal, 1.0, sun) + face * (night * 0.6 * u.gains.capital);
         }
         _ => {}
     }
@@ -1662,7 +1662,7 @@ fn building_shade(f: &Fragment, u: &Uniforms, style: &PropStyle, sun: Vec3) -> V
     }
     // Tierra al pie de la pared.
     albedo = albedo * (0.7 + 0.3 * smoothstep(0.0, 0.3, p.y));
-    pbr::shade_light(f, u, albedo, rough, 0.0, f.normal, 1.0, sun) + glow * u.gains.cementerio
+    pbr::shade_light(f, u, albedo, rough, 0.0, f.normal, 1.0, sun) + glow * u.gains.capital
 }
 
 /// Vidrios de las torres: verde azulado, bronce, gris azul y verde.
@@ -1696,7 +1696,7 @@ fn office_shade(f: &Fragment, u: &Uniforms, style: &PropStyle, sun: Vec3) -> Vec
                 albedo = albedo.lerp(GLASS, shop);
                 glow = WINDOW * (shop * night * 0.8);
             }
-            return pbr::shade_light(f, u, albedo, 0.85, 0.0, f.normal, 1.0, sun) + glow * u.gains.cementerio;
+            return pbr::shade_light(f, u, albedo, 0.85, 0.0, f.normal, 1.0, sun) + glow * u.gains.capital;
         }
     }
     let tint = OFFICE_GLASS[(id % OFFICE_GLASS.len() as u32) as usize];
@@ -1726,7 +1726,7 @@ fn office_shade(f: &Fragment, u: &Uniforms, style: &PropStyle, sun: Vec3) -> Vec
     let wid = hash_u32(id ^ (column as i32 as u32).wrapping_mul(0x9E37_79B9) ^ (level as u32) << 8 ^ (nm.x.abs() > 0.7) as u32);
     let on = unit(hash_u32(wid ^ ((u.time / 40.0).floor() as u32))) < 0.4;
     let glow = if on { WINDOW.lerp(NEON, 0.5) * (glass * night * 1.2) } else { Vec3::ZERO };
-    lit + reflection + glow * u.gains.cementerio
+    lit + reflection + glow * u.gains.capital
 }
 
 // El anillo: camionetas y tuc-tucs --------------------------------------------
@@ -1828,7 +1828,7 @@ pub fn ring(ring: &RingInfo, local: Vec3, alpha: f32, s: f32, footprint: f32, u:
     (
         JAM.lerp(color, resolved),
         alpha + (cover - alpha) * resolved,
-        lights * (resolved * u.gains.cementerio),
+        lights * (resolved * u.gains.capital),
         1.2,
     )
 }

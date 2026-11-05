@@ -20,9 +20,7 @@ use crate::shaders::{
     ArgosLook, AtmosphereModel, AtmosphereParams, Material, RingStyle, ShipStyle, SkyCube,
     SkyStyle, SunStyle, Textures, heartbeat,
 };
-use crate::terrain::shapes::{
-    ArgosField, CementerioField, JardinField, MIRROR_SHORE, ParpadoField, PiraField,
-};
+use crate::terrain::shapes::{ArgosField, JardinField, MIRROR_SHORE, ParpadoField, PiraField};
 use crate::terrain::{HeightField, Smooth, Terrain};
 
 pub struct Body {
@@ -512,31 +510,32 @@ impl System {
         }
         .build();
 
-        let (mut cementerio, cementerio_terrain, _) = PlanetSpec {
+        // Cementerio: el lugar de la Capital, que solo existe en la version
+        // chapina. En OCASO su orbita es de Faro y aqui no hay nada: sin
+        // relieve, sin anillos, sin aire y sin dibujarse (el material nunca
+        // se usa). Lo de la Capital lo arma `build_chapin` con su nombre.
+        let cementerio = Body {
             name: "Cementerio",
+            label: "Cementerio",
             radius: 140.0,
-            orbit: 5200.0,
-            period: 2600.0,
-            phase: 3.1,
-            inclination: -0.06,
-            spin: 170.0,
-            tilt: 0.55,
-            gravity: 3.5,
-            material: Material::Cementerio,
-            surface: Arc::new(CementerioField::new(seed ^ 0xCE3)),
-            // Sin aire: la roca muerta se ve con sombras duras.
-            atmosphere: None,
-        }
-        .build();
-        cementerio.rings = Some(Rings {
-            inner: 1.7,
-            outer: 3.1,
-            style: RingStyle::Wrecks,
-        });
-        // En OCASO su orbita es de Faro: Cementerio solo existe en la version
-        // chapina (es la Capital).
-        cementerio.absent = true;
-        cementerio.hidden = true;
+            pulse: 0.0,
+            orbit_radius: 5200.0,
+            orbit_period: 2600.0,
+            orbit_phase: 3.1,
+            orbit_inclination: -0.06,
+            spin_period: 170.0,
+            spin_phase: 0.0,
+            axial_tilt: 0.55,
+            mu: 3.5 * 140.0 * 140.0,
+            soi: 140.0 * 6.0,
+            mesh: 0,
+            material: Material::Chapin(Chapin::Capital),
+            surface: None,
+            rings: None,
+            hidden: true,
+            absent: true,
+            host: None,
+        };
 
         // Faro: la estrella de neutrones, a escala real (1 unidad = 1 km).
         let faro = Body {
@@ -548,7 +547,10 @@ impl System {
             orbit_period: 2600.0,
             orbit_phase: 3.1,
             orbit_inclination: -0.06,
-            spin_period: super::faro::PERIOD,
+            // Para la nave, Faro no gira: no hay suelo con el cual girar (el
+            // modo local llevaria la nave y la mira con un giro de 2 s). Su
+            // giro real lo lleva `faro::turn_at`.
+            spin_period: 0.0,
             spin_phase: 0.0,
             axial_tilt: 0.1,
             // La gravedad de juego de un planeta chico: la de verdad (1e14
@@ -632,7 +634,7 @@ impl System {
                 Some(jardin_terrain),
                 Some(vigia_terrain),
                 Some(argos_terrain),
-                Some(cementerio_terrain),
+                None,
                 Some(parpado_terrain),
                 Some(xela_terrain),
                 None,

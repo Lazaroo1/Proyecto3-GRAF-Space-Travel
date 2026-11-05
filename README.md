@@ -4,8 +4,10 @@ Gráficas por Computadora · Proyecto 3 · Lázaro Díaz, 24713
 
 Un sistema solar explorable en nave, dibujado con un renderer por software
 propio en CPU. **Ocaso**, una supergigante roja, agoniza y late como un
-corazón, y se puede volar entre sus cinco planetas todo el tiempo que se
-quiera. Con **J** empieza el final: el latido se acelera, la estrella suelta
+corazón, y se puede volar entre sus planetas todo el tiempo que se quiera.
+En la órbita más lejana gira su compañera muerta, **Faro**: una estrella de
+neutrones que es púlsar y magnetar, a escala real y con la física de verdad
+(abajo). Con **J** empieza el final: el latido se acelera, la estrella suelta
 una capa de gas que arde, colapsa en una supernova fallida y en su lugar nace
 **Gargantúa**, un agujero negro con su disco de acreción que curva la luz de
 todo el cielo. Gargantúa hace hervir a Pira hasta deshacerla y su gas entra
@@ -18,7 +20,7 @@ horizonte muere y el tiempo se rebobina. Otra J hace renacer a la estrella.
 | --- | --- |
 | ![Agonía: la estrella late y Pira se le deshace encima](media/22_agonia.png) | ![Estertor: la estrella suelta su capa de gas](media/25_estertor.png) |
 | ![Vigía y su ojo-tormenta](media/06_vigia.png) | ![Pira: corteza en placas y lava](media/02_pira.png) |
-| ![Argos: el ojo que te sigue por todo el sistema](media/07_argos.png) | ![Cementerio: naves en los anillos y la baliza](media/08_cementerio.png) |
+| ![Argos: el ojo que te sigue por todo el sistema](media/07_argos.png) | ![Faro: la magnetosfera torcida y los dos haces](media/26_haces.png) |
 | ![Superficie de Jardín](media/23_jardin_biopunk.png) | ![Pira y su cola de polvo](media/14_cola.png) |
 | ![Gargantúa se come a Pira](media/30_comida.png) | ![El gas de Pira se mezcla con el disco](media/31_digestion.png) |
 | ![El ojo de Vigía reflejado en un lago de Párpado](media/32_espejo.png) | ![El iris de Argos de cerca](media/33_iris.png) |
@@ -34,9 +36,29 @@ con luces que alumbran lo de alrededor y algo que flota a su lado. La tecla
 | ![Los géiseres de Pira](media/27_geiseres.png) | **Los géiseres** (Pira): bocas de lava que hacen erupción de vez en cuando y despiertan al pasar la nave; alumbran el suelo y suben brasas a su alrededor. |
 | ![El nido de Argos](media/28_nido.png) | **El nido** (Argos): carne granate y mojada, en pliegues, llena de ojos que miran a la nave y parpadean cada uno a su ritmo. Al llegar, el ojo grande viene debajo de la nave (los del nido se hunden para dejarlo pasar): se vuela encima de su iris, con la corona de ojos de sus párpados mirando desde el horizonte. Flotan gotas rojas. |
 | ![El espejo en Párpado](media/32_espejo.png) | **El espejo** (Párpado, la luna de Vigía): un lago quieto entre cristales, con Vigía del otro lado del agua. El ojo te mira y también se ve en el lago, porque el reflejo se sombrea con el mismo shader de Vigía. La nave levanta ondas al pasar sobre el agua y los cristales se encienden por dentro. |
-| ![La baliza de Cementerio](media/26_baliza.png) | **La baliza** (Cementerio): naves caídas alrededor de la torre. A su paso les vuelven las luces y echan chispas; la baliza titila más rápido y su onda sube. |
 | ![El ojo de Vigía de cerca](media/29_ojo_cerca.png) | **El ojo** (Vigía): sigue a la nave y, cuando se acerca, cierra la pupila, enciende el iris y los relámpagos se juntan debajo de ella. |
 | ![El claro de Jardín](media/11_hongos.png) | **El claro** (Jardín): colonias de hongos y corales que alumbran el suelo, con esporas flotando. |
+
+## Faro, el púlsar-magnetar (F)
+
+Faro está hecha con los números de **1E 1547.0−5408**, un magnetar que también
+emite pulsos de radio (gira cada 2.07 s, campo de 3.2×10¹⁴ G), y todo lo
+demás sale de ecuaciones publicadas. Cerca de ella **1 unidad = 1 km**: la
+estrella mide 12 km, sus casquetes polares 130 m, sus haces nacen a 120 km y
+los arcos de su magnetosfera suben a 400-700 km. El tiempo también es el real.
+El detalle, las ecuaciones y las fuentes están en
+[EXPLICACION.md](EXPLICACION.md#faro-la-estrella-de-neutrones-que-es-púlsar-y-magnetar).
+
+| | |
+| --- | --- |
+| ![La estrella de neutrones de cerca](media/13_estrella_de_neutrones.png) | **La estrella, a través de su propia gravedad**: la luz sigue las geodésicas de Schwarzschild (una tabla de 768 rayos integrados con RK4), así que se ve el 76% de la superficie, los dos polos a la vez, y el cielo de fondo se estira en un anillo de Einstein. El color es el de un cuerpo negro a millones de kelvin (la cola de Rayleigh-Jeans), más frío en el ecuador magnético (Greenstein y Hartke) y con casquetes calientes donde baja la corriente (Beloborodov 2009). |
+| ![Faro de lejos, con su magnetosfera y sus haces](media/08_faro.png) | **La magnetosfera torcida**: las líneas de campo salen de la solución autosimilar de Thompson, Lyutikov y Kulkarni (2002), resuelta al arrancar por disparo y comparada con su tabla. Brillan las que llevan corriente: pares que nacen en los pies y se aniquilan en la cima. **Los haces**: conos huecos de chispas que dan vueltas (Rankin; Ruderman y Sutherland) que nacen a la altura que da la última línea abierta y se ven porque iluminan el viento de la supergigante. Cuando uno te apunta, destella y suena un golpe: dos pulsos por vuelta. |
+| ![La corteza tuerce la magnetosfera](media/60_faro_torsion.png) | **La gran llamarada (F)**: la corteza tuerce la magnetosfera hasta unos 3 rad, las líneas se inflan, hay un estallido precursor y un pico de 0.2 s que deslumbra el sistema (Parfrey, Beloborodov y Hui 2013). |
+| ![La bola de fuego atrapada](media/62_faro_bola_de_fuego.png) | Después queda una **bola de fuego** atrapada en las líneas cerradas que gira con la estrella y se evapora en seis minutos con L = L₀(1 − t/380 s)³; el giro se frena (ΔP/P = 10⁻⁴), la radio se apaga un rato y la cola suena con las oscilaciones de la corteza medidas en SGR 1806−20. Entre llamaradas hay **estallidos** de milisegundos (ley de potencias E^−1.7) que llegan en tormentas. |
+
+Cerca de Faro el HUD muestra sus ecuaciones con sus valores (P, Ṗ, B, edad,
+Ė, cilindro de luz, compacidad, torsión, casquete) y en qué va la llamarada.
+Todo es función del tiempo: se rebobina con R.
 
 ## La versión chapina (V)
 
@@ -71,7 +93,8 @@ las sombras tienen más relleno.
 | Párpado | **Semuc Champey**: pozas turquesa en terrazas de caliza entre la selva | **Las pozas** |
 | Argos | **Los Cuchumatanes**: sierra con helada al amanecer y pinos; en su anillo, los barriletes gigantes de Sumpango | **San Andrés Xecul**: la iglesia amarilla con sus columnas de colores, ángeles, enredaderas y cúpulas de gajos (todo pintado por el shader), en un pueblo con plaza empedrada, mercado de puestos con toldos de colores, casas y camionetas |
 | — | **La Luna de Xelajú**, luna de los Cuchumatanes, con un tejido de huipil que brilla de noche | — |
-| Cementerio | **La capital**: barrancos, cuadras y luces; en su anillo, camionetas y tuc-tucs dando vueltas | **El Reformador**: la torre de celosía como la de la foto (patas abiertas con arcos sobre la 7a Avenida, alas con círculos, torrecitas en el primer nivel, un círculo en cada tramo del fuste, campana y faro), lo más alto del centro; camionetas extraurbanas pasando abajo, edificios y torres de oficinas de vidrio |
+| — | **La capital**: barrancos, cuadras y luces; en su anillo, camionetas y tuc-tucs dando vueltas | **El Reformador**: la torre de celosía como la de la foto (patas abiertas con arcos sobre la 7a Avenida, alas con círculos, torrecitas en el primer nivel, un círculo en cada tramo del fuste, campana y faro), lo más alto del centro; camionetas extraurbanas pasando abajo, edificios y torres de oficinas de vidrio |
+| Faro | — (en la versión chapina no existe) | — |
 
 **Las naves botella** (modeladas en Blender para este proyecto): Gallo,
 Cabro Reserva, Jägermeister, Blue Label, Cubata Uva y Four Loko. **B** pasa a
@@ -119,7 +142,7 @@ Opciones:
 
 ```sh
 cargo run --release -- --res 1920x1080        # resolución del render (por defecto 1280x720)
-cargo run --release -- --captura capturas     # las 33 vistas fijas como PNG, sin abrir ventana
+cargo run --release -- --captura capturas     # las 55 vistas fijas como PNG, sin abrir ventana
 cargo run --release -- --bench 30             # mide cada vista fija y da medianas por etapa
 cargo run --release -- --wire --lod           # empieza con wireframe y colores de LOD
 cargo test --release                          # pruebas de vuelo, raster, sombras y gas volumétrico
@@ -137,7 +160,7 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | Turbo | Shift |
 | **Freno de emergencia** (prioridad sobre turbo y crucero) | **X sostenida** |
 | **Recuperar posición** junto a Pira, conservando el ciclo | **H** (o Inicio / Home) |
-| **Viajar al siguiente lugar** (claro, géiseres, nido, baliza, espejo; en la versión chapina se llega de día) | **N** |
+| **Viajar al siguiente lugar** (claro, géiseres, nido, espejo; en la versión chapina se llega de día) | **N** |
 | Acercar / alejar la cámara | Rueda |
 | Cámara de persecución / cabina | C |
 | Asistente de vuelo / gravedad | Z / G |
@@ -150,6 +173,7 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | Rebobinar el tiempo | R sostenido |
 | Saltar 30 s atrás / adelante en el tiempo | [ / ] |
 | **Desatar el final** de la estrella / hacerla renacer | **J** |
+| **Gran llamarada** de Faro | **F** |
 | Recorrer las vistas fijas (las mismas de `--captura`) | AvPág / RePág |
 | **Ajustes en vivo** (radio, órbita, semilla, shaders...) | T, flechas y Shift |
 | Wireframe / colores de LOD / LOD encendido | F3 / F4 / F5 |
@@ -206,15 +230,15 @@ Las vistas fijas se generan con `--captura` (nombres entre paréntesis).
 
 | Característica del menú | Cómo está hecho | Dónde verlo |
 | --- | --- | --- |
-| **5 planetas** que orbitan, rotan y se ven de cerca (50) | Pira (corteza negra en placas con lava que late, acoplada por marea; la estrella la está desintegrando y le arranca una cola de polvo, como a K2-22b), Jardín (mundo vivo que respira, con una red de luz bajo la piel), Vigía (gigante gaseoso morado con un ojo-tormenta de gas rosa que gira, sigue a la nave y dilata la pupila con el latido; anillos delgados de polvo y una luna, Párpado, de cristal y lagos que reflejan el ojo), Argos (un planeta de carne con un ojo enorme que gira dentro de ella para seguir a la nave por todo el sistema, con sacadas, parpadeos y una corona de ojos en sus párpados; volando bajo va debajo de la nave; la carne en pliegues está llena de ojos chicos que también la miran) y Cementerio (anillos llenos de naves del éxodo y una baliza que sigue transmitiendo). Órbitas y giros son funciones del tiempo; las lunas giran alrededor de su planeta. | (02) a (08); volar a cualquiera |
-| **9 tipos de modelos** propios en la superficie (20) | Ojo de carne (Argos), hongo y coral (Jardín), espinas de obsidiana y géiser (Pira), nave náufraga y baliza de celosía (Cementerio), racimo de cristal (Párpado) y rocas, armados con código en `scene/props.rs`, cada uno en tres niveles de detalle. | (10) a (13), (26), (28), (32) |
+| **5 planetas** que orbitan, rotan y se ven de cerca (50) | Pira (corteza negra en placas con lava que late, acoplada por marea; la estrella la está desintegrando y le arranca una cola de polvo, como a K2-22b), Jardín (mundo vivo que respira, con una red de luz bajo la piel), Vigía (gigante gaseoso morado con un ojo-tormenta de gas rosa que gira, sigue a la nave y dilata la pupila con el latido; anillos delgados de polvo y una luna, Párpado, de cristal y lagos que reflejan el ojo), Argos (un planeta de carne con un ojo enorme que gira dentro de ella para seguir a la nave por todo el sistema, con sacadas, parpadeos y una corona de ojos en sus párpados; volando bajo va debajo de la nave; la carne en pliegues está llena de ojos chicos que también la miran) y Párpado, la luna de Vigía, con su propio terreno y su lugar. Además **Faro**, la estrella de neutrones (arriba), en la órbita más lejana. Órbitas y giros son funciones del tiempo; las lunas giran alrededor de su planeta. | (02) a (08), (13); volar a cualquiera |
+| **20 tipos de modelos** propios en la superficie (20) | En OCASO: ojo de carne (Argos), hongo y coral (Jardín), espinas de obsidiana y géiser (Pira), racimo de cristal (Párpado) y rocas, armados con código en `scene/props.rs`. En la versión chapina, 13 más (el Arco, casas, el Templo del Gran Jaguar, ceibas, árboles, lanchas, la iglesia de San Andrés Xecul, pinos, puestos, camionetas, la Torre del Reformador, edificios y torres de oficinas), en `chapin/`. Cada uno en tres niveles de detalle. | (10) a (12), (28), (32), (42) a (58) |
 | **Distribución procedural** reproducible con ruido (10) | Una grilla por cara del cubo-esfera; cada celda propone un punto y lo acepta con una probabilidad de ruido fBm (grupos y claros) por las reglas del terreno (pendiente, surcos, lava, valles). Misma semilla, mismas ubicaciones. | F6 o T → semilla |
 | **Posición y orientación** sobre la superficie curva que gira (5) | Cada objeto vive en el espacio de su planeta, parado sobre la normal radial y hundido en el suelo; gira con el planeta y sube y baja con la respiración de Jardín. | Cualquier superficie |
-| **Shaders propios** distintos (24) | Estrella (fuego carmesí que hierve, con un ojo fijo en su superficie: un remolino alrededor de una pupila negra que late; borde en llamas que siguen en la corona, nubes de gas carmesí y magenta), Pira (placas de Voronoi y lava de cuerpo negro), Jardín (tejido con luz interna y poros), Vigía (bandas por latitud que corren a su ritmo con bordes turbulentos y ondas de Kelvin-Helmholtz, vórtice de Rodrigues, brazos en espiral, iris de gas turbulento, tormentas eléctricas con rayos adentro, auroras en los polos que laten con la estrella y relámpagos por todo el lado de noche; del mapa del Hubble solo se toma el detalle de las nubes), Párpado (lagos espejo que reflejan a Vigía con su propio shader, cristal), Argos (iris en polares con fibras, collareta y pupila; esclera con venas; carne mojada; párpados que se cierran), Cementerio, anillos (naves; y los de Vigía como los de Saturno: zonas, divisiones, franjas de colores, lunitas pastoras con sus olas, un anillo de grumos trenzado y rayos radiales), ojos de carne que miran a la nave, cristales, baliza, Pira hirviendo (corona volumétrica), nebulosa del estertor y Gargantúa. | Todas las vistas |
-| **Shader animado** (8) | La estrella late: su pupila se dilata, cada latido sale de ella como un anillo de luz y su remolino gira; la lava y la luz de Jardín laten con retraso; Jardín respira; los géiseres hacen erupción; el vórtice de Vigía gira, su tormenta cambia de fuerza y de color y su pupila se dilata; el ojo de Argos parpadea, cierra la pupila con la nave cerca y sus venas laten; los cristales laten; el lago de Párpado ondula bajo la nave; los anillos orbitan con luces que parpadean; la nebulosa se expande; el gas del disco fluye. | (02), (04), (06), (10), (18), (25) |
-| **Mapeo de normales** (8) | Las placas del casco de los naufragios (generadas al arrancar), la roca y el tejido orgánico en triplanar, con mipmaps; tangentes por vértice y base TBN por pixel. | (13), (05) |
+| **Shaders propios** distintos (24) | Estrella (fuego carmesí que hierve, con un ojo fijo en su superficie: un remolino alrededor de una pupila negra que late; borde en llamas que siguen en la corona, nubes de gas carmesí y magenta), Pira (placas de Voronoi y lava de cuerpo negro), Jardín (tejido con luz interna y poros), Vigía (bandas por latitud que corren a su ritmo con bordes turbulentos y ondas de Kelvin-Helmholtz, vórtice de Rodrigues, brazos en espiral, iris de gas turbulento, tormentas eléctricas con rayos adentro, auroras en los polos que laten con la estrella y relámpagos por todo el lado de noche; del mapa del Hubble solo se toma el detalle de las nubes), Párpado (lagos espejo que reflejan a Vigía con su propio shader, cristal), Argos (iris en polares con fibras, collareta y pupila; esclera con venas; carne mojada; párpados que se cierran), Faro (la superficie vista a través de su lente, de cuerpo negro de Rayleigh-Jeans con la ley de Greenstein-Hartke y los casquetes de Beloborodov; sus haces como volumen con el perfil de Rankin y el carrusel de chispas; el cielo curvado alrededor), anillos (los de Vigía como los de Saturno: zonas, divisiones, franjas de colores, lunitas pastoras con sus olas, un anillo de grumos trenzado y rayos radiales), ojos de carne que miran a la nave, cristales, Pira hirviendo (corona volumétrica), nebulosa del estertor y Gargantúa. | Todas las vistas |
+| **Shader animado** (8) | La estrella late: su pupila se dilata, cada latido sale de ella como un anillo de luz y su remolino gira; la lava y la luz de Jardín laten con retraso; Jardín respira; los géiseres hacen erupción; el vórtice de Vigía gira, su tormenta cambia de fuerza y de color y su pupila se dilata; el ojo de Argos parpadea, cierra la pupila con la nave cerca y sus venas laten; los cristales laten; el lago de Párpado ondula bajo la nave; los anillos orbitan; la nebulosa se expande; el gas del disco fluye; los haces de Faro barren el sistema con chispas que dan vueltas y cada pulso distinto, su plasma sube por las líneas y parpadea, y sus casquetes se calientan con los estallidos y la llamarada. | (02), (04), (06), (10), (18), (25), (26), (60) a (62) |
+| **Mapeo de normales** (8) | Las placas del casco de la nave (generadas al arrancar), la roca y el tejido orgánico en triplanar, con mipmaps; tangentes por vértice y base TBN por pixel. | (09), (05), (12) |
 | **Deformación de la geometría** con ruido (10) | Las funciones de altura de cada planeta desplazan los vértices del cubo-esfera (cráteres, crestas, mares de lava, zanjas); Jardín además respira en el vertex shader, y el de Argos aplana la carne donde está el ojo y levanta los párpados, siguiendo a la nave. | Todas; `--wire` |
-| **Generación de geometría** propia antes de rasterizar (10) | Quadtree de chunks del cubo-esfera generados en paralelo con faldones, icosfera por subdivisión, modelos con `MeshBuilder`, cintas para líneas, recorte de Sutherland-Hodgman. | F3, F4 |
+| **Generación de geometría** propia antes de rasterizar (10) | Quadtree de chunks del cubo-esfera generados en paralelo con faldones, icosfera por subdivisión, modelos con `MeshBuilder`, cintas para líneas (la trayectoria y las líneas de campo de Faro, rehechas cada frame), recorte de Sutherland-Hodgman. | F3, F4 |
 | **Modo de control local** (8) | Cerca de un planeta (L) el vuelo se mide contra su superficie que gira: la mira se nivela con la vertical del planeta y se transporta con la curvatura, la nave sostiene sola su altura sobre el terreno y el crucero (O) rodea el planeta. | L, O |
 | **Aceleración, frenado y giro progresivos** (8) | Física a paso fijo de 120 Hz con interpolación: igual a 30 o a 300 fps. El asistente pide velocidades con aceleración limitada; el giro persigue la mira con aceleración angular limitada. | Volar |
 | **Gravedad** que curva la trayectoria (10) | Gravedad del cuerpo dominante (G la apaga). Sin asistente (Z) se ve la trayectoria predicha (Y), integrada con la misma física, con aviso de choque. | (15) |
@@ -226,12 +250,13 @@ Las vistas fijas se generan con `--captura` (nombres entre paréntesis).
 Además, fuera del menú:
 
 - **Gargantúa** ([src/shaders/gargantua.rs](src/shaders/gargantua.rs)): el gas volumétrico de mi Proyecto 2 (RK4 de las geodésicas de Schwarzschild, Doppler, corrimiento gravitacional) atravesado por cada rayo, más una tabla de mil rayos que resuelve la lente del cielo sin integrar. El gas se calcula cada dos pixeles y se interpola donde no hay bordes; en la sombra, la orilla del disco y el anillo de fotones se traza completo.
+- **Faro** ([src/scene/faro.rs](src/scene/faro.rs), [src/scene/magnetosphere.rs](src/scene/magnetosphere.rs), [src/shaders/faro.rs](src/shaders/faro.rs), [src/math/neutron.rs](src/math/neutron.rs)): la estrella de neutrones de arriba; su lente, su magnetosfera, sus estallidos y su llamarada son funciones puras del tiempo, así que también se rebobinan.
 - **El ciclo** ([src/scene/cycle.rs](src/scene/cycle.rs)): una función pura del tiempo y del instante en que se presionó J, por eso se puede rebobinar.
 - **Nebulosa del estertor** ([src/shaders/nebula.rs](src/shaders/nebula.rs)): una cáscara que se expande; cada rayo la corta en a lo más dos puntos, ahí se evalúan filamentos de ruido, y el borde brilla más porque se ve de canto.
 - **Atmósferas** con dispersión de Rayleigh y Mie, perspectiva aérea por vértice y una tabla del cielo cuando la cámara está adentro.
-- **Partículas** aditivas con profundidad: los arcos de plasma de la estrella, las fuentes de lava de los géiseres, brasas, gotas de líquido, polvo y bruma alrededor de la nave según el planeta, chispas de los naufragios, las ondas de la baliza, esporas que brillan de noche y el fuego de los motores.
+- **Partículas** aditivas con profundidad: los arcos de plasma de la estrella, las fuentes de lava de los géiseres, brasas, gotas de líquido y destellos alrededor de la nave según el planeta, la bola de fuego de Faro, el destello de sus haces, esporas que brillan de noche y el fuego de los motores.
 - **Cola de Pira** ([src/shaders/tail.rs](src/shaders/tail.rs)): un volumen marchado a lo largo de una parábola que sale del lado de noche, lejos de la estrella; el polvo brilla más a contraluz (Henyey-Greenstein).
-- **Sonido sintetizado**: el latido sincronizado con el que se ve, motor, viento y un tono por planeta.
+- **Sonido sintetizado**: el latido sincronizado con el que se ve, motor, viento, un tono por planeta y Faro (un golpe por cada haz que pasa por la nave, el chisporroteo de los estallidos, el trueno de la llamarada y las oscilaciones de su corteza).
 - **Bloom** y tonemap HDR que conserva el tono.
 
 ## En la demostración: cambiar parámetros en vivo
@@ -277,10 +302,10 @@ dibujos (malla + matriz + material)
 | Carpeta | Contenido |
 | --- | --- |
 | [src/render](src/render) | Pipeline: vértices, recorte, raster en punto fijo, shading diferido, partículas, bloom, tonemap y PNG |
-| [src/shaders](src/shaders) | Shaders de la estrella, los planetas, los objetos, la nave, el cielo, las atmósferas, los anillos y Gargantúa; mapas de normales |
+| [src/shaders](src/shaders) | Shaders de la estrella, los planetas, Faro, los objetos, la nave, el cielo, las atmósferas, los anillos y Gargantúa; mapas de normales |
 | [src/terrain](src/terrain) | Cubo-esfera con quadtree, LOD, faldones y las funciones de altura de cada planeta |
-| [src/scene](src/scene) | Cuerpos celestes, ciclo, objetos de la superficie, física de la nave, trayectoria, partículas, cámara y lector OBJ |
-| [src/math](src/math) | Vectores, matrices, cuaterniones, ruido, cuerpo negro, relatividad y la tabla de geodésicas |
+| [src/scene](src/scene) | Cuerpos celestes, ciclo, la física de Faro y su magnetosfera, objetos de la superficie, física de la nave, trayectoria, partículas, cámara y lector OBJ |
+| [src/math](src/math) | Vectores, matrices, cuaterniones, ruido, cuerpo negro, relatividad y las tablas de geodésicas (Gargantúa y Faro) |
 | [src/audio.rs](src/audio.rs) | Sintetizador del sonido |
 | [src/tweaks.rs](src/tweaks.rs) | Panel de ajustes en vivo |
 | [src/parallel.rs](src/parallel.rs) | Pool de hilos persistentes |

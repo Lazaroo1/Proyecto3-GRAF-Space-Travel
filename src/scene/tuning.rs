@@ -52,7 +52,6 @@ impl System {
                     "Jardin" => props::garden_grove,
                     "Pira" => props::vent_field,
                     "Argos" => props::eye_nest,
-                    "Cementerio" => props::beacon_site,
                     "Parpado" => props::mirror_shore,
                     _ => nothing,
                 },
@@ -222,6 +221,29 @@ mod tests {
             let face = body.rotation(t).rotate(DVec3::new(-1.0, 0.0, 0.0));
             assert!(face.dot(to_star) > 0.99, "t {t}: {}", face.dot(to_star));
         }
+    }
+
+    #[test]
+    fn the_capital_only_exists_in_the_chapin_version() {
+        let mut sys = system();
+        let i = sys.find("Cementerio").unwrap();
+        // En OCASO su orbita es de Faro: no hay nada que dibujar ni que tocar.
+        let body = &sys.bodies[i];
+        assert!(body.hidden && body.absent && body.surface.is_none() && body.rings.is_none());
+        assert!(sys.terrains[i].is_none() && sys.atmospheres[i].is_none());
+        assert!(sys.props[i].instances.is_empty());
+        sys.toggle_version();
+        let body = &sys.bodies[i];
+        assert!(!body.hidden && body.surface.is_some() && body.rings.is_some());
+        assert_eq!(body.label, crate::chapin::spec("Cementerio").unwrap().label);
+        assert!(sys.terrains[i].is_some() && !sys.props[i].instances.is_empty());
+        // Un radio cambiado en OCASO (donde no tiene terreno) rehace el de la
+        // Capital al volver a la version chapina.
+        sys.toggle_version();
+        sys.set_radius(i, 160.0);
+        assert!(sys.terrains[i].is_none());
+        sys.toggle_version();
+        assert_eq!(sys.terrains[i].as_ref().map(|t| t.radius), Some(160.0));
     }
 
     #[test]

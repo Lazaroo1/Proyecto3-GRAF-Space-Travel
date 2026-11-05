@@ -3,7 +3,7 @@
 //!
 //! - **Mares y crateres**: el color sale de la foto de la Luna (LROC, en
 //!   `assets/textures`), mas gris y palida; el relieve, de dos campos de
-//!   crateres (`Craters`, el mismo de Cementerio) sobre lomas suaves.
+//!   crateres (`Craters`, de `terrain::shapes`) sobre lomas suaves.
 //! - **Luz de luna**: el regolito no se ve como un plato de Lambert. Con
 //!   **Lommel-Seeliger** (`mu0 / (mu0 + mu)`, con `mu0` el coseno hacia la
 //!   luz y `mu` hacia la camara) el disco lleno se ve parejo hasta el borde,
