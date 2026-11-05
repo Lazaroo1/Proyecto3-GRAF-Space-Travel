@@ -2,9 +2,9 @@
 //!
 //! # Modelos
 //! Todos generados con codigo (`MeshBuilder`), cada uno en tres niveles de
-//! detalle: ojos de carne (Argos), hongos y corales (Jardin), espinas de
-//! obsidiana y geiseres (Pira), naves naufragas y la baliza (Cementerio) y
-//! cristales (Parpado).
+//! detalle: ojos de carne (Argos), hongos, corales y rocas (Jardin),
+//! espinas de obsidiana y geiseres (Pira) y cristales (Parpado). Los de la
+//! version chapina se arman en `chapin/`.
 //!
 //! # Distribucion
 //! Cada cara del cubo-esfera se divide en una grilla; cada celda propone un
@@ -45,9 +45,7 @@ pub enum PropKind {
     Mushroom,
     Coral,
     Spike,
-    Wreck,
     Boulder,
-    Beacon,
     Vent,
     Crystal,
     // Version chapina (cada uno en su planeta, en `chapin/`).
@@ -74,14 +72,12 @@ pub enum PropKind {
 }
 
 impl PropKind {
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 20] = [
         Self::Eye,
         Self::Mushroom,
         Self::Coral,
         Self::Spike,
-        Self::Wreck,
         Self::Boulder,
-        Self::Beacon,
         Self::Vent,
         Self::Crystal,
         Self::Arco,
@@ -104,13 +100,13 @@ impl PropKind {
         self as usize
     }
 
-    /// Cuanto cuenta su tamano en pantalla para decidir si se dibuja. Los
-    /// naufragios (1) se ven desde lejos; los ojos de Argos, un poco menos;
-    /// la vegetacion y las espinas (0.5) necesitan el doble de tamano: desde
-    /// la orbita solo ensuciarian.
+    /// Cuanto cuenta su tamano en pantalla para decidir si se dibuja. Las
+    /// rocas y los edificios (1) se ven desde lejos; los ojos de Argos, un
+    /// poco menos; la vegetacion y las espinas (0.5) necesitan el doble de
+    /// tamano: desde la orbita solo ensuciarian.
     pub fn visibility(self) -> f32 {
         match self {
-            Self::Wreck | Self::Boulder | Self::Beacon => 1.0,
+            Self::Boulder => 1.0,
             Self::Arco | Self::Templo | Self::Torre | Self::Edificio | Self::Rascacielos | Self::Camioneta | Self::Iglesia => 1.0,
             Self::Eye | Self::Casa | Self::Ceiba | Self::Lancha | Self::Puesto => 0.75,
             Self::Arbol | Self::Pino => 0.5,
@@ -133,19 +129,12 @@ pub struct Instance {
     pub scale: f32,
 }
 
-/// Unidades del modelo por cada repeticion de la textura del casco.
-pub const WRECK_UV_SIZE: f32 = 7.0;
 /// Altura del coral en todos sus niveles de detalle (el shader la usa para
 /// el degradado de color).
 pub const CORAL_TOP: f32 = 12.9;
-/// Radio del casco de los naufragios: el modelo se arma con el casco
-/// apoyado en `y = 0`.
-const HULL: f32 = 3.2;
 
 /// Centro del globo de los ojos de Argos, en unidades del modelo (radio 1).
 pub const EYE_CENTER: Vec3 = Vec3::new(0.0, 0.35, 0.0);
-/// Altura de la luz de la baliza de Cementerio, en unidades del modelo.
-pub const BEACON_TOP: f32 = 46.0;
 
 // Colores de vertice: algunos shaders los usan como marcas.
 const STONE: Vec3 = Vec3::new(0.0, 0.0, 0.0);
@@ -153,14 +142,10 @@ const STEM: Vec3 = Vec3::new(0.72, 0.66, 0.6);
 const CAP: Vec3 = Vec3::new(0.36, 0.05, 0.3);
 /// Bulbos del coral (el verde en 0 marca la punta que brilla).
 const TIP: Vec3 = Vec3::new(1.0, 0.0, 1.0);
-/// La lampara de la baliza (el shader la enciende).
-const LAMP: Vec3 = Vec3::new(1.0, 0.0, 0.0);
 /// La boca de lava de los geiseres (el shader la enciende).
 const POOL: Vec3 = Vec3::new(1.0, 1.0, 0.0);
 /// Altura de la boca de los geiseres, en unidades del modelo.
 pub const VENT_TOP: f32 = 7.3;
-/// Paredes de adentro del casco: el shader las oscurece con el rojo.
-const INSIDE: Vec3 = Vec3::new(0.15, 1.0, 1.0);
 /// El globo de los ojos de Argos (el shader lo distingue de la carne).
 const EYEBALL: Vec3 = Vec3::new(1.0, 1.0, 1.0);
 
@@ -194,52 +179,6 @@ fn eye(detail: usize) -> Mesh {
     }
     *radii.last_mut().unwrap() = radii[0];
     b.tube(&path, &radii, tube);
-    b.build()
-}
-
-/// La baliza de Cementerio: una torre de celosia de cuatro patas que se
-/// juntan arriba, con travesanos, una plataforma, una antena y la lampara.
-fn beacon(detail: usize) -> Mesh {
-    let mut b = MeshBuilder::new();
-    b.color(STONE);
-    let (base, top) = (5.0, 1.2);
-    let height = 40.0;
-    let leg = |k: usize, y: f32| {
-        let a = (k as f32 + 0.5) * TAU / 4.0;
-        let r = base + (top - base) * y / height;
-        Vec3::new(a.cos() * r, y, a.sin() * r)
-    };
-    let sides = [3, 4, 6][detail];
-    for k in 0..4 {
-        let (p0, p1) = (leg(k, -1.0), leg(k, height));
-        b.frustum(p0, (p1 - p0).normalize(), (p1 - p0).length(), 0.45, 0.28, sides, false, (false, true));
-    }
-    if detail >= 1 {
-        // Travesanos en zigzag entre patas vecinas.
-        let levels = [5, 8, 12][detail];
-        for i in 0..levels {
-            let (y0, y1) = (
-                height * i as f32 / levels as f32,
-                height * (i + 1) as f32 / levels as f32,
-            );
-            for k in 0..4 {
-                let (a, c) = (leg(k, y0), leg((k + 1) % 4, y1));
-                let axis = (c - a).normalize();
-                let side = axis.cross(Vec3::Y).normalize();
-                b.cuboid((a + c) * 0.5, [side, axis, side.cross(axis)], Vec3::new(0.12, (c - a).length() * 0.5, 0.12));
-            }
-        }
-    }
-    // Plataforma, antena y la lampara.
-    b.frustum(Vec3::new(0.0, height, 0.0), Vec3::Y, 1.0, 2.6, 2.4, sides.max(4), false, (true, true));
-    b.frustum(Vec3::new(0.0, height + 1.0, 0.0), Vec3::Y, 4.0, 0.25, 0.12, sides, false, (false, true));
-    b.color(LAMP);
-    b.ellipsoid(Vec3::new(0.0, BEACON_TOP, 0.0), Vec3::splat(1.1), [3, 4, 6][detail], [6, 8, 12][detail], false);
-    if detail >= 1 {
-        // La antena parabolica, apuntando al cielo de lado.
-        b.color(STONE);
-        b.ellipsoid(Vec3::new(2.4, height - 4.0, 0.0), Vec3::new(2.2, 0.5, 2.2), 4, [8, 10, 16][detail], true);
-    }
     b.build()
 }
 
@@ -367,34 +306,6 @@ pub fn eye_nest(
             1.5 + 4.5 * size * size,
             unit(hash_u32(h ^ 9)) as f64 * std::f64::consts::TAU,
             0.25,
-        ));
-    }
-}
-
-/// La baliza de Cementerio con las naves que cayeron a su alrededor.
-pub fn beacon_site(
-    instances: &mut Vec<Instance>,
-    radius: f64,
-    field: &dyn HeightField,
-    seed: u32,
-    frame: (DVec3, DVec3, DVec3),
-) {
-    clear_site(instances, radius, frame.0, 90.0);
-    instances.push(at_site(radius, field, frame, PropKind::Beacon, 0.0, 0.0, 1.0, 0.7, 0.8));
-    for k in 0..8u32 {
-        let h = hash_u32(seed ^ k.wrapping_mul(0x3C6E) ^ 0xB41A);
-        let angle = (k as f64 + unit(h) as f64 * 0.6) / 8.0 * std::f64::consts::TAU;
-        let distance = 32.0 + 40.0 * unit(hash_u32(h)) as f64;
-        instances.push(at_site(
-            radius,
-            field,
-            frame,
-            PropKind::Wreck,
-            angle.cos() * distance,
-            angle.sin() * distance,
-            0.9 + 0.4 * unit(hash_u32(h ^ 7)),
-            unit(hash_u32(h ^ 9)) as f64 * std::f64::consts::TAU,
-            1.0,
         ));
     }
 }
@@ -651,100 +562,6 @@ fn spikes(detail: usize) -> Mesh {
     b.build()
 }
 
-fn wreck(detail: usize) -> Mesh {
-    let mut b = MeshBuilder::new();
-    b.color(Vec3::ONE);
-    // Las placas del casco miden lo mismo en todas las caras.
-    b.uv_world(Some(WRECK_UV_SIZE));
-    // Casco principal: un cilindro acostado de 16 unidades, partido. De
-    // lejos basta un prisma de seis caras.
-    let (segments, smooth) = if detail == 0 { (6, false) } else { (12, true) };
-    b.frustum(
-        Vec3::new(-11.2, 0.0, 0.0),
-        Vec3::X,
-        16.0,
-        HULL,
-        2.7,
-        segments,
-        smooth,
-        (true, false),
-    );
-    // El extremo partido esta abierto: por dentro, una pared oscura que mira
-    // hacia adentro, para que no se vea a traves del casco.
-    let inside = b.mark();
-    b.color(INSIDE);
-    b.frustum(
-        Vec3::new(-2.0, 0.0, 0.0),
-        Vec3::X,
-        6.8,
-        HULL * 0.92,
-        2.7 * 0.92,
-        segments,
-        smooth,
-        (true, false),
-    );
-    b.flip(inside);
-    b.color(Vec3::ONE);
-    if detail >= 1 {
-        // La nariz se partio y quedo torcida a un lado.
-        let nose_axis = Vec3::new(1.0, 0.18, 0.35).normalize();
-        b.frustum(
-            Vec3::new(6.7, 0.3, 1.45),
-            nose_axis,
-            7.2,
-            2.55,
-            0.55,
-            segments,
-            smooth,
-            (true, false),
-        );
-        // Aletas.
-        b.cuboid(
-            Vec3::new(-8.8, 3.85, 0.0),
-            tilted(0.3),
-            Vec3::new(2.55, 1.45, 0.2),
-        );
-        let fin = [
-            Vec3::X,
-            Vec3::new(0.0, 0.5, 0.87),
-            Vec3::new(0.0, -0.87, 0.5),
-        ];
-        b.cuboid(Vec3::new(-8.8, -1.9, 3.05), fin, Vec3::new(2.25, 1.3, 0.2));
-    }
-    if detail >= 2 {
-        // Escombros (apoyados donde quedaria el suelo) y una antena doblada.
-        b.cuboid(
-            Vec3::new(2.4, -2.25, -4.15),
-            tilted(0.7),
-            Vec3::new(1.1, 0.65, 0.8),
-        );
-        b.cuboid(
-            Vec3::new(-4.0, -2.4, 4.5),
-            tilted(-0.5),
-            Vec3::new(0.8, 0.8, 0.95),
-        );
-        let antenna = Vec3::new(0.2, 1.0, 0.1).normalize();
-        b.frustum(
-            Vec3::new(-1.6, 2.55, 0.0),
-            antenna,
-            3.85,
-            0.24,
-            0.13,
-            4,
-            false,
-            (false, false),
-        );
-    }
-    let mut mesh = b.build();
-    // Armado alrededor del eje del casco; se sube para que la base quede en
-    // y = 0, como los demas modelos (asi `sink` hunde lo que dice).
-    for p in &mut mesh.positions {
-        p.y += HULL;
-    }
-    mesh.update_bounds();
-    mesh
-}
-
 /// Escala `mesh` desde el origen para que su punto mas alto quede en `top`.
 fn fit_height(mut mesh: Mesh, top: f32) -> Mesh {
     let current = mesh.positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
@@ -768,9 +585,7 @@ pub fn build_models() -> Vec<PropModel> {
                 PropKind::Mushroom => mushroom(detail),
                 PropKind::Coral => coral(detail),
                 PropKind::Spike => spikes(detail),
-                PropKind::Wreck => wreck(detail),
                 PropKind::Boulder => boulder(detail),
-                PropKind::Beacon => beacon(detail),
                 PropKind::Vent => vent(detail),
                 PropKind::Crystal => crystal(detail),
                 chapin => crate::chapin::mesh(chapin, detail),
@@ -1190,17 +1005,6 @@ pub fn rules_for(planet: &str) -> Vec<Scatter> {
                     * 0.6
             },
         }],
-        // Naves estrelladas en las zanjas y junto a los crateres.
-        "Cementerio" => vec![Scatter {
-            kind: PropKind::Wreck,
-            cells: 13,
-            scale: (0.8, 1.25),
-            sink: 1.2,
-            upright: false,
-            accept: |density, s, _| {
-                (s.attrs.y.max(s.attrs.x * 0.6) + 0.15) * smoothstep(0.4, 0.65, density) * 0.8
-            },
-        }],
         _ => Vec::new(),
     }
 }
@@ -1275,6 +1079,14 @@ mod tests {
         // Muy lejos: todo diminuto, nada se dibuja.
         let (stats, out) = run(DVec3::new(0.0, 0.0, 1e6));
         assert!(out.is_empty() && stats.small == set.instances.len());
+    }
+
+    #[test]
+    fn every_kind_is_at_its_index_in_the_list() {
+        for (i, kind) in PropKind::ALL.iter().enumerate() {
+            assert_eq!(kind.index(), i, "{kind:?}");
+        }
+        assert_eq!(build_models().len(), PropKind::ALL.len());
     }
 
     #[test]

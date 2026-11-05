@@ -190,6 +190,13 @@ impl Faro<'_> {
     pub fn beams(&self, dir: Vec3, depth: f32) -> Vec3 {
         let widest = self.beam.outer * 1.25;
         let cos_max = widest.cos();
+        // Descarte: el cono que abarca toda la exposicion. La mayoria de los
+        // pixeles no lo tocan y se ahorran los tres de adentro.
+        let sweep = self.magnetic_before.dot(self.magnetic).clamp(-1.0, 1.0).acos();
+        let middle = (self.magnetic_before + self.magnetic).normalize();
+        if !self.touches(dir, depth, middle, (widest + 0.5 * sweep).cos()) {
+            return Vec3::ZERO;
+        }
         let mut light = 0.0;
         // Tres tiempos de exposicion: el haz barre su ancho en un frame.
         for k in 0..3 {
@@ -199,6 +206,29 @@ impl Faro<'_> {
         }
         let tint = Vec3::new(0.55, 0.75, 1.0);
         tint * (light * self.beam_gain)
+    }
+
+    /// Si el rayo entra al doble cono de eje `axis` antes de `depth`.
+    fn touches(&self, dir: Vec3, depth: f32, axis: Vec3, cos_max: f32) -> bool {
+        let p = -self.center;
+        let (pa, da, pd, pp) = (p.dot(axis), dir.dot(axis), p.dot(dir), p.dot(p));
+        let c2 = cos_max * cos_max;
+        let (a, b, c) = (da * da - c2, pa * da - c2 * pd, pa * pa - c2 * pp);
+        let disc = b * b - a * c;
+        if disc <= 0.0 {
+            return a > 0.0 && c > 0.0;
+        }
+        if a.abs() < 1e-9 {
+            return true;
+        }
+        let root = disc.sqrt();
+        let (r1, r2) = ((-b - root) / a, (-b + root) / a);
+        let (t1, t2) = (r1.min(r2), r1.max(r2));
+        if a < 0.0 {
+            t2 > 0.0 && t1 < depth
+        } else {
+            t1 > 0.0 || t2 < depth
+        }
     }
 
     /// La luz de los dos conos con eje `axis` a lo largo del rayo.

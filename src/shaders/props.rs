@@ -1,14 +1,14 @@
 //! Shaders de los objetos de la superficie.
 //!
-//! Los naufragios llevan **mapeo de normales** (las placas del casco). La normal del mapa vive
-//! en el espacio tangente de la cara; `Fragment::perturb` la lleva al mundo
-//! con la base TBN interpolada. El nivel de mipmap sale de cuanto mide un
-//! pixel sobre la superficie: de lejos se lee el promedio, que no parpadea.
+//! Los hongos y los corales llevan **mapeo de normales** triplanar (las
+//! celdas de `textures.organic`, con `detail::sample`) sobre la roca de
+//! `detail::rock`. El nivel de mipmap sale de cuanto mide un pixel sobre la
+//! superficie: de lejos se lee el promedio, que no parpadea.
 
 use super::{Fragment, Uniforms, detail, pbr, rings};
 use crate::math::blackbody::planckian_rgb;
-use crate::math::{Vec2, Vec3, smoothstep};
-use crate::scene::props::{CORAL_TOP, CRYSTAL_TOP, EYE_CENTER, PropKind, VENT_TOP, WRECK_UV_SIZE};
+use crate::math::{Vec3, smoothstep};
+use crate::scene::props::{CORAL_TOP, CRYSTAL_TOP, EYE_CENTER, PropKind, VENT_TOP};
 use std::f32::consts::TAU;
 
 /// Datos de una instancia para su shader.
@@ -60,7 +60,7 @@ struct Ctx<'a> {
 
 pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
     let l = f.light_dir(u);
-    // Sombra de los anillos, igual que en el terreno de Cementerio.
+    // Sombra de los anillos, igual que en el terreno de su planeta.
     let rings: f32 = u
         .rings
         .iter()
@@ -83,9 +83,7 @@ pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
         PropKind::Mushroom => mushroom(&c),
         PropKind::Coral => coral(&c),
         PropKind::Spike => spike(&c),
-        PropKind::Wreck => wreck(&c),
         PropKind::Boulder => boulder(&c),
-        PropKind::Beacon => beacon(&c, style),
         PropKind::Vent => vent(&c, style),
         PropKind::Crystal => crystal(&c, style),
         chapin => crate::chapin::shade_prop(chapin, f, u, style, c.sun),
@@ -220,30 +218,6 @@ fn eye(c: &Ctx, style: &PropStyle) -> Vec3 {
     (wet + glow).lerp(shade(lid_skin, 0.25), lid)
 }
 
-/// La baliza: metal oscuro y una lampara roja que destella cada 2.4 s,
-/// como si siguiera transmitiendo la historia del exodo.
-fn beacon(c: &Ctx, _style: &PropStyle) -> Vec3 {
-    let (f, u) = (c.f, c.u);
-    let wear = u.noise.fbm(f.local * 0.6, 3) * 0.5 + 0.5;
-    let albedo = Vec3::new(0.10, 0.10, 0.11).lerp(Vec3::new(0.22, 0.12, 0.07), wear * 0.6);
-    let lamp = f.color.x > 0.5 && f.color.y < 0.5;
-    let flash = beacon_flash(u.time, near_ship(u, f.pos, 300.0, 60.0));
-    let emission = if lamp {
-        Vec3::new(1.0, 0.06, 0.03) * (0.3 + 12.0 * flash)
-    } else {
-        Vec3::ZERO
-    };
-    lit(c, albedo, f.normal, 0.5, 40.0, 0.0) + emission * u.gains.cementerio
-}
-
-/// Destello de la baliza: sube de golpe y se apaga en medio segundo. Con
-/// la nave cerca, entre destello y destello titila rapido: te detecto.
-pub fn beacon_flash(time: f32, near: f32) -> f32 {
-    let phase = (time / BEACON_PERIOD).fract() * BEACON_PERIOD;
-    let quick = (time / 0.45).fract() * 0.45;
-    (-phase / 0.18).exp().max(near * (-quick / 0.08).exp() * 0.6)
-}
-
 /// Geiser de Pira: roca negra que se calienta hacia la boca, grietas que
 /// brillan y la lava de la boca, todo segun su actividad.
 fn vent(c: &Ctx, style: &PropStyle) -> Vec3 {
@@ -268,9 +242,6 @@ fn vent(c: &Ctx, style: &PropStyle) -> Vec3 {
         * ((crack * 2.0 + heat.powi(4) * 0.25) * (0.3 + activity) * u.gains.pira);
     lit + glow
 }
-
-/// Cada cuanto destella la baliza (y sale una onda).
-pub const BEACON_PERIOD: f32 = 2.4;
 
 /// Hongo bioluminiscente: tallo palido y translucido con un anillo que
 /// brilla, sombrero oscuro de terciopelo con puntos de luz que laten, y por
@@ -348,46 +319,6 @@ fn spike(c: &Ctx) -> Vec3 {
         + 0.5;
     let glow = planckian_rgb(1250.0 + 500.0 * flicker) * (heat * (1.0 + 2.0 * flicker));
     lit(c, albedo, f.normal, 0.35, 160.0, 0.0) + glow
-}
-
-/// Casco de una nave naufraga: metal con placas (mapa de normales), oxido y
-/// quemaduras hacia el extremo partido.
-fn wreck(c: &Ctx) -> Vec3 {
-    let (f, u) = (c.f, c.u);
-    let footprint = pixel_footprint(c) / WRECK_UV_SIZE;
-    let texel = u.textures.hull.sample(f.uv, footprint);
-    let n = f.perturb(texel.normal, 1.0);
-    let rust = smoothstep(0.5, 0.75, u.noise.fbm(f.local * 0.2, 3) * 0.5 + 0.5);
-    let burn = smoothstep(0.0, 8.0, f.local.x);
-    let mut albedo = Vec3::new(0.09, 0.095, 0.105).lerp(Vec3::new(0.2, 0.08, 0.035), rust * 0.8);
-    albedo = albedo.lerp(Vec3::new(0.02, 0.018, 0.015), burn * 0.75) * texel.height.clamp(0.8, 1.0);
-    // Las paredes de adentro (color de vertice oscuro) casi no reciben luz.
-    albedo = albedo * f.color.x;
-    // Ventanillas en filas a lo largo del casco: cuando la nave pasa cerca
-    // se encienden, parpadeando como si les quedara un poco de energia.
-    let awake = near_ship(u, f.pos, 160.0, 30.0);
-    let mut glow = Vec3::ZERO;
-    if awake > 0.0 && f.color.x > 0.5 {
-        let grid = Vec2::new(f.uv.x * 6.0, f.uv.y * 3.0);
-        let id = Vec2::new(grid.x.floor(), grid.y.floor());
-        let cell = Vec2::new(grid.x - id.x, grid.y - id.y);
-        // Solo unas pocas ventanillas siguen vivas.
-        let alive = ((id.x * 12.9898 + id.y * 78.233).sin() * 43_758.547).fract().abs() < 0.22;
-        let window = if alive {
-            smoothstep(0.22, 0.14, (cell.x - 0.5).abs()) * smoothstep(0.14, 0.08, (cell.y - 0.5).abs())
-        } else {
-            0.0
-        };
-        let flicker = (u.time * 9.0 + id.x * 3.1 + id.y * 7.7).sin() * (u.time * 2.3 + id.x).sin();
-        let on = smoothstep(-0.3, 0.6, flicker);
-        let tint = if (id.x + id.y) % 3.0 < 1.0 {
-            Vec3::new(1.0, 0.35, 0.12)
-        } else {
-            Vec3::new(0.65, 0.85, 1.0)
-        };
-        glow = tint * (window * on * awake * 1.6 * u.gains.cementerio);
-    }
-    lit(c, albedo, n, 0.6 * (1.0 - rust), 60.0, 0.0) + glow
 }
 
 /// Racimo de cristal de Parpado: liso y violeta, con brillos de la estrella

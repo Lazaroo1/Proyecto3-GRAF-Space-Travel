@@ -390,7 +390,8 @@ pub fn draw(
             "Y: ruta predicha, la línea de a dónde te lleva la gravedad (auto / siempre / nunca)".to_string(),
             "V: versión chapina / OCASO   ·   B o 1 a 6: nave botella (en la chapina)".to_string(),
             "K: pausa   ·   U / I: canción anterior / siguiente   ·   − / +: volumen (en la chapina)".to_string(),
-            "T: ajustes en vivo   ·   M: sonido   ·   J: final / renacer   ·   R: rebobinar   ·   [ ]: −30 / +30 s".to_string(),
+            "T: ajustes en vivo   ·   M: sonido   ·   J: final / renacer   ·   F: gran llamarada de Faro".to_string(),
+            "R: rebobinar   ·   [ ]: −30 / +30 s".to_string(),
             "RePág / AvPág: vistas fijas   ·   F3: wireframe   ·   F4: colores de LOD   ·   F5: LOD".to_string(),
             "F6: otra semilla   ·   F7: congelar frustum   ·   F1: ayuda   ·   F2: estadísticas   ·   F9: ocultar todo".to_string(),
         ];

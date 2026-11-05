@@ -283,8 +283,16 @@ pub fn state(t: f64, flare: Option<f64>) -> State {
 pub fn turn_at(body: &Body, t: f64, flare: Option<f64>) -> f64 {
     let base = body.spin_phase / TAU;
     match flare.map(|f| f + WIND_UP).filter(|&spike| t > spike) {
-        Some(spike) => base + spike / body.spin_period + (t - spike) / (body.spin_period * (1.0 + ANTIGLITCH)),
-        None => base + t / body.spin_period,
+        Some(spike) => base + spike / PERIOD + (t - spike) / period_at(t, flare),
+        None => base + t / PERIOD,
+    }
+}
+
+/// El periodo en el instante `t`: despues del pico de la llamarada, mas largo.
+pub fn period_at(t: f64, flare: Option<f64>) -> f64 {
+    match flare.map(|f| f + WIND_UP).filter(|&spike| t > spike) {
+        Some(_) => PERIOD * (1.0 + ANTIGLITCH),
+        None => PERIOD,
     }
 }
 
@@ -503,6 +511,44 @@ mod tests {
         // 1.4 masas solares: rs = 4.13 km y compacidad 0.345.
         assert!((m.rs_km - 4.135).abs() < 0.01, "{}", m.rs_km);
         assert!(m.light_cylinder_km > 9.8e4 && m.light_cylinder_km < 9.9e4);
+    }
+
+    #[test]
+    fn the_giant_flare_follows_its_sequence() {
+        let flare = Some(100.0);
+        let before = state(99.0, flare);
+        assert_eq!(before.spike, 0.0);
+        assert!(before.since_spike.is_none());
+        // La torsion sube hasta el valor critico.
+        let winding = state(100.0 + WIND_UP * 0.99, flare);
+        assert!(winding.twist > 2.8, "{}", winding.twist);
+        // El pico: las lineas abiertas y la bola de fuego entera.
+        let spike = state(100.0 + WIND_UP + 0.02, flare);
+        assert!(spike.spike > 0.5 && spike.open == 1.0 && spike.fireball > 0.99);
+        assert_eq!(spike.radio, 0.0);
+        // La cola: L0 (1 - t/380)^3 y la magnetosfera casi sin torsion.
+        let tail = state(100.0 + WIND_UP + 38.0, flare);
+        assert!((tail.fireball - 0.9f64.powi(3)).abs() < 1e-9);
+        assert!(tail.twist < QUIET_TWIST);
+        assert!(state(100.0 + WIND_UP + EVAPORATION + 1.0, flare).fireball == 0.0);
+    }
+
+    #[test]
+    fn bursts_are_a_pure_function_of_time() {
+        let quiet: Vec<f64> = (0..20_000).map(|k| state(k as f64 * 0.03, None).burst).collect();
+        let again: Vec<f64> = (0..20_000).map(|k| state(k as f64 * 0.03, None).burst).collect();
+        assert_eq!(quiet, again);
+        // En diez minutos hay estallidos, pero casi siempre esta tranquila.
+        let lit = quiet.iter().filter(|&&b| b > 0.05).count();
+        assert!(lit > 10 && lit < quiet.len() / 4, "{lit}");
+    }
+
+    #[test]
+    fn the_antiglitch_lengthens_the_period_after_the_spike() {
+        let flare = Some(10.0);
+        assert_eq!(period_at(10.0 + WIND_UP - 0.1, flare), PERIOD);
+        let after = period_at(10.0 + WIND_UP + 1.0, flare);
+        assert!((after / PERIOD - 1.0 - ANTIGLITCH).abs() < 1e-12);
     }
 
     #[test]

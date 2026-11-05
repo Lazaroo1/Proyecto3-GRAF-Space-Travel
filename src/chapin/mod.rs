@@ -15,7 +15,8 @@
 //! | Parpado | Semuc Champey: pozas turquesa ([semuc.rs]) |
 //! | Argos | Los Cuchumatanes y San Andres Xecul ([cuchumatanes.rs]) |
 //! | (nueva) | La Luna de Xelaju, luna de los Cuchumatanes ([xela.rs]) |
-//! | Cementerio | La capital: camionetas y la Torre del Reformador ([capital.rs]) |
+//! | Faro | No existe: su orbita es de la capital |
+//! | (nueva, cuerpo `Cementerio`) | La capital: camionetas y la Torre del Reformador ([capital.rs]) |
 //! | El final (J) | No hay: Kinich Ajaw no se apaga ni late |
 //!
 //! Cada planeta vive en su archivo y da lo mismo: su `spec` (nombre,

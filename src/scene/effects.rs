@@ -1,5 +1,6 @@
 //! Efectos de particulas: los arcos de plasma de la estrella, las esporas
-//! que flotan sobre Jardin, las ondas de la baliza y el escape de la nave.
+//! que flotan sobre Jardin, lo que flota cerca del suelo de cada planeta, la
+//! lava de los geiseres y el escape de la nave.
 //!
 //! Ninguna particula guarda estado: cada una es una **funcion del tiempo**.
 //! Su edad es `fract(t / vida + fase)`, con una fase sacada de un hash de su
@@ -138,8 +139,6 @@ pub enum Motes {
     Embers,
     /// Gotas de liquido rojo que flotan despacio sobre la carne de Argos.
     Drops,
-    /// Polvo y ceniza de metal en Cementerio.
-    Dust,
     /// Polvo de cristal que flota sobre Parpado y destella.
     Glints,
     // Version chapina.
@@ -172,7 +171,6 @@ pub fn motes(out: &mut [Particle], body: &Body, t: f64, camera: DVec3, kind: Mot
     let (size, travel, wind, radius) = match kind {
         Motes::Embers => (80.0f32, 26.0f32, 1.5f32, 0.035f32),
         Motes::Drops => (70.0, -3.0, 1.2, 0.07),
-        Motes::Dust => (90.0, 2.0, 2.5, 0.12),
         Motes::Glints => (60.0, 3.0, 0.8, 0.03),
         Motes::Ash => (70.0, -6.0, 3.0, 0.05),
         Motes::Fireflies => (80.0, 2.0, 0.8, 0.04),
@@ -211,7 +209,6 @@ pub fn motes(out: &mut [Particle], body: &Body, t: f64, camera: DVec3, kind: Mot
                 Motes::Embers if h % 3 == 0 => planckian_rgb(1300.0 + 900.0 * unit(h >> 9)) * (7.0 * flicker),
                 Motes::Embers => Vec3::ZERO,
                 Motes::Drops => Vec3::new(0.7, 0.05, 0.1) * (0.25 + 0.35 * flicker),
-                Motes::Dust => Vec3::new(0.55, 0.42, 0.32) * 0.35,
                 // Destellos cortos: casi siempre apagados.
                 Motes::Glints => Vec3::new(0.8, 0.45, 1.0) * (6.0 * smoothstep(0.85, 1.0, flicker)),
                 Motes::Ash => Vec3::new(0.26, 0.24, 0.22) * 0.3,
@@ -258,66 +255,6 @@ pub fn fountain(out: &mut [Particle], mouth: Vec3, up: Vec3, t: f64, activity: f
             } else {
                 Vec3::ZERO
             },
-        };
-    }
-}
-
-pub const SPARK_COUNT: usize = 60;
-
-/// Chispas de un naufragio que se despierta: rafagas cortas de chispas que
-/// saltan y caen.
-pub fn sparks(out: &mut [Particle], at: Vec3, up: Vec3, t: f64, strength: f32, seed: u32) {
-    const LIFE: f32 = 0.7;
-    let time = t as f32;
-    // Una rafaga cada tanto, no siempre.
-    let slot = (time / 1.9 + unit(seed)).floor();
-    let burst = unit(hash_u32(seed ^ slot as u32)) < 0.55;
-    let start = (time / 1.9 + unit(seed)).fract() * 1.9;
-    let (a, b) = basis(up);
-    for (i, p) in out.iter_mut().enumerate() {
-        let h = hash_u32(i as u32 ^ seed ^ slot as u32);
-        let age = start - unit(h) * 0.2;
-        let alive = burst && (0.0..LIFE).contains(&age);
-        let angle = unit(hash_u32(h)) * std::f32::consts::TAU;
-        let velocity = (up * (0.6 + unit(h >> 4)) + (a * angle.cos() + b * angle.sin()) * 1.2) * 9.0;
-        let pos = at + velocity * age - up * (6.0 * age * age);
-        *p = Particle {
-            pos,
-            radius: 0.06,
-            color: if alive {
-                Vec3::new(1.0, 0.75, 0.45) * (20.0 * strength * (1.0 - age / LIFE))
-            } else {
-                Vec3::ZERO
-            },
-        };
-    }
-}
-
-/// Ondas que la baliza de Cementerio emite con cada destello.
-const BEACON_WAVES: usize = 3;
-const BEACON_WAVE_POINTS: usize = 260;
-pub const BEACON_COUNT: usize = BEACON_WAVES * BEACON_WAVE_POINTS;
-
-/// La transmision de la baliza: con cada destello sale un anillo de luz roja
-/// que se abre sobre el horizonte y sube, y se apaga. `top` es la lampara y
-/// `up` la vertical del planeta ahi, ambos relativos a la camara.
-pub fn beacon_waves(out: &mut [Particle], top: Vec3, up: Vec3, t: f64, period: f32, near: f32) {
-    let (a, b) = basis(up);
-    let life = period * BEACON_WAVES as f32;
-    let time = t as f32;
-    for (i, p) in out.iter_mut().enumerate() {
-        let wave = i / BEACON_WAVE_POINTS;
-        let k = (i % BEACON_WAVE_POINTS) as f32 / BEACON_WAVE_POINTS as f32;
-        // Cada onda nace un periodo despues de la anterior.
-        let age = (time - wave as f32 * period).rem_euclid(life);
-        let radius = 3.0 + age * 32.0;
-        let angle = k * std::f32::consts::TAU;
-        let ring = a * angle.cos() + b * angle.sin();
-        let fade = (1.0 - age / life).powi(2) * smoothstep(0.0, 0.15, age);
-        *p = Particle {
-            pos: top + ring * radius + up * (age * 6.0),
-            radius: 0.8 + age * 0.35,
-            color: Vec3::new(1.0, 0.1, 0.05) * ((0.55 + 1.2 * near) * fade),
         };
     }
 }

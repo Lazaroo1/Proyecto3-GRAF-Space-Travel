@@ -1,3 +1,212 @@
+# Faro: la estrella de neutrones que es púlsar y magnetar
+
+En la órbita de Cementerio ahora está **Faro**, la compañera muerta de la
+supergigante: una estrella de neutrones que es púlsar (gira y barre el
+sistema con dos haces) y magnetar (su campo de 3×10¹⁴ G tuerce su
+magnetosfera, le revienta en estallidos y, con **F**, en una gran llamarada).
+Cementerio sigue existiendo solo en la versión chapina, como la Capital.
+
+Está hecha con los números de **1E 1547.0−5408**, un magnetar que también
+emite pulsos de radio, y todo lo demás sale de ecuaciones publicadas. En el
+juego **1 unidad = 1 km** cerca de Faro: la estrella mide 12 unidades, sus
+casquetes polares 130 m, sus haces nacen a 120 km y los arcos de su
+magnetosfera suben a 400-700 km, todo en su proporción real. Los tiempos
+también son reales: el giro de 2.07 s, estallidos de milisegundos y una cola
+de seis minutos después de la gran llamarada.
+
+## Los números ([scene/faro.rs](src/scene/faro.rs) `Model`)
+
+| Cantidad | Ecuación | Valor |
+| --- | --- | --- |
+| Masa, radio | (dados) | 1.4 M☉, 12 km |
+| Radio de Schwarzschild | rs = 2GM/c² | 4.13 km |
+| Compacidad | rs/R | 0.345 |
+| Periodo | (1E 1547.0−5408) | 2.0698 s |
+| Campo dipolar | (catálogo de magnetares) | 3.2×10¹⁴ G |
+| Frenado | B = 3.2×10¹⁹ √(P Ṗ) G → Ṗ | 4.8×10⁻¹¹ s/s |
+| Edad característica | τ = P / 2Ṗ | 680 años |
+| Energía que pierde | Ė = 4π² I Ṗ / P³, I = 10⁴⁵ g cm² | 2.1×10³⁵ erg/s |
+| Cilindro de luz | R_LC = cP / 2π | 98 800 km |
+| Casquete de líneas abiertas | sin² θ_pc = R / R_LC | 0.63° (130 m) |
+
+Una prueba compara la edad y Ė con la tabla 1 de Kaspi y Beloborodov (2017):
+0.69 mil años y 2.1×10³⁵ erg/s.
+
+## La luz que se curva ([math/neutron.rs](src/math/neutron.rs))
+
+Afuera de una estrella esférica el espacio-tiempo es el de Schwarzschild, así
+que la luz sigue la misma ecuación de Binet que en Gargantúa,
+u'' + u = (3/2) u² con u = rs/r. La diferencia es que Faro tiene superficie
+en R = 2.9 rs, afuera de la esfera de fotones (1.5 rs): cada rayo toca la
+superficie o escapa, ninguno da vueltas.
+
+- **Una tabla por distancia**: igual que en Gargantúa, el camino de un rayo
+  depende solo del ángulo `s` con la dirección a la estrella. Cuando la
+  cámara se mueve, se integran 768 rayos con RK4 (la mitad dentro del disco,
+  más densos en el borde) y cada pixel busca su rayo. Si toca la superficie,
+  la tabla dice el ángulo ψ del punto de donde salió; si escapa, hacia dónde.
+- **Se ve más de media estrella**: el rayo rasante sale de ψ = 121° (con la
+  fórmula de Beloborodov 2002, 1 − cos α = (1 − cos ψ)(1 − rs/R); una prueba
+  la compara con la integración). Se ve el 76% de la superficie, los dos
+  polos magnéticos a la vez, y el disco mide R/√(1 − rs/R) = 14.8 km. La
+  esfera que se rasteriza mide eso (por el lapso de la cámara, un poco menos
+  de cerca) y su shader decide pixel por pixel qué punto de la estrella se ve.
+- **El cielo de fondo** también pasa por la tabla: cerca de Faro las
+  estrellas se estiran en arcos alrededor de un anillo de Einstein de
+  √(2 rs / d) radianes (5° a 1000 km). Lejos de la tabla se usa la deflexión
+  de campo débil, 2rs/b.
+- **Corrimiento al rojo**: la temperatura que llega a la cámara es g T, con
+  g = √(1 − rs/R) / √(1 − rs/d) para la cámara como observador estático.
+
+## La superficie ([shaders/faro.rs](src/shaders/faro.rs))
+
+- **Color**: a millones de kelvin el visible está en la cola de
+  Rayleigh-Jeans (hν ≪ kT). Ahí el color ya no cambia con la temperatura: es
+  el límite azul del lugar planckiano, (x, y) = (0.2399, 0.2340). El brillo es
+  proporcional a T, no a T⁴.
+- **Más fría en el ecuador magnético**: el calor sube por la corteza a lo
+  largo del campo (Greenstein y Hartke 1983),
+  T⁴ = T_polo⁴ (cos² Θ_B + (κ⊥/κ∥) sin² Θ_B), con cos Θ_B = 2 cos θ / √(1 + 3 cos² θ)
+  para un dipolo y κ⊥/κ∥ = 0.05 (con más de 10¹⁰ G es mucho menor que 1).
+  La corteza tiene 1.8 MK en el polo y manchas del campo de pequeña escala.
+- **Los casquetes del haz de corriente** (Beloborodov 2009): donde las
+  líneas torcidas tocan la estrella, las partículas que bajan la calientan.
+  El casquete tiene u = sin² θ* (10° en reposo) y
+  L = 1.3×10³⁶ B₁₄ R₆ ψ V₉ u² erg/s; su temperatura sale de L = 2 A σ T⁴ con
+  A = π R² u (unos 5 MK). Después de la gran llamarada se agranda y se encoge
+  despacio, como en los magnetares transitorios.
+- **Los casquetes de las líneas abiertas**: 130 m en cada polo, más
+  calientes.
+
+## La magnetosfera torcida ([scene/magnetosphere.rs](src/scene/magnetosphere.rs))
+
+Un magnetar no tiene un dipolo limpio: la corteza tuerce las líneas que salen
+de ella y las corrientes que lleva la torsión brillan. El modelo es la familia
+autosimilar de Thompson, Lyutikov y Kulkarni (2002):
+
+```text
+(1 − μ²) F'' + p (p + 1) F + C F^(1 + 2/p) = 0,   F(1) = 0, F'(1) = −2, F'(0) = 0
+B_r = −(B_polo/2) r^−(2+p) F',   B_θ = (B_polo/2) r^−(2+p) p F / sin θ
+B_φ = B_θ √(C / (p (1 + p))) F^(1/p)
+torsión Δφ = 2 √(C / (p (1 + p))) ∫₀¹ F^(1/p) / (1 − μ²) dμ
+```
+
+- Al arrancar se resuelve para 41 valores de p, de 1 (el dipolo) a 0.2, por
+  disparo: RK4 desde el polo con la serie F ≈ 2ε − p(p+1)ε²/2 y bisección
+  sobre el autovalor C hasta que F'(0) = 0. Una prueba compara C, Δφ y F(0)
+  con la tabla de TLK (por ejemplo p = 0.5: C = 0.754, Δφ = 2.06 rad).
+- Una línea que nace en μ_f sube hasta r(μ) = (F(μ)/F(μ_f))^(1/p) y su azimut
+  avanza con dφ/dμ = −√(C/(p(1+p))) F^(1/p)/(1 − μ²). Para la torsión de
+  cada momento se interpola entre las dos familias que la rodean.
+- **Qué brilla**: solo las líneas con corriente, las del haz de corriente
+  (θ < θ* en Beloborodov 2009), y se dibuja su orilla (la cima a 1/u radios).
+  Los pares e± nacen cerca de los dos pies, donde B > 10¹³ G (a menos de unos
+  3 radios), suben frenándose porque dispersan los rayos X de la superficie
+  (γ ~ 100 B/B_Q) y se aniquilan en la cima (Beloborodov 2013): los pies
+  brillan blanco azulado, el medio poco y la cima rosa. Es una visualización:
+  esa luz es de rayos X duros, aunque la densidad del plasma podría dar luz
+  visible (Kaspi y Beloborodov 2017, §5.4.4).
+- Cada línea es una cinta de luz de 1.6 pixeles que gira con la estrella. Los
+  paquetes que suben se muestran diez mil veces más lentos (de verdad van
+  casi a la velocidad de la luz) y la descarga parpadea como un relámpago
+  continuo (Beloborodov y Thompson 2007).
+
+## Los haces del púlsar
+
+- **Geometría**: radio a 1 GHz desde las líneas abiertas, en un cono hueco
+  con núcleo (Rankin 1990, 1993): núcleo de 2.45° P^−½, conos de 4.33° y
+  5.75° P^−½. Con P = 2.07 s miden 1.7°, 3.0° y 4.0°. La altura de emisión
+  sale de la tangente a la última línea abierta, ρ = (3/2)√(r/R_LC): el cono
+  interior nace a 122 km y el exterior a 215 km.
+- **El carrusel**: el cono está hecho de 20 chispas que dan vueltas
+  alrededor del eje magnético cada 37.4 giros (Ruderman y Sutherland 1975;
+  los números de PSR B0943+10), y cada pulso es distinto, como en los
+  magnetares.
+- **Por qué se ven**: la radio no se ve, pero los haces iluminan el viento de
+  la supergigante, cuya densidad baja como 1/d² desde ella; el flujo del haz
+  baja como 1/r² desde Faro. La luz que llega es ∫ perfil(θ) n(x) / r² a lo
+  largo del rayo. Con el cambio de variable t = t_c + q tan u, el 1/r² se
+  vuelve exacto (dt/r² = du/q) y bastan 10 muestras. Primero se intersecta el
+  doble cono de forma analítica (una cuadrática).
+- **El destello**: cuando un haz apunta a la nave se ve la luz directa de la
+  región de emisión. Como el haz barre su ancho en uno o dos frames, el
+  perfil se promedia en el tiempo de exposición del frame (8 muestras; el
+  volumen usa 3) para no perder el pulso entre dos frames.
+- **Pulso e interpulso**: el eje magnético está a 82° del de giro y este casi
+  perpendicular al plano del sistema, así que los dos haces barren el plano:
+  desde casi cualquier lugar se oyen dos pulsos por vuelta.
+
+## La actividad (función pura del tiempo: se rebobina)
+
+- **Estallidos**: un proceso de Poisson determinista (cada ranura de 50 ms
+  decide con un hash), con energías dN/dE ∝ E^−1.7 (Göğüş et al. 1999) y
+  duraciones lognormales alrededor de 100 ms; subida de 5 ms y caída
+  exponencial. Llegan en **tormentas**: cada 90 s puede haber una de 15 a
+  25 s. Se encienden las líneas del sector donde ocurren.
+- **La gran llamarada (F)**, con la secuencia de Parfrey, Beloborodov y Hui
+  (2013):
+  1. La corteza tuerce la magnetosfera hasta perder el equilibrio a unos
+     3 rad y las líneas se inflan. De verdad tarda años; aquí, 8 s.
+  2. Un estallido precursor (el de SGR 1806−20 fue 142 s antes; aquí, 2 s).
+  3. El pico de 0.2 s (real), que deslumbra el sistema. Las líneas se abren
+     y se vuelven a cerrar al reconectarse.
+  4. La bola de fuego: pares a más de 10⁹ K atrapados en las líneas cerradas
+     junto a la estrella (Thompson y Duncan 1995). Gira con la estrella (la
+     cola pulsa con el periodo) y se evapora capa por capa con
+     L = L₀(1 − t/t_evap)³, t_evap = 380 s (Feroci et al. 2001). En los
+     primeros 40 s brilla además una corona.
+  5. El giro se frena de golpe (antiglitch, ΔP/P = 10⁻⁴, como en SGR 1900+14):
+     el panel muestra el periodo nuevo.
+  6. La radio se apaga y vuelve después de un minuto, como en PSR J1119−6127
+     en 2016.
+  7. La magnetosfera queda casi sin torsión y se vuelve a torcer.
+
+## El sonido ([audio.rs](src/audio.rs))
+
+Un golpe seco cada vez que un haz pasa por la nave, que es como suenan los
+púlsares en un radiotelescopio: el sintetizador sigue la fase del giro y sabe
+en qué fracción de la vuelta pasa cada haz y qué tan adentro del cono está la
+nave. Los estallidos chisporrotean. La llamarada truena y su cola suena con
+las oscilaciones de la corteza medidas en SGR 1806−20 (18, 26, 30, 92.5, 150
+y 625 Hz; Israel et al. 2005, Watts y Strohmayer 2006), más fuertes en
+ciertas fases del giro.
+
+## El panel
+
+Cerca de Faro, el HUD muestra las ecuaciones de arriba con sus valores, la
+torsión, el casquete caliente, si hay tormenta de estallidos y en qué va la
+gran llamarada.
+
+## Qué es real y qué no
+
+| Real | Comprimido o visualizado |
+| --- | --- |
+| Proporciones de la estrella, sus casquetes, la magnetosfera y los haces (1 unidad = 1 km) | El sistema no está en km: la supergigante y las órbitas son de juego |
+| Lente de Schwarzschild exacta, corrimiento al rojo, color de Rayleigh-Jeans | La gravedad sobre la nave es la de un planeta chico (la real no deja acercarse) |
+| Giro de 2.07 s, estallidos de ms, pico de 0.2 s, cola de 380 s, antiglitch | La torsión se acumula en 8 s (de verdad, años) y el precursor llega 2 s antes |
+| Forma de las líneas (TLK), del haz (Rankin), del carrusel | El plasma brilla en visible y sus paquetes van 10⁴ veces más lentos |
+| El cilindro de luz y la estructura de Contopoulos et al. (2024) quedan a 98 800 km, fuera del sistema | Los haces se ven porque iluminan el viento de la supergigante |
+
+## Fuentes
+
+- Beloborodov 2002, ApJ 566, L85: luz que se curva cerca de una estrella de neutrones.
+- Beloborodov 2009, ApJ 703, 1044: el haz de corriente y sus casquetes.
+- Beloborodov 2013, ApJ 762, 13: el plasma que fluye en los arcos.
+- Beloborodov y Thompson 2007, ApJ 657, 967: la descarga.
+- Camilo et al. 2007, ApJ 666, L93: radio de 1E 1547.0−5408.
+- Contopoulos et al. 2024, arXiv:2404.05408: la ecuación del púlsar.
+- Feroci et al. 2001, ApJ 549, 1021: la cola de la gran llamarada.
+- Göğüş et al. 1999, ApJ 526, L93: estadística de los estallidos.
+- Greenstein y Hartke 1983, ApJ 271, 283: temperatura de la superficie.
+- Israel et al. 2005, ApJ 628, L53; Watts y Strohmayer 2006, ApJ 637, L117: oscilaciones.
+- Kaspi y Beloborodov 2017, ARA&A 55, 261: los magnetares.
+- Parfrey, Beloborodov y Hui 2013, ApJ 774, 92: la magnetosfera que se rompe.
+- Rankin 1990, ApJ 352, 247; Rankin 1993, ApJ 405, 285: geometría de los haces.
+- Ruderman y Sutherland 1975, ApJ 196, 51: las chispas.
+- Thompson y Duncan 1995, MNRAS 275, 255: la bola de fuego.
+- Thompson, Lyutikov y Kulkarni 2002, ApJ 574, 332: la magnetosfera torcida.
+- Woods et al. 1999, ApJ 524, L55: el antiglitch de SGR 1900+14.
+
 # La versión chapina (V)
 
 - **Un cambio de piel, no otra escena** ([scene/system.rs](src/scene/system.rs)
@@ -535,7 +744,7 @@ cara a la estrella.
 | Vigía | Gigante gaseoso morado con un vórtice que gira y una tormenta en forma de ojo, de gas rosa, que sigue a la nave; la pupila late. Anillos delgados de polvo. |
 | Párpado | La luna de Vigía: cristal y lagos espejo donde se refleja el ojo. |
 | Argos | Carne en pliegues con un ojo enorme que gira dentro de ella para seguir a la nave por todo el sistema, con una corona de ojos chicos en sus párpados; parpadea, cierra la pupila de cerca y, volando bajo, va debajo de la nave. La carne está llena de ojos chicos que también te miran. |
-| Cementerio | Cráteres y zanjas de naves estrelladas, anillos llenos de naves del éxodo y una baliza que sigue transmitiendo. |
+| Faro | La compañera muerta: una estrella de neutrones de 12 km, a escala, vista a través de su propia gravedad, con su magnetosfera torcida y dos haces que barren el sistema (ver la primera sección). |
 
 ## 4. Shaders ([shaders/](src/shaders))
 
@@ -567,17 +776,23 @@ su color HDR. Algunos ejemplos de técnica:
 - **Párpado** ([parpado.rs](src/shaders/parpado.rs)): el agua refleja a
   Vigía intersectando el rayo reflejado con su esfera y llamando al shader de
   Vigía en ese punto.
+- **Faro** ([faro.rs](src/shaders/faro.rs)): la esfera que se rasteriza es
+  solo el disco aparente; cada pixel busca en la tabla de geodésicas de qué
+  punto de la estrella salió su rayo y lo pinta con la temperatura de ahí
+  (Greenstein-Hartke, casquetes, manchas de la corteza) en el color de
+  Rayleigh-Jeans. Sus haces son un volumen: el rayo se intersecta con el
+  doble cono de forma analítica y, adentro, se integra el perfil de Rankin
+  con el cambio de variable que vuelve exacto el `1/r²`.
 - **Anillos** ([rings.rs](src/shaders/rings.rs)): analíticos (intersección
   rayo-plano), con la sombra del planeta sobre ellos y la de ellos sobre el
   planeta. La sombra del planeta tiene penumbra: su ancho es la distancia
-  detrás del planeta por el radio angular de la estrella. Las naves son celdas de Voronoi en coordenadas polares (un número
-  entero por vuelta, para que no haya costura) con una silueta de nave por
-  distancia con signo; giran en bloque (con la velocidad de Kepler de cada
-  radio, en un minuto se estirarían en rayas).
+  detrás del planeta por el radio angular de la estrella.
 
 **Animados**: todos los que usan `u.time` o el latido: estrella, lava, venas,
 vórtice, tormenta y pupila de Vigía, ojo de Argos, cristales, lagos, anillos,
-nebulosa, Pira hirviendo y gas del disco.
+nebulosa, Pira hirviendo, gas del disco y Faro (los haces barren con el giro,
+sus chispas dan vueltas, cada pulso es distinto y los casquetes se calientan
+con los estallidos y la llamarada).
 
 ## 5. Mapeo de normales ([shaders/textures.rs](src/shaders/textures.rs))
 
@@ -595,7 +810,8 @@ nebulosa, Pira hirviendo y gas del disco.
 
 ## 6. Objetos de la superficie ([scene/props.rs](src/scene/props.rs))
 
-- **Modelos**: nueve tipos armados con código con `MeshBuilder`
+- **Modelos**: siete tipos en OCASO (y trece de la versión chapina, en
+  [chapin/](src/chapin)) armados con código con `MeshBuilder`
   ([scene/builder.rs](src/scene/builder.rs)): cajas, conos truncados,
   elipsoides y tubos con transporte paralelo. Cada uno en tres niveles de
   detalle.
@@ -756,6 +972,6 @@ Las bioluminiscencias emiten y aportan luces puntuales de alcance finito.
 | El radio de un planeta | Se crea un terreno nuevo con ese radio (los chunks se regeneran alrededor de la cámara), se recalcula la tabla de su atmósfera y se vuelven a repartir sus objetos. La gravedad en la superficie se conserva: `μ = g r²`. |
 | Su periodo orbital | Cambia la velocidad en la órbita sin que salte: la fase se corrige para que en este instante siga en el mismo ángulo. Si estaba acoplado por marea (Pira), su giro cambia con él. |
 | Su periodo de giro | Igual, con la fase del giro. |
-| La intensidad de su shader | Escala su efecto propio (la lava, la bioluminiscencia, el ojo y los cristales, el iris de Argos, la baliza y las luces de las naves). |
+| La intensidad de su shader | Escala su efecto propio (la lava, la bioluminiscencia, el ojo y los cristales, el iris de Argos y las luces de la capital). |
 | La semilla | Otras posiciones para todos los objetos, siempre las mismas para esa semilla. |
 | El factor de LOD | Más o menos chunks (se ve en el contador de triángulos). |
