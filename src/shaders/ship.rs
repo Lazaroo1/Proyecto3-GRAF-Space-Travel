@@ -1,6 +1,7 @@
 //! Materiales originales de Blender con UV, rugosidad y metalicidad.
 use super::{Fragment, Uniforms, pbr};
 use crate::math::{Vec2, Vec3, smoothstep};
+use crate::scene::Surface;
 #[derive(Clone, Copy, Debug)]
 pub struct ShipStyle {
     pub specular: f32,
@@ -59,4 +60,40 @@ pub fn bottle(f: &Fragment, u: &Uniforms) -> Vec3 {
     let through = (-f.normal.dot(f.light_dir(u))).max(0.0);
     let glow = albedo * (u.sun_light * (0.35 * through) + Vec3::splat(0.06));
     lit + glow + (albedo * 0.5 + Vec3::splat(0.04)) * rim * 0.35
+}
+
+/// Los vehiculos chapines (el tuk-tuk, la camioneta y el colectivo). El color
+/// de cada pieza viene del `.mtl` y de que es (`Surface`, en la `u`):
+/// - **pintura con laca**: la base con la rugosidad que da su `Ns` y encima
+///   una capa transparente pulida (Fresnel de 4 %) que deja el brillo fino
+///   del sol y refleja el cielo, como un carro encerado;
+/// - **cromo, plata y oro**: metal pulido que tiñe su reflejo;
+/// - **vidrio**: casi negro, con el reflejo del cielo que sube en los bordes;
+/// - **las LEDs**: emiten su color (`Ke`) mas fuerte que lo que ilumina el
+///   sol, y el bloom las riega;
+/// - **hule**: mate.
+pub fn vehicle(f: &Fragment, u: &Uniforms) -> Vec3 {
+    let albedo = f.color;
+    let n = f.normal;
+    match Surface::from_code(f.uv.x) {
+        Surface::Light => pbr::shade(f, u, albedo * 0.3, 0.2, 0.0, n, 1.0) + albedo * (f.uv.y * 1.2),
+        Surface::Metal => pbr::shade(f, u, albedo, (f.uv.y * 0.7).max(0.14), 1.0, n, 1.0),
+        Surface::Glass => {
+            let v = f.view_dir();
+            let reflect = n * (2.0 * n.dot(v)) - v;
+            let fresnel = 0.04 + 0.96 * (1.0 - n.dot(v).abs()).powi(5);
+            pbr::shade(f, u, albedo, 0.05, 0.0, n, 1.0) + u.sky.sample(reflect) * (0.5 * fresnel)
+        }
+        Surface::Rubber => pbr::shade(f, u, albedo, 0.85, 0.0, n, 1.0),
+        Surface::Paint => {
+            let rough = f.uv.y.clamp(0.2, 0.8);
+            let base = pbr::shade(f, u, albedo, rough, 0.0, n, 1.0);
+            // La laca solo en lo brillante (los murales y las lonas son mates).
+            let gloss = smoothstep(0.5, 0.3, rough);
+            if gloss <= 0.0 {
+                return base;
+            }
+            base + pbr::shade(f, u, Vec3::ZERO, 0.1, 0.0, n, 1.0) * (0.6 * gloss)
+        }
+    }
 }

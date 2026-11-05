@@ -284,6 +284,22 @@ gran llamarada.
   cara (`Kd`) con vidrio pulido, un borde de Fresnel y la luz que pasa por
   el vidrio a contraluz. Cada una tiene su escape (`effects::Exhaust`), que
   sale del fondo de la botella inclinada.
+- **Los vehículos** (el tuk-tuk, la camioneta y el colectivo,
+  [scene/obj.rs](src/scene/obj.rs) `load_vehicle`): OBJ de Blender con el
+  frente en +X y Z arriba, girados al cargar (`(x, y, z) → (−y, z, −x)`, un
+  giro sin espejo) para volar con el frente en −Z; de cerca la versión media
+  y de lejos la baja. No traen texturas, así que del `.mtl` se lee todo lo
+  que sirve: el color (`Kd`), la luz que emiten (`Ke`) y el brillo (`Ns`),
+  que pasa a rugosidad de GGX con `α = √(2 / (Ns + 2))`, rugosidad = √α. Del
+  nombre del material sale de qué es cada pieza (`Surface`: pintura, metal,
+  vidrio, LED u hule), y eso viaja en la `uv` de sus vértices. El shader
+  (`ship::vehicle`) le da a la pintura una capa de laca encima (otra pasada
+  de Cook-Torrance sin color, con el 4 % de Fresnel del barniz), al cromo,
+  la plata y el oro metal pulido, al vidrio casi negro con el reflejo del
+  cielo, y a las LEDs su `Ke` como emisión, que el bloom riega. Los largos
+  guardan la proporción de los de verdad (la camioneta un poco achicada) y la
+  cámara de persecución se aleja en proporción. Una prueba revisa que los
+  faros queden adelante y las llantas abajo.
 - **Los lugares de día**: cada lugar está fijo en su planeta y el planeta
   gira, así que en la versión chapina N busca hacia adelante el primer
   momento (hasta dos vueltas y media del planeta) en que el sol está entre

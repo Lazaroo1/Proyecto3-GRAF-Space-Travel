@@ -13,7 +13,7 @@ use std::sync::Arc;
 use super::effects::Exhaust;
 use crate::chapin::{self, Chapin};
 use super::props::{self, PropModel, PropSet};
-use super::{Mesh, icosphere, load_obj};
+use super::{Mesh, icosphere, load_obj, load_vehicle};
 use crate::config;
 use crate::math::{DQuat, DVec3, Perlin, Vec3};
 use crate::shaders::{
@@ -271,8 +271,8 @@ pub struct System {
     other_sky: SkyCube,
     /// Semilla con la que se colocaron los objetos de la otra version.
     other_seed: u32,
-    /// Las naves botella de la version chapina.
-    pub bottles: Vec<Bottle>,
+    /// Las naves de la version chapina: las botellas y los vehiculos.
+    pub chapin_ships: Vec<ChapinShip>,
 }
 
 /// La version del sistema.
@@ -283,13 +283,38 @@ pub enum Version {
     Chapin,
 }
 
-/// Una nave botella: su nombre, su malla y lo que echa por detras.
+/// Una nave de la version chapina: su nombre, sus mallas (de cerca a
+/// lejos), su largo, su material, cuanto sube la nariz y lo que echa por
+/// detras.
 #[derive(Clone, Copy, Debug)]
-pub struct Bottle {
+pub struct ChapinShip {
     pub name: &'static str,
-    pub mesh: usize,
+    pub lods: [usize; 3],
+    pub length: f64,
+    pub material: Material,
+    pub pitch: f64,
     pub exhaust: Exhaust,
 }
+
+/// Los vehiculos chapines (modelados en Blender para este proyecto): nombre,
+/// archivo en `assets/naves`, largo en el juego y escape. Los largos guardan
+/// la proporcion de los de verdad (3.3, 9.6 y 4.6 m), la camioneta un poco
+/// achicada.
+const VEHICLES: [(&str, &str, f64, Exhaust); 3] = [
+    ("Tuk-Tuk Elena", "01-tuk-tuk-elena", 4.8, Exhaust::Sparks),
+    (
+        "La Mamaneta",
+        "02-la-mamaneta",
+        12.0,
+        Exhaust::Flame(Vec3::new(1.4, 0.55, 0.12), Vec3::new(0.5, 0.06, 0.02)),
+    ),
+    (
+        "Colectivo Q.5",
+        "03-colectivo-q5",
+        6.6,
+        Exhaust::Flame(Vec3::new(1.3, 0.25, 0.9), Vec3::new(0.1, 0.35, 0.9)),
+    ),
+];
 
 /// Las naves botella: nombre, archivo en `assets/botellas` y su escape.
 const BOTTLES: [(&str, &str, Exhaust); 6] = [
@@ -364,17 +389,40 @@ impl System {
         // Las naves botella: en los OBJ la botella esta parada sobre +Z con la
         // etiqueta hacia +Y. Vuelan con el pico adelante (-Z) y la etiqueta
         // arriba (+Y): media vuelta alrededor de Y.
-        let mut bottles = Vec::new();
+        let mut chapin_ships = Vec::new();
         for &(name, file, exhaust) in &BOTTLES {
             let mut mesh = load_obj(&assets.join("botellas").join(format!("{file}-low.obj")))?;
             mesh.deform(|p| Vec3::new(-p.x, p.y, -p.z));
             mesh.normalize_size(config::BOTTLE_LENGTH as f32);
-            bottles.push(Bottle {
+            chapin_ships.push(ChapinShip {
                 name,
-                mesh: meshes.len(),
+                lods: [meshes.len(); 3],
+                length: config::BOTTLE_LENGTH,
+                material: Material::Bottle,
+                pitch: config::BOTTLE_PITCH,
                 exhaust,
             });
             meshes.push(mesh);
+        }
+        // Los vehiculos: en los OBJ el frente es +X y arriba +Z; vuelan con
+        // el frente en -Z y arriba +Y (un giro, sin espejo). De cerca la
+        // version media; de lejos, la baja.
+        for &(name, file, length, exhaust) in &VEHICLES {
+            let first = meshes.len();
+            for detail in ["medium", "low"] {
+                let mut mesh = load_vehicle(&assets.join("naves").join(format!("{file}-{detail}.obj")))?;
+                mesh.deform(|p| Vec3::new(-p.y, p.z, -p.x));
+                mesh.normalize_size(length as f32);
+                meshes.push(mesh);
+            }
+            chapin_ships.push(ChapinShip {
+                name,
+                lods: [first, first, first + 1],
+                length,
+                material: Material::Vehicle,
+                pitch: 0.0,
+                exhaust,
+            });
         }
         let seed = config::NOISE_SEED;
 
@@ -678,7 +726,7 @@ impl System {
             other_sites: Vec::new(),
             other_sky: SkyCube::bake(config::SKY_SIZE, seed ^ 0xC4A9, SkyStyle::Chapin),
             other_seed: config::PROP_SEED,
-            bottles,
+            chapin_ships,
         };
         system.sites = system.build_sites();
         system.scatter_props(config::PROP_SEED);

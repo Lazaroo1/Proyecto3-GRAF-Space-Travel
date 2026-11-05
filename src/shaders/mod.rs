@@ -271,6 +271,9 @@ pub enum Material {
     Ship(ShipStyle),
     /// Una nave botella de la version chapina: el color de sus caras.
     Bottle,
+    /// Un vehiculo de la version chapina (tuk-tuk, camioneta, colectivo):
+    /// el color y la superficie de cada pieza (`obj::Surface`).
+    Vehicle,
     /// Un objeto de la superficie, con los datos de su instancia.
     Prop(PropStyle),
     /// Una cinta de luz (la trayectoria predicha): solo emite su color.
@@ -302,6 +305,7 @@ pub fn shade(material: &Material, f: &Fragment, u: &Uniforms) -> Vec3 {
         Material::Parpado => parpado::shade(f, u),
         Material::Ship(style) => ship::shade(f, u, style),
         Material::Bottle => ship::bottle(f, u),
+        Material::Vehicle => ship::vehicle(f, u),
         Material::Prop(style) => props::shade(style, f, u),
         Material::Line(color) => line(f, *color),
     }

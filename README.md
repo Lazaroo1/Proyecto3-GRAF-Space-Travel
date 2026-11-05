@@ -73,7 +73,7 @@ de OCASO a la vista: cada planeta tiene su propio relieve, su shader, sus
 objetos, sus anillos, su atmósfera y su lugar; el cielo es otro (una Vía
 Láctea dorada con la grieta oscura que los mayas veían como el camino a
 Xibalbá), el sol es **Kinich Ajaw**, que no late ni se apaga (J no hace
-nada), la nave es una **botella** y en vez del latido suena **música**. Es
+nada), la nave es una **botella** o un **vehículo chapín** y en vez del latido suena **música**. Es
 de día: la luz del sol es más blanca y fuerte que la de la gigante roja y
 las sombras tienen más relleno.
 
@@ -97,6 +97,17 @@ las sombras tienen más relleno.
 | — | **La Luna de Xelajú**, luna de los Cuchumatanes, con un tejido de huipil que brilla de noche | **La marimba**: una marimba doble gigante sobre el polvo, con su faldón típico; ahí se toca el minijuego (Enter) |
 | — | **La capital**: barrancos, cuadras y luces; en su anillo, camionetas y tuc-tucs dando vueltas | **El Reformador**: la torre de celosía como la de la foto (patas abiertas con arcos sobre la 7a Avenida, alas con círculos, torrecitas en el primer nivel, un círculo en cada tramo del fuste, campana y faro), lo más alto del centro; camionetas extraurbanas pasando abajo, edificios y torres de oficinas de vidrio |
 | Faro | — (en la versión chapina no existe) | — |
+
+**Los vehículos** (modelados en Blender para este proyecto, a partir de
+fotos de referencia): el **Tuk-Tuk Elena** de San Juan, **La Mamaneta**
+(una camioneta extraurbana con su parrilla de luces) y el **Colectivo Q.5**,
+con **7**, **8** y **9**. Sus colores salen del `.mtl` y, del nombre de cada
+material, de qué es la pieza: las LEDs brillan con su luz, el cromo y los
+vidrios reflejan el cielo y la pintura lleva laca.
+
+| | | |
+| --- | --- | --- |
+| ![El Tuk-Tuk Elena](media/66_tuk_tuk.png) | ![La Mamaneta](media/67_mamaneta.png) | ![El Colectivo Q.5](media/68_colectivo.png) |
 
 **Las naves botella** (modeladas en Blender para este proyecto): Gallo,
 Cabro Reserva, Jägermeister, Blue Label, Cubata Uva y Four Loko. **B** pasa a
@@ -159,6 +170,7 @@ Opciones:
 cargo run --release -- --res 1920x1080        # resolución del render (por defecto 1280x720)
 cargo run --release -- --captura capturas     # las 57 vistas fijas como PNG, sin abrir ventana
 cargo run --release -- --marimba              # arranca en la Luna de Xelajú con la marimba abierta
+cargo run --release -- --nave 8               # la nave chapina con que se empieza (7 tuk-tuk, 8 camioneta, 9 colectivo)
 cargo run --release -- --captura-marimba fotos # fotos del minijuego de la marimba, sin ventana
 cargo run --release -- --bench 30             # mide cada vista fija y da medianas por etapa
 cargo run --release -- --wire --lod           # empieza con wireframe y colores de LOD
@@ -187,7 +199,7 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | **Crucero**: rodea el planeta solo | O |
 | **Ruta predicha**: la línea de a dónde te lleva la gravedad (auto: solo sin asistencia / siempre / nunca) | Y |
 | **Versión chapina** / volver a OCASO | **V** |
-| Nave botella siguiente / elegir una (en la chapina) | B / 1 a 6 |
+| Nave chapina siguiente / elegir una (1 a 6 botellas, 7 tuk-tuk, 8 camioneta, 9 colectivo) | B / 1 a 9 |
 | Música: pausa, anterior / siguiente, volumen (en la chapina) | K, U / I, - / + |
 | Rebobinar el tiempo | R sostenido |
 | Saltar 30 s atrás / adelante en el tiempo | [ / ] |
@@ -392,6 +404,9 @@ Trabajo individual: Lázaro Díaz (24713).
   partir de fotos de referencia de las botellas y latas reales; sus `.blend`
   y versiones detalladas están fuera del repositorio y aquí van las de menos
   de 30 000 triángulos (`assets/botellas/`). Las marcas son de sus dueños.
+- Los tres vehículos (el Tuk-Tuk Elena, La Mamaneta y el Colectivo Q.5) los
+  modelé en Blender a partir de fotos de referencia; aquí van sus versiones
+  media (14 000 a 28 000 triángulos) y baja, en `assets/naves/`.
 - Las canciones de `musica/` no se incluyen en el repositorio (pesan y tienen
   derechos de autor); la marimba procedural sí es código propio.
 - Las fotografías de Júpiter y la Luna provienen de NASA; el basalto usa
