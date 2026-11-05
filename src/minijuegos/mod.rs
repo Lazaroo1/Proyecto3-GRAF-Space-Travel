@@ -11,12 +11,15 @@
 //! | Planeta | Version | Minijuego |
 //! | --- | --- | --- |
 //! | Luna de Xelaju | chapina | La marimba de la Luna ([marimba.rs]) |
+//! | La capital | chapina | La carrera del Periferico ([carrera.rs]) |
 //!
 //! Cada minijuego cumple `Minigame`: recibe las teclas del frame, llena su
 //! propio audio (un stream aparte con bloques chicos, para que el golpe
 //! suene enseguida), se dibuja sobre la imagen y dice que texto va encima.
 //! Los records se guardan en `minijuegos.txt`, junto al programa.
 
+pub mod carrera;
+pub mod hornear;
 pub mod lienzo;
 pub mod marimba;
 
@@ -37,6 +40,14 @@ pub struct Keys {
     pub right: bool,
     pub enter: bool,
     pub escape: bool,
+    /// Para manejar: el volante (-1 a 1, flechas o A y D), el acelerador y
+    /// el freno (arriba y abajo, o W y S) mientras estan apretados, el turbo
+    /// (Shift o espacio) y el pito (H) al apretarlos.
+    pub steer: f32,
+    pub throttle: bool,
+    pub brake: bool,
+    pub boost: bool,
+    pub horn: bool,
 }
 
 /// Un minijuego abierto.
@@ -58,6 +69,7 @@ pub trait Minigame {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Marimba,
+    Carrera,
 }
 
 impl Kind {
@@ -65,6 +77,7 @@ impl Kind {
     pub fn prompt(self) -> &'static str {
         match self {
             Kind::Marimba => "Enter · tocar la marimba de la Luna",
+            Kind::Carrera => "Enter · correr en el Periférico",
         }
     }
 }
@@ -72,21 +85,64 @@ impl Kind {
 /// Que tan cerca del suelo de su planeta se ofrece un minijuego.
 const NEAR: f64 = 70.0;
 
+/// Hasta que altura sobre la capital se ofrece la carrera: pasando su
+/// anillo de camionetas (que llega a 300).
+const RING: f64 = 600.0;
+
 /// El minijuego que se puede abrir donde esta la nave.
 pub fn available(app: &App) -> Option<Kind> {
     if app.system.version != Version::Chapin {
         return None;
     }
-    let xela = app.system.find("Xela")?;
-    (app.flight.nearest == xela && app.flight.altitude < NEAR).then_some(Kind::Marimba)
+    let near = |name: &str, height: f64| app.system.find(name).is_some_and(|i| app.flight.nearest == i && app.flight.altitude < height);
+    if near("Xela", NEAR) {
+        Some(Kind::Marimba)
+    } else if near("Cementerio", RING) {
+        Some(Kind::Carrera)
+    } else {
+        None
+    }
 }
 
-/// Abre un minijuego con `background` (la ultima imagen del render) de
-/// fondo.
-pub fn start(kind: Kind, background: &[u8], width: usize, height: usize) -> Box<dyn Minigame> {
+/// Abre un minijuego. La marimba usa de fondo la ultima imagen del render;
+/// la carrera hornea los modelos de las naves y lee el cielo.
+pub fn start(kind: Kind, app: &App) -> Box<dyn Minigame> {
+    let (width, height) = (app.renderer.width(), app.renderer.height());
+    let records = Records::load(records_path());
     match kind {
-        Kind::Marimba => Box::new(marimba::MarimbaTiles::new(background, width, height, Records::load(records_path()))),
+        Kind::Marimba => Box::new(marimba::MarimbaTiles::new(app.renderer.rgba(), width, height, records)),
+        Kind::Carrera => Box::new(race(app, records)),
     }
+}
+
+/// La carrera con las naves chapinas: la chela es la botella que se trae (o
+/// la Gallo) y las demas, los tres vehiculos.
+pub fn race(app: &App, records: Records) -> carrera::Carrera {
+    use carrera::{Kind as Class, Model};
+    use hornear::Finish;
+    let ships = &app.system.chapin_ships;
+    let chosen = app.chapin_ship.min(ships.len().saturating_sub(1));
+    let player = Class::of_ship(chosen);
+    let bottle = if player == Class::Chela { chosen } else { 0 };
+    // La botella va con la boca un poco arriba: de atras se le ve la
+    // etiqueta y no solo el fondo.
+    let mut chela = app.system.meshes[ships[bottle].lods[0]].clone();
+    let (sin, cos) = 0.35f32.sin_cos();
+    chela.deform(|p| crate::math::Vec3::new(p.x, p.y * cos - p.z * sin, p.y * sin + p.z * cos));
+    // Cuanto mide en metros una unidad de cada modelo.
+    let meters = |class: Class, index: usize| class.length() / ships[index].length as f32;
+    let vehicle = |class: Class, index: usize| {
+        let ship = &ships[index];
+        Model { mesh: &app.system.meshes[ship.lods[0]], finish: Finish::Vehicle, meters: meters(class, index), name: ship.name }
+    };
+    let models = [
+        Model { mesh: &chela, finish: Finish::Bottle, meters: meters(Class::Chela, bottle), name: ships[bottle].name },
+        vehicle(Class::TukTuk, 6),
+        vehicle(Class::Camioneta, 7),
+        vehicle(Class::Colectivo, 8),
+    ];
+    let sky = |dir: crate::math::Vec3| app.system.sky.sample(dir);
+    carrera::Carrera::new(models, player, &sky, app.renderer.width(), app.renderer.height(), records)
 }
 
 /// Donde se guardan los records: junto al programa si se corre desde la
@@ -203,6 +259,19 @@ impl Records {
             let text: String = self.entries.iter().map(|(n, v)| format!("{n} {v}\n")).collect();
             if let Err(error) = std::fs::write(path, text) {
                 eprintln!("no se pudieron guardar los records: {error}");
+            }
+        }
+    }
+}
+
+/// Que todo el texto de `overlay` use letras que la fuente del HUD carga
+/// (si no, salen como "?").
+#[cfg(test)]
+pub(crate) fn assert_loaded_glyphs(overlay: &Overlay) {
+    for item in &overlay.items {
+        if let Item::Text { text, .. } = item {
+            for c in text.chars() {
+                assert!(crate::hud::GLYPHS.contains(c), "falta {c:?} en: {text}");
             }
         }
     }

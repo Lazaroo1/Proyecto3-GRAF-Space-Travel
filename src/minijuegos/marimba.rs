@@ -1977,11 +1977,13 @@ mod tests {
         let mut rgba = vec![0u8; w * h * 4];
         game.draw(&mut rgba);
         assert!(rgba.chunks_exact(4).all(|p| p[3] == 255));
+        super::super::assert_loaded_glyphs(&game.overlay());
         game.play(Level::Redoble);
         run(&mut game, 12.0, |g, dt| g.demo_keys(dt, 7));
         game.draw(&mut rgba);
         assert!(rgba.chunks_exact(4).all(|p| p[3] == 255));
         assert!(!game.overlay().items.is_empty());
+        super::super::assert_loaded_glyphs(&game.overlay());
         assert_eq!(thousands(1_234_567), "1 234 567");
         assert_eq!(thousands(980), "980");
     }

@@ -136,6 +136,7 @@ fps de la pantalla (3-5 ms por frame; el 3D cuesta 50-140).
 | | |
 | --- | --- |
 | ![La marimba de la Luna](media/65_marimba.png) | **La marimba de la Luna** (Luna de Xelajú, versión chapina; con N se llega a **La marimba**). Fichas que bajan por cuatro carriles hasta las teclas de una marimba: **D F J K**, como Piano Tiles. Vos llevás una parte del conjunto y la marimba toca lo demás: **Bajo** (fácil), **Tiple** (la melodía) o **Tiple con redobles** (difícil: las notas largas se redoblan machacando la tecla, como en la marimba de verdad; si dejás de redoblar, la nota se apaga). Lo que no tocás no suena, y se oye. La canción es el son de la marimba procedural en **tres vueltas**, cada una más rápida (119, 139 y 158 por minuto). Perfecto, bien, ok o falla según el tiempo; la racha multiplica y, si el **ánimo** del público se acaba, el público se va. Al final: «¡De a huevo!», «¡Chilero!», «Va pues», «Púchica…» o «Ni modo, otra vez», y el récord de cada parte. |
+| ![La carrera del Periférico](media/69_carrera.png) | **La carrera del Periférico** (la capital, versión chapina; se ofrece cerca de la capital y de su anillo). Tres vueltas a una carretera que flota en órbita sobre la capital de noche, con postes, vallas con los motivos de la faja tejida, túmulos y barandas de neón. Corrés con la nave que traés y las rivales son las otras tres clases: **la chela** (la botella que traés, o la Gallo), **el tuk-tuk**, **la camioneta** y **el colectivo**, cada una con su manejo (el tuk-tuk arranca como bala y dobla de lado; la camioneta corre más en recta pero dobla mal y echa **humo negro** que te nubla la vista). Ir pegado atrás de otra nave carga el **turbo** (rebufo, Shift); **H** es el **pito**: el tráfico de adelante se hace a un lado. Las naves son tus modelos de Blender **horneados como sprites** al empezar. Hay récord por nave. `Jugar_Carrera.cmd` (o `--carrera`) arranca ahí. |
 | ![La marimba en la Luna de Xelajú](media/64_la_marimba.png) | **Para jugar sin buscarla**: `Jugar_Marimba.cmd` (o `cargo run --release -- --marimba`) arranca con la marimba abierta. En el menú, ← / → ajustan el tiempo si las notas te suenan tarde (audífonos Bluetooth). Los récords quedan en `minijuegos.txt`. Cómo funciona (la pista en perspectiva hecha fila por fila, el reloj que sale del audio, el redoble): [EXPLICACION.md](EXPLICACION.md#los-minijuegos). |
 
 ## Video
@@ -172,6 +173,8 @@ cargo run --release -- --captura capturas     # las 57 vistas fijas como PNG, si
 cargo run --release -- --marimba              # arranca en la Luna de Xelajú con la marimba abierta
 cargo run --release -- --nave 8               # la nave chapina con que se empieza (7 tuk-tuk, 8 camioneta, 9 colectivo)
 cargo run --release -- --captura-marimba fotos # fotos del minijuego de la marimba, sin ventana
+cargo run --release -- --carrera              # arranca en la capital con la carrera del Periférico abierta
+cargo run --release -- --captura-carrera fotos # fotos de la carrera (con piloto automático), sin ventana
 cargo run --release -- --bench 30             # mide cada vista fija y da medianas por etapa
 cargo run --release -- --wire --lod           # empieza con wireframe y colores de LOD
 cargo test --release                          # pruebas de vuelo, raster, sombras y gas volumétrico
@@ -192,6 +195,7 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | **Viajar al siguiente lugar** (claro, géiseres, nido, espejo y el faro; en la versión chapina se llega de día, también a la marimba de la Luna) | **N** |
 | **Minijuego** del planeta, cuando abajo dice «Enter · …» | **Enter** |
 | En la marimba: tocar / elegir parte / ajuste de tiempo / tocar o repetir / salir | D F J K / ↑ ↓ / ← → / Enter / Esc |
+| En la carrera: manejar / turbo / pito / arrancar / salir | Flechas o W A S D / Shift / H / Enter / Esc |
 | Acercar / alejar la cámara | Rueda |
 | Cámara de persecución / cabina | C |
 | Asistente de vuelo / gravedad | Z / G |
@@ -280,7 +284,7 @@ Las vistas fijas se generan con `--captura` (nombres entre paréntesis).
 
 Además, fuera del menú:
 
-- **Minijuegos** ([src/minijuegos/](src/minijuegos)): la marimba de la Luna, con la pista en perspectiva dibujada fila por fila en CPU (cada fila es un instante de la canción), la partitura del son repartida entre quien juega y la marimba, y el reloj sacado del audio para que lo que se ve vaya con lo que se oye.
+- **Minijuegos** ([src/minijuegos/](src/minijuegos)): la marimba de la Luna, con la pista en perspectiva dibujada fila por fila en CPU (cada fila es un instante de la canción), la partitura del son repartida entre quien juega y la marimba, y el reloj sacado del audio para que lo que se ve vaya con lo que se oye; y la carrera del Periférico, un pseudo-3D con lomas y curvas, con los modelos de Blender horneados como sprites por un rasterizador propio y el cielo del cubemap pasado a un panorama.
 - **Gargantúa** ([src/shaders/gargantua.rs](src/shaders/gargantua.rs)): el gas volumétrico de mi Proyecto 2 (RK4 de las geodésicas de Schwarzschild, Doppler, corrimiento gravitacional) atravesado por cada rayo, más una tabla de mil rayos que resuelve la lente del cielo sin integrar. El gas se calcula cada dos pixeles y se interpola donde no hay bordes; en la sombra, la orilla del disco y el anillo de fotones se traza completo.
 - **Faro** ([src/scene/faro.rs](src/scene/faro.rs), [src/scene/magnetosphere.rs](src/scene/magnetosphere.rs), [src/shaders/faro.rs](src/shaders/faro.rs), [src/math/neutron.rs](src/math/neutron.rs)): la estrella de neutrones de arriba; su lente, su magnetosfera, sus estallidos y su llamarada son funciones puras del tiempo, así que también se rebobinan.
 - **El ciclo** ([src/scene/cycle.rs](src/scene/cycle.rs)): una función pura del tiempo y del instante en que se presionó J, por eso se puede rebobinar.

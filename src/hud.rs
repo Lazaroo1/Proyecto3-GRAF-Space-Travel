@@ -49,7 +49,7 @@ const TOAST: f32 = 3.0;
 /// Donde estan las letras de Windows.
 const FONT_DIR: &str = "C:/Windows/Fonts";
 /// Lo que se carga de cada letra: ASCII y lo del espanol.
-const GLYPHS: &str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~áéíóúÁÉÍÓÚñÑüÜäöÄÖ¿¡°·–—−…’×√πψτ⁰¹²³⁴⁵⁶⁷⁸⁹⁻»←↑→↓";
+pub(crate) const GLYPHS: &str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~áéíóúÁÉÍÓÚñÑüÜäöÄÖ¿¡°·–—−…’×√πψτ⁰¹²³⁴⁵⁶⁷⁸⁹⁻»←↑→↓º";
 
 /// Los estilos de letra: archivo y tamano en pixeles. Cada uno se dibuja a
 /// su tamano, sin escalar.

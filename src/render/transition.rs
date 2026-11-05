@@ -113,6 +113,20 @@ fn sash(along: f32, v: f32, soft: f32) -> Vec3 {
     c
 }
 
+/// Uno de los motivos de la faja en las coordenadas de su cuadro (`x` y `y`
+/// de -0.5 a 0.5, `y` hacia arriba) sobre `c`: 0 el quetzal, 1 el volcan, 2
+/// la mazorca, 3 el barrilete y 4 la greca. `soft` es lo que mide un pixel.
+/// Tambien los usan las vallas de la carrera del Periferico.
+pub(crate) fn motif(index: usize, c: &mut Vec3, x: f32, y: f32, soft: f32) {
+    match index % 5 {
+        0 => quetzal(c, x, y, soft),
+        1 => volcano(c, x, y, soft),
+        2 => corn(c, x, y, soft),
+        3 => kite(c, x, y, soft),
+        _ => fret(c, x, y, soft),
+    }
+}
+
 /// Pinta `color` donde la distancia `d` es negativa.
 #[inline]
 fn paint(base: &mut Vec3, color: Vec3, d: f32, soft: f32) {
