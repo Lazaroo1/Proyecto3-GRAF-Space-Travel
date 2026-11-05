@@ -275,9 +275,6 @@ pub enum Material {
     Prop(PropStyle),
     /// Una cinta de luz (la trayectoria predicha): solo emite su color.
     Line(Vec3),
-    /// Las lineas de plasma de la magnetosfera de Faro: emiten el color de
-    /// sus vertices.
-    Plasma,
 }
 
 impl Material {
@@ -307,9 +304,6 @@ pub fn shade(material: &Material, f: &Fragment, u: &Uniforms) -> Vec3 {
         Material::Bottle => ship::bottle(f, u),
         Material::Prop(style) => props::shade(style, f, u),
         Material::Line(color) => line(f, *color),
-        // En el borde, la interpolacion puede dar uv.y un poco fuera de [0, 1]:
-        // sin el max la raiz da NaN y el bloom lo riega en un cuadro negro.
-        Material::Plasma => f.color * (1.0 - (f.uv.y * 2.0 - 1.0).abs()).max(0.0).sqrt(),
     }
 }
 
@@ -397,7 +391,7 @@ pub fn volumes(color: Vec3, dir: Vec3, depth: f32, sky: bool, u: &Uniforms) -> V
         color += tail.light(dir, depth, u.noise);
     }
     if let Some(faro) = u.faro {
-        color += faro.beams(dir, depth);
+        color += faro.beams(dir, depth) + faro.halo(dir, depth, u.noise);
     }
     // Del anillo mas lejano al mas cercano.
     match u.rings {

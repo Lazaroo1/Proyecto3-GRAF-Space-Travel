@@ -60,10 +60,16 @@ superficie o escapa, ninguno da vueltas.
 
 ## La superficie ([shaders/faro.rs](src/shaders/faro.rs))
 
-- **Color**: a millones de kelvin el visible está en la cola de
-  Rayleigh-Jeans (hν ≪ kT). Ahí el color ya no cambia con la temperatura: es
-  el límite azul del lugar planckiano, (x, y) = (0.2399, 0.2340). El brillo es
-  proporcional a T, no a T⁴.
+- **La corteza que se rompe**: el campo de un magnetar estresa su corteza
+  hasta romperla (Thompson y Duncan 1995). La superficie es una red de placas
+  violeta oscuro con grietas que brillan, a dos escalas (ruido de Worley con
+  el dominio deformado por un ruido de gradiente); las grietas laten cada
+  placa a su ritmo y algunos puntos destellan. El borde brilla como una
+  atmósfera porque ahí la luz sale rasante (el ángulo de emisión que da la
+  lente). **Es color falso**: a millones de kelvin el visible está en la cola
+  de Rayleigh-Jeans (hν ≪ kT), donde el color ya no cambia con la
+  temperatura, y el ojo vería un blanco azulado parejo. El brillo de las
+  grietas sí sigue a la temperatura de abajo.
 - **Más fría en el ecuador magnético**: el calor sube por la corteza a lo
   largo del campo (Greenstein y Hartke 1983),
   T⁴ = T_polo⁴ (cos² Θ_B + (κ⊥/κ∥) sin² Θ_B), con cos Θ_B = 2 cos θ / √(1 + 3 cos² θ)
@@ -74,9 +80,15 @@ superficie o escapa, ninguno da vueltas.
   El casquete tiene u = sin² θ* (10° en reposo) y
   L = 1.3×10³⁶ B₁₄ R₆ ψ V₉ u² erg/s; su temperatura sale de L = 2 A σ T⁴ con
   A = π R² u (unos 5 MK). Después de la gran llamarada se agranda y se encoge
-  despacio, como en los magnetares transitorios.
+  despacio, como en los magnetares transitorios. Ahí las grietas pasan de
+  azul a rosa y naranja.
 - **Los casquetes de las líneas abiertas**: 130 m en cada polo, más
   calientes.
+- **La bruma**: alrededor brilla la nebulosa del viento del púlsar (como la
+  del Cangrejo, mucho más chica), con densidad 1/(1 + r²/a²)². Su integral a
+  lo largo del rayo es exacta: con x = t − t_c y k² = a² + q²,
+  ∫ a⁴ dx/(k² + x²)² = a⁴ [x/(2k²(k² + x²)) + atan(x/k)/(2k³)]. Se apaga
+  cuando la cámara se mete en ella.
 
 ## La magnetosfera torcida ([scene/magnetosphere.rs](src/scene/magnetosphere.rs))
 
@@ -103,12 +115,21 @@ torsión Δφ = 2 √(C / (p (1 + p))) ∫₀¹ F^(1/p) / (1 − μ²) dμ
   Los pares e± nacen cerca de los dos pies, donde B > 10¹³ G (a menos de unos
   3 radios), suben frenándose porque dispersan los rayos X de la superficie
   (γ ~ 100 B/B_Q) y se aniquilan en la cima (Beloborodov 2013): los pies
-  brillan blanco azulado, el medio poco y la cima rosa. Es una visualización:
+  brillan blanco azulado, el medio azul y afuera violeta. Es una visualización:
   esa luz es de rayos X duros, aunque la densidad del plasma podría dar luz
   visible (Kaspi y Beloborodov 2017, §5.4.4).
-- Cada línea es una cinta de luz de 1.6 pixeles que gira con la estrella. Los
-  paquetes que suben se muestran diez mil veces más lentos (de verdad van
-  casi a la velocidad de la luz) y la descarga parpadea como un relámpago
+- Se dibujan tres familias: los arcos cerrados junto a la estrella (pies
+  entre 16° y 42°), el abanico de líneas que sale de los polos hacia los
+  haces y los arcos grandes del haz de corriente, más tenues.
+- Cada línea es un **hilo de luz** ([render/glow.rs](src/render/glow.rs)):
+  segmentos que se suman a la imagen con un núcleo de 0.7 px y un halo
+  suave de 3.2 px, probados contra la profundidad, en el mismo pase por tiles
+  que las partículas. Una cinta opaca tapaba lo de atrás y no podía tener
+  halo. Para que las uniones de una polilínea no brillen el doble, solo los
+  extremos tienen tapas. Lejos, cuando la estrella mide pocos pixeles, las
+  líneas bajan su brillo para no hacer una mancha.
+- Los paquetes que suben se muestran diez mil veces más lentos (de verdad
+  van casi a la velocidad de la luz) y la descarga parpadea como un relámpago
   continuo (Beloborodov y Thompson 2007).
 
 ## Los haces del púlsar
@@ -122,11 +143,16 @@ torsión Δφ = 2 √(C / (p (1 + p))) ∫₀¹ F^(1/p) / (1 − μ²) dμ
   alrededor del eje magnético cada 37.4 giros (Ruderman y Sutherland 1975;
   los números de PSR B0943+10), y cada pulso es distinto, como en los
   magnetares.
+- **El núcleo nace en la superficie**: es el plasma que sale por las líneas
+  abiertas desde el casquete polar; los conos se encienden desde su altura
+  de emisión. Las hebras del chorro salen de una tabla de ruido periódico
+  (azimut por logaritmo de la altura) que corre hacia afuera: evaluar Perlin
+  en cada muestra costaba decenas de milisegundos.
 - **Por qué se ven**: la radio no se ve, pero los haces iluminan el viento de
   la supergigante, cuya densidad baja como 1/d² desde ella; el flujo del haz
   baja como 1/r² desde Faro. La luz que llega es ∫ perfil(θ) n(x) / r² a lo
   largo del rayo. Con el cambio de variable t = t_c + q tan u, el 1/r² se
-  vuelve exacto (dt/r² = du/q) y bastan 10 muestras. Primero se intersecta el
+  vuelve exacto (dt/r² = du/q) y bastan 7 muestras. Primero se intersecta el
   doble cono de forma analítica (una cuadrática).
 - **El destello**: cuando un haz apunta a la nave se ve la luz directa de la
   región de emisión. Como el haz barre su ancho en uno o dos frames, el
@@ -182,7 +208,7 @@ gran llamarada.
 | Real | Comprimido o visualizado |
 | --- | --- |
 | Proporciones de la estrella, sus casquetes, la magnetosfera y los haces (1 unidad = 1 km) | El sistema no está en km: la supergigante y las órbitas son de juego |
-| Lente de Schwarzschild exacta, corrimiento al rojo, color de Rayleigh-Jeans | La gravedad sobre la nave es la de un planeta chico (la real no deja acercarse) |
+| Lente de Schwarzschild exacta, corrimiento al rojo | La corteza es de color falso (el ojo vería un blanco azulado parejo) y la gravedad sobre la nave es la de un planeta chico |
 | Giro de 2.07 s, estallidos de ms, pico de 0.2 s, cola de 380 s, antiglitch | La torsión se acumula en 8 s (de verdad, años) y el precursor llega 2 s antes |
 | Forma de las líneas (TLK), del haz (Rankin), del carrusel | El plasma brilla en visible y sus paquetes van 10⁴ veces más lentos |
 | El cilindro de luz y la estructura de Contopoulos et al. (2024) quedan a 98 800 km, fuera del sistema | Los haces se ven porque iluminan el viento de la supergigante |
@@ -778,9 +804,9 @@ su color HDR. Algunos ejemplos de técnica:
   Vigía en ese punto.
 - **Faro** ([faro.rs](src/shaders/faro.rs)): la esfera que se rasteriza es
   solo el disco aparente; cada pixel busca en la tabla de geodésicas de qué
-  punto de la estrella salió su rayo y lo pinta con la temperatura de ahí
-  (Greenstein-Hartke, casquetes, manchas de la corteza) en el color de
-  Rayleigh-Jeans. Sus haces son un volumen: el rayo se intersecta con el
+  punto de la estrella salió su rayo y pinta ahí la corteza agrietada con la
+  temperatura de ese punto (Greenstein-Hartke y casquetes). Sus haces son
+  un volumen: el rayo se intersecta con el
   doble cono de forma analítica y, adentro, se integra el perfil de Rankin
   con el cambio de variable que vuelve exacto el `1/r²`.
 - **Anillos** ([rings.rs](src/shaders/rings.rs)): analíticos (intersección

@@ -867,8 +867,6 @@ pub struct App {
     pub path_impact: bool,
     /// Cinta de la trayectoria, rehecha cada frame.
     path_mesh: Mesh,
-    /// Lineas de plasma de la magnetosfera de Faro, rehechas cada frame.
-    faro_mesh: Mesh,
     /// Empuje que se ve en los motores, suavizado.
     throttle: f32,
     /// Vertical del modo local en el frame anterior: al moverse sobre la
@@ -1061,7 +1059,6 @@ impl App {
             path_shown: false,
             path_impact: false,
             path_mesh: Mesh::default(),
-            faro_mesh: Mesh::default(),
             throttle: 0.0,
             local_up: None,
             ship,
@@ -1744,10 +1741,15 @@ impl App {
             .max(state.disk_outer as f64 * state.rs * 0.5)
             .max(1.0);
         self.build_path(t, &camera, pixel_angle);
-        self.faro_mesh = Mesh::default();
+        self.renderer.lines.clear();
         if let Some(i) = self.system.find("Faro").filter(|&i| !self.system.bodies[i].hidden) {
-            faro::field_lines(&mut self.faro_mesh, &self.system.bodies[i], t, self.faro_flare, camera.pos, pixel_angle as f32);
-            self.faro_mesh.update_bounds();
+            // Lejos, la estrella mide pocos pixeles y las lineas se enciman:
+            // brillan menos para no hacer una mancha. De muy cerca llenan la
+            // pantalla: tambien se bajan.
+            let body = &self.system.bodies[i];
+            let pixels = (faro::RADIUS_KM / ((body.position(t) - camera.pos).length() * pixel_angle).max(1e-9)) as f32;
+            let density = (pixels / 8.0).clamp(0.12, 1.0) * (90.0 / pixels).clamp(0.35, 1.0);
+            faro::field_lines(&mut self.renderer.lines, body, t, self.faro_flare, camera.pos, density);
         }
         self.emit_particles(t, &camera, ship_pos, ship_rot, show_ship);
         // Gargantua se come a Pira: hierve y se encoge dentro de su vapor.
@@ -1781,7 +1783,6 @@ impl App {
         for (mesh, material) in [
             (&self.path_mesh, Material::Line(Vec3::ONE)),
             (&self.frustum_mesh, Material::Line(Vec3::ONE)),
-            (&self.faro_mesh, Material::Plasma),
         ] {
             if mesh.indices.is_empty() {
                 continue;
@@ -1985,7 +1986,10 @@ impl App {
             if spike > 0.0 {
                 let distance = (self.system.bodies[i].position(t) - camera.pos).length() as f32;
                 let reach = 1.0 / (1.0 + (distance / 2500.0).powi(2));
-                self.renderer.whiteout = self.renderer.whiteout.max(spike * (0.55 + 0.45 * reach));
+                // Todo lo que brilla se quema a blanco (la exposicion sube) y
+                // encima un velo leve: un fundido a blanco solo deja gris.
+                self.renderer.exposure *= 1.0 + 14.0 * spike * reach;
+                self.renderer.whiteout = self.renderer.whiteout.max(spike * (0.2 + 0.25 * reach));
             }
         }
         self.renderer.blackout = self.death_fade();
@@ -2824,6 +2828,7 @@ fn faro_frame<'a>(
     let turn = faro::turn_at(body, t, flare);
     shaders::faro::Faro {
         center: (center - camera).as_vec3(),
+        radius: faro::RADIUS_KM as f32,
         lens,
         magnetic: crust.rotate(faro::magnetic_local()).as_vec3(),
         magnetic_before: before.rotate(faro::magnetic_local()).as_vec3(),
@@ -2852,6 +2857,11 @@ fn faro_frame<'a>(
         beam_gain: (faro::BEAM_GAIN * state.radio) as f32,
         wind_source: (star - camera).as_vec3(),
         wind_reference: (center - star).length() as f32,
+        // Con la camara metida en la bruma, todo el cielo se tenia de morado:
+        // se apaga al acercarse.
+        halo_gain: (faro::HALO_GAIN * (1.0 + 0.5 * state.storm + 3.0 * state.fireball)) as f32
+            * smoothstep(60.0, 200.0, distance as f32),
+        time: t as f32,
     }
 }
 

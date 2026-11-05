@@ -25,9 +25,9 @@
 use std::f64::consts::{PI, TAU};
 use std::sync::OnceLock;
 
-use super::{Body, Mesh};
+use super::Body;
 use crate::math::{DQuat, DVec3, Vec3};
-use crate::render::Particle;
+use crate::render::{GlowLine, Particle};
 
 /// Constantes fisicas en cgs.
 const C: f64 = 2.997_924_58e10;
@@ -56,15 +56,16 @@ pub const CONDUCTIVITY_RATIO: f64 = 0.05;
 const CRUST_POLE: f64 = 1.8e6;
 /// Casquete de lineas abiertas, calentado por las particulas que vuelven.
 const CAP_TEMPERATURE: f64 = 3.2e6;
-/// Brillo HDR de la superficie por kelvin (en la cola de Rayleigh-Jeans el
-/// brillo es lineal en T).
-pub const SURFACE_GAIN: f64 = 0.55e-6;
+/// Brillo HDR de la corteza (en unidades de la temperatura del polo).
+pub const SURFACE_GAIN: f64 = 1.0;
 /// Chispas del carrusel y vueltas de la estrella por cada vuelta de ellas
 /// (las de PSR B0943+10: 20 chispas y 37.4 P).
 pub const SPARKS: u32 = 20;
 pub const CAROUSEL_TURNS: f64 = 37.4;
 /// Brillo de los haces en el viento y del destello directo.
 pub const BEAM_GAIN: f64 = 1500.0;
+/// Brillo de la bruma del viento alrededor de la estrella.
+pub const HALO_GAIN: f64 = 0.4;
 pub const GLARE_GAIN: f64 = 8.0;
 /// Voltaje de la descarga en el haz de corriente, en 1e9 V (Beloborodov
 /// 2009: 1e9 a 1e10 V).
@@ -235,6 +236,7 @@ pub fn state(t: f64, flare: Option<f64>) -> State {
             since_spike = Some(after);
             // El pico sube en 5 ms y cae en su fraccion de segundo.
             spike = (after / 0.005).min(1.0) * (-after / (SPIKE * 0.4)).exp();
+            flash += 8.0 * spike;
             // Las lineas se abren casi a la velocidad de la luz y se cierran
             // al reconectarse: aqui, mientras dura el pico.
             open = if after < SPIKE { 1.0 } else { (-(after - SPIKE) / 0.6).exp() };
@@ -376,34 +378,66 @@ pub fn magnetic_frame() -> (DVec3, DVec3, DVec3) {
     (m, e1, m.cross(e1))
 }
 
-/// Lineas del haz de corriente que se dibujan: azimuts y colatitudes de sus
-/// pies, y puntos por linea.
-const LINE_AZIMUTHS: usize = 24;
-const LINE_FEET: usize = 2;
-const LINE_SAMPLES: usize = 96;
-/// Ancho de las lineas en pixeles.
-const LINE_WIDTH: f32 = 1.6;
-/// Brillo del plasma de las lineas y de la bola de fuego.
+/// Una familia de lineas que se dibuja: cuantas alrededor del eje, entre que
+/// colatitudes nacen (en grados), hasta que radio se siguen (las abiertas se
+/// cortan), cuantos puntos y que tan brillantes.
+struct LineSet {
+    azimuths: usize,
+    feet: usize,
+    from_deg: f64,
+    to_deg: f64,
+    reach: f64,
+    samples: usize,
+    gain: f32,
+}
+
+/// Los arcos cerrados junto a la estrella, el abanico de los polos (lineas
+/// que suben hacia el haz) y los arcos grandes del haz de corriente.
+const LINE_SETS: [LineSet; 3] = [
+    LineSet { azimuths: 32, feet: 3, from_deg: 16.0, to_deg: 42.0, reach: f64::INFINITY, samples: 56, gain: 1.0 },
+    LineSet { azimuths: 28, feet: 2, from_deg: 3.0, to_deg: 9.0, reach: 9.0, samples: 28, gain: 0.9 },
+    // (Sus colatitudes salen del casquete del momento.)
+    LineSet { azimuths: 18, feet: 1, from_deg: 0.0, to_deg: 0.0, reach: f64::INFINITY, samples: 72, gain: 0.35 },
+];
+/// Brillo de las lineas y de la bola de fuego.
 const PLASMA_GAIN: f32 = 0.8;
-const FIREBALL_GAIN: f32 = 260.0;
+const FIREBALL_GAIN: f32 = 150.0;
 /// Particulas de la bola de fuego.
 const FIREBALL_COUNT: usize = 2400;
 
-/// El plasma de la magnetosfera torcida: una cinta de luz por linea de
-/// campo, relativa a la camara.
+/// Color del plasma a `r` radios de la estrella: blanco azulado junto a ella
+/// (donde los pares son densos y calientes), azul, violeta y morado afuera.
+fn plasma_tint(r: f32) -> Vec3 {
+    let stops = [
+        (1.0, Vec3::new(1.0, 1.45, 3.2)),
+        (2.0, Vec3::new(0.3, 0.75, 3.0)),
+        (4.5, Vec3::new(0.35, 0.45, 2.6)),
+        (9.0, Vec3::new(0.65, 0.25, 1.9)),
+        (30.0, Vec3::new(0.5, 0.15, 1.1)),
+    ];
+    let mut color = stops[0].1;
+    for w in stops.windows(2) {
+        if r >= w[0].0 {
+            let k = ((r - w[0].0) / (w[1].0 - w[0].0)).min(1.0);
+            color = w[0].1.lerp(w[1].1, k);
+        }
+    }
+    color
+}
+
+/// Las lineas de campo de la magnetosfera torcida, como hilos de luz
+/// relativos a la camara.
 ///
-/// Solo brillan las lineas que llevan corriente: el haz de corriente, las
-/// que nacen dentro del casquete de Beloborodov (`theta < theta*`) y suben
-/// lejos. Se dibuja su orilla, la que toca la cavidad sin corriente y tiene
-/// la cima a unos `1/u` radios. En cada linea se crean pares e± cerca de
-/// los dos pies (donde `B > 1e13 G`, a menos de unos 3 radios); suben
-/// frenandose porque dispersan los rayos X de la superficie
-/// (`gamma ~ 100 B / B_Q`) y se aniquilan en la cima del arco (Beloborodov
-/// 2013). Por eso brillan los pies, poco el medio y otra vez la cima. Los
+/// La forma es la de Thompson, Lyutikov y Kulkarni (2002) con la torsion del
+/// momento. Brillan donde hay plasma: junto a la estrella los pares e± son
+/// densos y calientes (donde `B > 1e13 G`, a menos de unos 3 radios), y en
+/// las lineas que llevan corriente (el haz de corriente de Beloborodov 2009)
+/// suben frenandose y se aniquilan en la cima (Beloborodov 2013). Los
 /// paquetes que suben se muestran diez mil veces mas lentos que la luz; la
 /// descarga parpadea como un relampago continuo (Beloborodov y Thompson
-/// 2007).
-pub fn field_lines(mesh: &mut Mesh, body: &Body, t: f64, flare: Option<f64>, camera: DVec3, pixel_angle: f32) {
+/// 2007). `density` baja el brillo cuando la estrella se ve chica y las
+/// lineas se enciman.
+pub fn field_lines(out: &mut Vec<GlowLine>, body: &Body, t: f64, flare: Option<f64>, camera: DVec3, density: f32) {
     let s = state(t, flare);
     let crust = crust_at(body, t, flare);
     let center = body.position(t) - camera;
@@ -412,48 +446,72 @@ pub fn field_lines(mesh: &mut Mesh, body: &Body, t: f64, flare: Option<f64>, cam
     let to_world = |p: DVec3| -> Vec3 {
         (center + crust.rotate((e1 * p.x + e2 * p.y + m * p.z) * RADIUS_KM)).as_vec3()
     };
-    let star = s.bundle.sqrt().asin();
     // Mientras las lineas estan abiertas se estiran hacia afuera.
     let inflate = 1.0 + 25.0 * s.open;
     let fade = (1.0 - 0.85 * s.open) as f32;
-    let activity = (s.twist / QUIET_TWIST).max(0.3).sqrt() * (1.0 + s.storm);
-    let foot = Vec3::new(1.6, 2.0, 2.8);
-    let middle = Vec3::new(0.16, 0.2, 0.7);
-    let top = Vec3::new(1.5, 0.45, 1.1);
-    let mut points = [Vec3::ZERO; LINE_SAMPLES];
-    let mut colors = [Vec3::ZERO; LINE_SAMPLES];
-    for i in 0..LINE_AZIMUTHS {
-        for j in 0..LINE_FEET {
-            let line = (i * LINE_FEET + j) as i64;
-            let phi_f = TAU * (i as f64 + 0.4 * uniform(line, 0xA21)) / LINE_AZIMUTHS as f64;
-            let theta_f = star * (0.8 + 0.18 * (j as f64 + uniform(line, 0x7E7)) / LINE_FEET as f64);
-            // La descarga parpadea; las lineas del estallido se encienden.
-            let flicker = 0.6 + 0.8 * uniform(line ^ (((t * 10.0) as i64) << 12), 0xF11C);
-            let gap = ((phi_f - s.burst_site + PI).rem_euclid(TAU) - PI).abs();
-            let burst = 1.0 + s.burst.min(60.0) * 0.12 * (-(gap / 0.5).powi(2)).exp();
-            // El haz de corriente no es parejo: unas lineas llevan mas.
-            let current = 0.35 + 0.65 * uniform(line, 0xC0DE);
-            let strength = (activity * flicker * burst * current) as f32 * fade * PLASMA_GAIN;
-            let phase = uniform(line, 0x9A5E);
-            for k in 0..LINE_SAMPLES {
-                let along = 0.5 * (1.0 - (PI * k as f64 / (LINE_SAMPLES - 1) as f64).cos());
-                let mut p = super::magnetosphere::line_point(s.twist, theta_f, phi_f, along);
-                let r = p.length();
-                p = p * ((1.0 + (r - 1.0) * inflate) / r);
-                points[k] = to_world(p);
-                // 0 en los pies, 1 en la cima.
-                let d = (1.0 - (2.0 * along - 1.0).abs()) as f32;
-                let near = (-(r as f32 - 1.0) / 2.0).exp();
-                let crest = (-((along as f32 - 0.5) / 0.06).powi(2)).exp();
-                let packets = 0.55 + 0.45 * ((TAU * (4.0 * d as f64 - 0.5 * t + phase)).sin() as f32).powi(3);
-                let tint = if d < 0.5 {
-                    foot.lerp(middle, d * 2.0)
+    let activity = (s.twist / QUIET_TWIST).max(0.3).sqrt() * (1.0 + 0.6 * s.storm);
+    let mut points = Vec::with_capacity(80);
+    let mut colors = Vec::with_capacity(80);
+    for (set_index, set) in LINE_SETS.iter().enumerate() {
+        for i in 0..set.azimuths {
+            for j in 0..set.feet {
+                let line = ((set_index * 1000 + i * set.feet + j) as i64) << 8;
+                let phi_f = TAU * (i as f64 + 0.6 * uniform(line, 0xA21)) / set.azimuths as f64;
+                let spread = (j as f64 + uniform(line, 0x7E7)) / set.feet as f64;
+                // Los arcos del haz de corriente nacen en la orilla de su
+                // casquete, que crece y se encoge con la torsion.
+                let (from, to) = if set_index == 2 {
+                    let edge = s.bundle.sqrt().asin();
+                    (edge * 0.9, edge)
                 } else {
-                    middle.lerp(top, (d - 0.5) * 2.0)
+                    (set.from_deg.to_radians(), set.to_deg.to_radians())
                 };
-                colors[k] = tint * ((0.25 + 1.5 * near + 0.6 * crest) * packets * strength);
+                let theta_f = from + (to - from) * spread;
+                // La descarga parpadea; las lineas del estallido se encienden.
+                let flicker = 0.75 + 0.5 * uniform(line ^ (((t * 12.0) as i64) << 20), 0xF11C);
+                let gap = ((phi_f - s.burst_site + PI).rem_euclid(TAU) - PI).abs();
+                let burst = 1.0 + s.burst.min(60.0) * 0.12 * (-(gap / 0.5).powi(2)).exp();
+                // Unas lineas llevan mas plasma que otras.
+                let load = 0.45 + 0.55 * uniform(line, 0xC0DE);
+                let strength = (activity * flicker * burst * load) as f32 * fade * PLASMA_GAIN * set.gain * density;
+                let phase = uniform(line, 0x9A5E);
+                // Las dos mitades de una linea abierta se dibujan por separado.
+                let halves: &[(f64, f64)] = if set.reach.is_finite() { &[(0.0, 0.5), (1.0, 0.5)] } else { &[(0.0, 1.0)] };
+                for &(start, end) in halves {
+                    points.clear();
+                    colors.clear();
+                    for k in 0..set.samples {
+                        let x = k as f64 / (set.samples - 1) as f64;
+                        // Mas puntos junto a los pies, donde la linea se curva.
+                        let along = start + (end - start) * (1.0 - (1.0 - x) * (1.0 - x));
+                        let mut p = super::magnetosphere::line_point(s.twist, theta_f, phi_f, along);
+                        let r = p.length();
+                        if r > set.reach {
+                            break;
+                        }
+                        p = p * ((1.0 + (r - 1.0) * inflate) / r);
+                        // 0 en los pies, 1 en la cima; los paquetes suben.
+                        let d = (1.0 - (2.0 * along - 1.0).abs()) as f32;
+                        let packets = 0.65 + 0.35 * ((TAU * (3.0 * d as f64 - 0.6 * t + phase)).sin() as f32).powi(3);
+                        let near = 0.25 + 1.4 * (-(r as f32 - 1.0) / 1.6).exp();
+                        // Las abiertas se apagan al alejarse.
+                        let open_fade = if set.reach.is_finite() { 1.0 - (r / set.reach) as f32 } else { 1.0 };
+                        points.push(to_world(p));
+                        colors.push(plasma_tint(r as f32) * (near * packets * strength * open_fade));
+                    }
+                    let n = points.len();
+                    for k in 1..n {
+                        out.push(GlowLine {
+                            a: points[k - 1],
+                            b: points[k],
+                            color_a: colors[k - 1],
+                            color_b: colors[k],
+                            cap_a: k == 1,
+                            cap_b: k == n - 1,
+                        });
+                    }
+                }
             }
-            super::ribbon_with(mesh, &points, LINE_WIDTH, pixel_angle, |k| colors[k]);
         }
     }
 }
@@ -488,7 +546,7 @@ pub fn fireball(out: &mut Vec<Particle>, body: &Body, t: f64, flare: Option<f64>
         let p = super::magnetosphere::line_point(0.3, theta_f, phi_f, along);
         let local = (e1 * p.x + e2 * p.y + m * p.z) * RADIUS_KM;
         let heat = 1.0 - ((apex - 1.15) / (reach - 1.15).max(1e-3)) as f32;
-        let tint = Vec3::new(0.9, 0.55, 1.6).lerp(Vec3::new(1.6, 1.9, 2.8), heat);
+        let tint = Vec3::new(1.4, 0.35, 1.5).lerp(Vec3::new(2.4, 1.3, 2.2), heat);
         out.push(Particle {
             pos: (center + crust.rotate(local)).as_vec3(),
             radius: 1.6,
