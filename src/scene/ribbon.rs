@@ -15,11 +15,6 @@ use crate::math::{Vec2, Vec3};
 /// `width` pixeles de ancho. En el uv, `x` va de 0 a 1 a lo largo de la
 /// cinta y `y` de 0 a 1 de un borde al otro.
 pub fn ribbon(mesh: &mut Mesh, points: &[Vec3], width: f32, pixel_angle: f32, color: Vec3) {
-    ribbon_with(mesh, points, width, pixel_angle, |_| color);
-}
-
-/// Igual que `ribbon`, con el color de cada punto (`color(i)`).
-pub fn ribbon_with(mesh: &mut Mesh, points: &[Vec3], width: f32, pixel_angle: f32, color: impl Fn(usize) -> Vec3) {
     let n = points.len();
     if n < 2 {
         return;
@@ -44,7 +39,7 @@ pub fn ribbon_with(mesh: &mut Mesh, points: &[Vec3], width: f32, pixel_angle: f3
             mesh.positions.push(p + offset);
             mesh.normals.push(facing);
             mesh.uvs.push(Vec2::new(u, v));
-            mesh.colors.push(color(i));
+            mesh.colors.push(color);
         }
     }
     for i in 0..(n - 1) as u32 {

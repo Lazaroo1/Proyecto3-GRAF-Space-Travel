@@ -26,6 +26,7 @@
 
 mod antialias;
 mod bloom;
+mod glow;
 mod particles;
 mod pipeline;
 pub mod png;
@@ -48,6 +49,7 @@ use crate::shaders::gargantua::GasField;
 use crate::shaders::{Material, Uniforms};
 
 use bloom::Bloom;
+pub use glow::GlowLine;
 pub use particles::Particle;
 use particles::ParticleBins;
 use pipeline::{ClipVertex, ScreenSetup, TRIS_PER_CHUNK, TriChunk, VisibleDraw};
@@ -169,6 +171,8 @@ pub struct Renderer {
     /// Particulas del proximo frame, relativas a la camara. El juego las
     /// llena antes de llamar a `render`.
     pub particles: Vec<Particle>,
+    /// Hilos de luz del proximo frame (las lineas de campo de Faro).
+    pub lines: Vec<GlowLine>,
     /// Frustum congelado para el culling (vista de depuracion): la vista de
     /// otra camara y cuanto hay que sumarle a una posicion relativa a la
     /// camara actual para que quede relativa a esa otra.
@@ -179,6 +183,7 @@ pub struct Renderer {
     pub whiteout: f32,
     pub blackout: f32,
     particle_bins: ParticleBins,
+    line_bins: glow::LineBins,
     /// Gas de Gargantua cada pocos pixeles; sus buffers se reutilizan.
     gas_field: GasField,
     pub exposure: f32,
@@ -206,11 +211,13 @@ impl Renderer {
             chunks: Vec::new(),
             bloom: Bloom::new(width, height),
             particles: Vec::new(),
+            lines: Vec::new(),
             cull: None,
             ripple: None,
             whiteout: 0.0,
             blackout: 0.0,
             particle_bins: ParticleBins::new(),
+            line_bins: glow::LineBins::new(),
             gas_field: GasField::default(),
             exposure: config::EXPOSURE,
             p2_curve: false,
@@ -313,7 +320,8 @@ impl Renderer {
             self.tiles_x,
             tiles,
         );
-        stats.particles = self.particle_bins.splats.len() as u32;
+        self.line_bins.build(&self.lines, view, self.width, self.height, self.tiles_x, tiles);
+        stats.particles = (self.particle_bins.splats.len() + self.line_bins.count()) as u32;
         let t_triangles = Instant::now();
 
         // 4. Primero toda la profundidad; después shading y reflejos. La
@@ -352,12 +360,14 @@ impl Renderer {
         };
         let hdr = DisjointMut::new(&mut self.hdr);
         let particle_bins = &self.particle_bins;
+        let line_bins = &self.line_bins;
         parallel::for_each(tiles, |tile| {
             let t0 = Instant::now();
             let vis = &context.global_vis[tile * TILE_PIXELS..(tile + 1) * TILE_PIXELS];
             let out = unsafe { hdr.range(tile * TILE_PIXELS, TILE_PIXELS) };
             shade::shade_tile(tile, vis, out, &context);
             particles::splat_tile(tile, vis, out, particle_bins, tiles_x, width, height);
+            glow::splat_tile(tile, vis, out, line_bins, tiles_x, width, height);
             shade_ns.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
         });
         if !uniforms.debug.wireframe && !uniforms.debug.lod_colors {
