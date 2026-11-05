@@ -9,6 +9,11 @@
 //! posicion, uv y normal. Para el pipeline, un vertice es una combinacion
 //! unica de esos indices (mas el material): un cubo con caras planas tiene 8
 //! posiciones pero 24 vertices, porque cada esquina lleva tres normales.
+//!
+//! Las naves chapinas (`load_vehicle`) usan mas del `.mtl`: la luz que emite
+//! (`Ke`) y el brillo (`Ns`), y del nombre del material sacan de que es cada
+//! pieza (pintura, metal, vidrio, luz o hule). Como no llevan texturas, eso
+//! viaja en la `uv` de cada vertice (`Surface`).
 
 use std::collections::HashMap;
 use std::fs;
@@ -54,6 +59,125 @@ pub fn parse_mtl(text: &str) -> HashMap<String, Vec3> {
 }
 
 pub fn parse_obj(text: &str, materials: &HashMap<String, Vec3>) -> Result<Mesh, String> {
+    parse_obj_with(text, &|name: &str| (materials.get(name).copied().unwrap_or(DEFAULT_COLOR), None))
+}
+
+/// Un material del `.mtl` con lo que usan las naves chapinas.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MtlMaterial {
+    pub kd: Vec3,
+    pub ke: Vec3,
+    pub ns: f32,
+}
+
+/// Todos los materiales del `.mtl`: color difuso, emision y brillo.
+pub fn parse_mtl_full(text: &str) -> HashMap<String, MtlMaterial> {
+    let mut materials: HashMap<String, MtlMaterial> = HashMap::new();
+    let mut current: Option<String> = None;
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        let key = parts.next();
+        if key == Some("newmtl") {
+            current = parts.next().map(str::to_string);
+            if let Some(name) = &current {
+                materials.insert(name.clone(), MtlMaterial { kd: DEFAULT_COLOR, ke: Vec3::ZERO, ns: 100.0 });
+            }
+            continue;
+        }
+        let Some(material) = current.as_ref().and_then(|n| materials.get_mut(n)) else { continue };
+        match key {
+            Some("Kd") => material.kd = parse_vec3(parts).unwrap_or(material.kd),
+            Some("Ke") => material.ke = parse_vec3(parts).unwrap_or(material.ke),
+            Some("Ns") => material.ns = parts.next().and_then(|v| v.parse().ok()).unwrap_or(material.ns),
+            _ => {}
+        }
+    }
+    materials
+}
+
+/// De que es una pieza de una nave chapina. Va en la `u` de sus vertices; la
+/// `v` lleva la rugosidad (o, en las luces, cuanto brillan).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Surface {
+    /// Pintura con laca (y los murales y las lonas, mas mates).
+    Paint = 0,
+    /// Cromo, plata y oro.
+    Metal = 1,
+    /// Vidrios: oscuros, reflejan el cielo.
+    Glass = 2,
+    /// Las LEDs: emiten su luz (`Ke`).
+    Light = 3,
+    /// Llantas.
+    Rubber = 4,
+}
+
+impl Surface {
+    /// Por el nombre del material y lo que dice el `.mtl`.
+    pub fn of(name: &str, material: &MtlMaterial) -> Self {
+        let name = name.to_lowercase();
+        if material.ke.max_element() > 0.05 || name.starts_with("led") {
+            Surface::Light
+        } else if ["cristal", "vidrio", "reflejo"].iter().any(|k| name.contains(k)) {
+            Surface::Glass
+        } else if ["cromo", "plata", "oro"].iter().any(|k| name.contains(k)) {
+            Surface::Metal
+        } else if name.contains("goma") {
+            Surface::Rubber
+        } else {
+            Surface::Paint
+        }
+    }
+
+    pub fn from_code(code: f32) -> Self {
+        match code.round() as i32 {
+            1 => Surface::Metal,
+            2 => Surface::Glass,
+            3 => Surface::Light,
+            4 => Surface::Rubber,
+            _ => Surface::Paint,
+        }
+    }
+}
+
+/// Rugosidad (de GGX) que corresponde al exponente de Blinn-Phong `Ns`:
+/// `alpha = sqrt(2 / (Ns + 2))` y la rugosidad es su raiz.
+pub fn roughness_from_ns(ns: f32) -> f32 {
+    (2.0 / (ns.max(0.0) + 2.0)).powf(0.25)
+}
+
+/// Lee una nave chapina: el color de cada pieza (`Kd`, o en las luces su
+/// `Ke` sin el brillo) va como color de vertice y su superficie en la `uv`.
+pub fn load_vehicle(path: &Path) -> Result<Mesh, String> {
+    let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let mut materials = HashMap::new();
+    for line in text.lines() {
+        if let Some(name) = line.trim().strip_prefix("mtllib ") {
+            let mtl = dir.join(name.trim());
+            let mtl_text = fs::read_to_string(&mtl).map_err(|e| format!("{}: {e}", mtl.display()))?;
+            materials.extend(parse_mtl_full(&mtl_text));
+        }
+    }
+    let style = |name: &str| {
+        let material = materials.get(name).copied().unwrap_or_default();
+        let surface = Surface::of(name, &material);
+        match surface {
+            Surface::Light => {
+                let peak = material.ke.max_element().max(1e-3);
+                (material.ke / peak, Some(Vec2::new(surface as u8 as f32, peak)))
+            }
+            _ => (material.kd, Some(Vec2::new(surface as u8 as f32, roughness_from_ns(material.ns)))),
+        }
+    };
+    let mut mesh = parse_obj_with(&text, &style).map_err(|e| format!("{}: {e}", path.display()))?;
+    // No lleva mapas de normales: las tangentes no se usan.
+    mesh.tangents.clear();
+    Ok(mesh)
+}
+
+/// Lee el `.obj` con `style`, que da el color de cada material y, si quiere,
+/// la `uv` que llevan todos sus vertices (en vez de la del archivo).
+fn parse_obj_with(text: &str, style: &dyn Fn(&str) -> (Vec3, Option<Vec2>)) -> Result<Mesh, String> {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
@@ -63,6 +187,7 @@ pub fn parse_obj(text: &str, materials: &HashMap<String, Vec3>) -> Result<Mesh, 
     let mut material_ids: HashMap<String, usize> = HashMap::new();
     let mut material = 0;
     let mut color = DEFAULT_COLOR;
+    let mut fixed_uv: Option<Vec2> = None;
     let mut face = Vec::new();
 
     for (n, line) in text.lines().enumerate() {
@@ -82,7 +207,7 @@ pub fn parse_obj(text: &str, materials: &HashMap<String, Vec3>) -> Result<Mesh, 
             }
             Some("usemtl") => {
                 let name = parts.next().unwrap_or_default().to_string();
-                color = materials.get(&name).copied().unwrap_or(DEFAULT_COLOR);
+                (color, fixed_uv) = style(&name);
                 let next_id = material_ids.len() + 1;
                 material = *material_ids.entry(name).or_insert(next_id);
             }
@@ -99,7 +224,7 @@ pub fn parse_obj(text: &str, materials: &HashMap<String, Vec3>) -> Result<Mesh, 
                     let index = *lookup.entry((v, vt, vn, material)).or_insert_with(|| {
                         mesh.positions.push(positions[v]);
                         mesh.normals.push(vn.map_or(Vec3::ZERO, |i| normals[i]));
-                        mesh.uvs.push(vt.map_or(Vec2::ZERO, |i| uvs[i]));
+                        mesh.uvs.push(fixed_uv.unwrap_or_else(|| vt.map_or(Vec2::ZERO, |i| uvs[i])));
                         mesh.colors.push(color);
                         has_normal.push(vn.is_some());
                         (mesh.positions.len() - 1) as u32
@@ -245,6 +370,24 @@ mod tests {
         for t in &mesh.tangents {
             assert!((t.x + 1.0).abs() < 1e-6 && t.y.abs() < 1e-6 && t.z.abs() < 1e-6);
             assert_eq!(t.w, -1.0);
+        }
+    }
+
+    #[test]
+    fn vehicle_materials_carry_their_surface_in_the_uv() {
+        let mtl = "newmtl cromo\nKd 0.6 0.7 0.8\nNs 592.9\nnewmtl led_rojo\nKd 1 0 0\nKe 2 0.03 0.05\n\
+                   newmtl granate\nKd 0.07 0.002 0.016\nNs 32\nnewmtl vidrio_tintado\nKd 0 0 0\n";
+        let materials = parse_mtl_full(mtl);
+        let surface = |name: &str| Surface::of(name, &materials[name]);
+        assert_eq!(surface("cromo"), Surface::Metal);
+        assert_eq!(surface("led_rojo"), Surface::Light);
+        assert_eq!(surface("granate"), Surface::Paint);
+        assert_eq!(surface("vidrio_tintado"), Surface::Glass);
+        assert_eq!(materials["led_rojo"].ke, Vec3::new(2.0, 0.03, 0.05));
+        // Pulido (Ns alto) es poco rugoso; mate (Ns bajo), mucho.
+        assert!(roughness_from_ns(592.9) < 0.3 && roughness_from_ns(32.0) > 0.45);
+        for code in 0..5 {
+            assert_eq!(Surface::from_code(code as f32) as i32, code);
         }
     }
 

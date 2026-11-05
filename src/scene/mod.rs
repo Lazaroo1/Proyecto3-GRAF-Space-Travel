@@ -19,6 +19,6 @@ mod tuning;
 
 pub use icosphere::icosphere;
 pub use mesh::{Mesh, NO_TANGENT};
-pub use obj::load_obj;
+pub use obj::{Surface, load_obj, load_vehicle};
 pub use ribbon::ribbon;
-pub use system::{nearest_surface, Body, Rings, Site, System, Version};
+pub use system::{nearest_surface, Body, ChapinShip, Rings, Site, System, Version};

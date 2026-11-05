@@ -909,8 +909,8 @@ pub struct App {
     accumulator: f64,
     /// Hacia donde mira el ojo de Vigia, en el espacio de Vigia.
     eye: DVec3,
-    /// La nave botella elegida para la version chapina (B la cambia).
-    pub bottle: usize,
+    /// La nave elegida para la version chapina (B la cambia).
+    pub chapin_ship: usize,
     /// El final de OCASO mientras se ve la version chapina (ahi no hay
     /// final: Kinich Ajaw no se apaga).
     ocaso_timeline: Timeline,
@@ -1037,7 +1037,7 @@ impl App {
             eye,
             stare,
             fixation: stare,
-            bottle: 0,
+            chapin_ship: 0,
             ocaso_timeline: Timeline::default(),
             marimba_on: false,
             transition: None,
@@ -1404,35 +1404,40 @@ impl App {
         Some((title, fade))
     }
 
-    /// Elige la nave botella `index` (teclas 1 a 6), en la version chapina.
-    pub fn select_bottle(&mut self, index: usize) {
-        if self.system.version != Version::Chapin || index >= self.system.bottles.len() {
+    /// Elige la nave chapina `index` (teclas 1 a 9), en la version chapina.
+    pub fn select_ship(&mut self, index: usize) {
+        if self.system.version != Version::Chapin || index >= self.system.chapin_ships.len() {
             return;
         }
-        self.bottle = index;
+        self.chapin_ship = index;
         self.apply_ship();
-        self.banner = Some(self.system.bottles[index].name);
+        self.banner = Some(self.system.chapin_ships[index].name);
     }
 
-    /// La siguiente nave botella (B), solo en la version chapina.
-    pub fn next_bottle(&mut self) {
-        if self.system.version != Version::Chapin || self.system.bottles.is_empty() {
+    /// La siguiente nave chapina (B), solo en la version chapina.
+    pub fn next_ship(&mut self) {
+        if self.system.version != Version::Chapin || self.system.chapin_ships.is_empty() {
             return;
         }
-        self.bottle = (self.bottle + 1) % self.system.bottles.len();
+        self.chapin_ship = (self.chapin_ship + 1) % self.system.chapin_ships.len();
         self.apply_ship();
-        self.banner = Some(self.system.bottles[self.bottle].name);
+        self.banner = Some(self.system.chapin_ships[self.chapin_ship].name);
     }
 
-    /// La nave de la version que se ve: la OCASO-1 o la botella elegida.
+    /// La nave chapina elegida, si se esta en la version chapina.
+    pub fn chapin_ship(&self) -> Option<&crate::scene::ChapinShip> {
+        (self.system.version == Version::Chapin)
+            .then(|| self.system.chapin_ships.get(self.chapin_ship))
+            .flatten()
+    }
+
+    /// La nave de la version que se ve: la OCASO-1 o la chapina elegida.
     fn apply_ship(&mut self) {
-        match self.system.bottles.get(self.bottle).filter(|_| self.system.version == Version::Chapin) {
-            Some(bottle) => {
-                self.system.ship_mesh = [bottle.mesh; 3];
-                self.system.ship_material = Material::Bottle;
-                // Con la boca un poco hacia arriba: desde la camara, que va
-                // atras y arriba, se ve la etiqueta y no solo el fondo.
-                self.system.ship_fix = DQuat::from_axis_angle(DVec3::X, BOTTLE_PITCH);
+        match self.chapin_ship().copied() {
+            Some(ship) => {
+                self.system.ship_mesh = ship.lods;
+                self.system.ship_material = ship.material;
+                self.system.ship_fix = DQuat::from_axis_angle(DVec3::X, ship.pitch);
             }
             None => {
                 self.system.ship_fix = DQuat::IDENTITY;
@@ -1447,17 +1452,12 @@ impl App {
 
     /// Lo que sale por detras de la nave.
     fn exhaust_style(&self) -> effects::Exhaust {
-        match self.system.bottles.get(self.bottle).filter(|_| self.system.version == Version::Chapin) {
-            Some(bottle) => bottle.exhaust,
-            None => effects::Exhaust::Plasma,
-        }
+        self.chapin_ship().map_or(effects::Exhaust::Plasma, |ship| ship.exhaust)
     }
 
-    /// El nombre de la nave botella elegida, en la version chapina.
-    pub fn bottle_name(&self) -> Option<&'static str> {
-        (self.system.version == Version::Chapin)
-            .then(|| self.system.bottles.get(self.bottle).map(|b| b.name))
-            .flatten()
+    /// El nombre de la nave chapina elegida, en la version chapina.
+    pub fn ship_name(&self) -> Option<&'static str> {
+        self.chapin_ship().map(|ship| ship.name)
     }
 
     /// Estadisticas del terreno del planeta mas cercano a la nave.
@@ -2354,7 +2354,7 @@ impl App {
                 ship_pos,
                 ship_rot * self.system.ship_fix,
                 self.throttle,
-                if self.system.version == Version::Chapin { config::BOTTLE_LENGTH } else { config::SHIP_LENGTH },
+                self.chapin_ship().map_or(config::SHIP_LENGTH, |ship| ship.length),
                 t,
                 camera.pos,
                 self.exhaust_style(),
@@ -2390,9 +2390,9 @@ impl App {
         let rot = (self.aim * look).normalize();
         let mut pos = match self.camera_mode {
             CameraMode::Chase => {
-                let offset = if self.system.version == Version::Chapin {
+                let offset = if let Some(ship) = self.chapin_ship() {
                     let [x, y, z] = config::BOTTLE_CHASE;
-                    DVec3::new(x, y, z)
+                    DVec3::new(x, y, z) * (ship.length / config::BOTTLE_LENGTH)
                 } else {
                     DVec3::new(2.2, config::CHASE_HEIGHT, config::CHASE_DISTANCE)
                 };
@@ -2744,9 +2744,6 @@ struct Transition {
     age: f32,
     toward: Toward,
 }
-
-/// Cuanto se inclinan las naves botella con la boca hacia arriba (radianes).
-const BOTTLE_PITCH: f64 = 0.38;
 
 /// Segundos que se ve el titulo de la transicion (la cortina dura menos).
 const TITLE: f32 = 2.6;
@@ -3426,6 +3423,34 @@ mod tests {
 
     /// Pegada a Faro, la nave se va con el motor a fondo hacia afuera (antes
     /// su gravedad era la de un planeta de 140 km metida en 12 y la tragaba).
+    #[test]
+    fn the_chapin_vehicles_fly_nose_first_with_their_wheels_down() {
+        use crate::scene::Surface;
+        let app = App::new(64, 36).unwrap();
+        let vehicles: Vec<_> = app.system.chapin_ships.iter().filter(|s| matches!(s.material, Material::Vehicle)).collect();
+        assert_eq!(vehicles.len(), 3);
+        for ship in vehicles {
+            let mesh = &app.system.meshes[ship.lods[0]];
+            let mean = |pick: &dyn Fn(usize) -> bool| {
+                let picked: Vec<Vec3> = (0..mesh.positions.len()).filter(|&i| pick(i)).map(|i| mesh.positions[i]).collect();
+                assert!(!picked.is_empty(), "{}", ship.name);
+                picked.iter().fold(Vec3::ZERO, |a, &p| a + p) / picked.len() as f32
+            };
+            let surface = |i: usize| Surface::from_code(mesh.uvs[i].x);
+            let all = mean(&|_| true);
+            // Los faros (luces blancas) adelante, en -Z; las llantas abajo.
+            let lights = mean(&|i| surface(i) == Surface::Light && mesh.colors[i].min_element() > 0.6);
+            let wheels = mean(&|i| surface(i) == Surface::Rubber);
+            assert!(lights.z < all.z - 0.2 * ship.length as f32, "{}: faros en z {}", ship.name, lights.z);
+            assert!(wheels.y < all.y, "{}: llantas en y {}", ship.name, wheels.y);
+            // Mide lo que dice su largo, a lo largo de z.
+            let (lo, hi) = mesh.positions.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), &p| (lo.min(p), hi.max(p)));
+            let size = hi - lo;
+            assert!((size.z - ship.length as f32).abs() < 0.01, "{}: {size:?}", ship.name);
+            assert!(size.x < size.z && size.y < size.z, "{}: {size:?}", ship.name);
+        }
+    }
+
     #[test]
     fn the_ship_can_leave_faro_from_its_surface() {
         let mut app = App::new(64, 36).unwrap();

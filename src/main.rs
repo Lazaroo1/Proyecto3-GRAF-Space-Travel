@@ -56,6 +56,8 @@ struct Options {
     preset: Option<usize>,
     /// Abrir la marimba de la Luna al arrancar.
     marimba: bool,
+    /// La nave chapina con que se empieza (1 a 9).
+    ship: Option<usize>,
 }
 
 const USAGE: &str = "\
@@ -65,6 +67,8 @@ uso: ocaso [opciones]
   --vista NOMBRE       inicia o captura solo la vista elegida
   --recorrido MP4      graba vuelo, acercamiento, vuelta y alejamiento (ffmpeg)
   --marimba             arranca en la Luna de Xelaju con la marimba abierta
+  --nave N              la nave de la version chapina (1-6 botellas, 7 tuk-tuk,
+                        8 camioneta, 9 colectivo)
   --captura-marimba DIR guarda fotos del minijuego de la marimba sin ventana
   --bench FRAMES        mide cada vista fija FRAMES veces sin abrir ventana
   --wire                empieza con el wireframe encendido (F3)
@@ -81,6 +85,7 @@ fn parse_args() -> Result<Options, String> {
         fog_only: false,
         preset: None,
         marimba: false,
+        ship: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -110,6 +115,13 @@ fn parse_args() -> Result<Options, String> {
             }
             "--wire" => options.wireframe = true,
             "--marimba" => options.marimba = true,
+            "--nave" => {
+                let n: usize = args.next().ok_or("--nave espera un numero")?.parse().map_err(|_| "nave invalida")?;
+                if !(1..=9).contains(&n) {
+                    return Err("--nave va de 1 a 9".into());
+                }
+                options.ship = Some(n - 1);
+            }
             "--captura-marimba" => {
                 let dir = args.next().ok_or("--captura-marimba espera una carpeta")?;
                 options.mode = Mode::GameCapture(PathBuf::from(dir));
@@ -164,6 +176,10 @@ fn new_app(options: &Options) -> Result<App, String> {
     app.debug.wireframe = options.wireframe;
     app.debug.lod_colors = options.lod_colors;
     app.debug.fog_only = options.fog_only;
+    if let Some(ship) = options.ship {
+        // Se pone al entrar a la version chapina.
+        app.chapin_ship = ship;
+    }
     if let Some(i) = options.preset {
         app.apply_preset(&PRESETS[i]);
     }
@@ -451,7 +467,7 @@ fn run_window(options: &Options) -> Result<(), String> {
             hud.intro_over = true;
         }
         if rl.is_key_pressed(KeyboardKey::KEY_B) {
-            app.next_bottle();
+            app.next_ship();
         }
         let digits = [
             KeyboardKey::KEY_ONE,
@@ -460,10 +476,13 @@ fn run_window(options: &Options) -> Result<(), String> {
             KeyboardKey::KEY_FOUR,
             KeyboardKey::KEY_FIVE,
             KeyboardKey::KEY_SIX,
+            KeyboardKey::KEY_SEVEN,
+            KeyboardKey::KEY_EIGHT,
+            KeyboardKey::KEY_NINE,
         ];
         for (index, key) in digits.into_iter().enumerate() {
             if rl.is_key_pressed(key) {
-                app.select_bottle(index);
+                app.select_ship(index);
             }
         }
         if rl.is_key_pressed(KeyboardKey::KEY_Y) {

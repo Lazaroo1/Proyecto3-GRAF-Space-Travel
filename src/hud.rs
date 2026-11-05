@@ -270,7 +270,7 @@ pub fn draw(
     if hud.hidden {
         return;
     }
-    let chapin = app.bottle_name();
+    let chapin = app.ship_name();
 
     // Intro: el titulo aparece y se desvanece en los primeros segundos.
     if hud.age < INTRO && !hud.intro_over {
@@ -391,7 +391,7 @@ pub fn draw(
             "X: freno de emergencia   ·   H (o Inicio): volver al principio sin reiniciar el tiempo".to_string(),
             "L: modo local   ·   O: crucero (rodea el planeta)   ·   N: ir al siguiente lugar (también a Faro)".to_string(),
             "Y: ruta predicha, la línea de a dónde te lleva la gravedad (auto / siempre / nunca)".to_string(),
-            "V: versión chapina / OCASO   ·   B o 1 a 6: nave botella (en la chapina)".to_string(),
+            "V: versión chapina / OCASO   ·   B o 1 a 9: nave (6 botellas, el tuk-tuk, la camioneta y el colectivo)".to_string(),
             "Enter: el minijuego del planeta, cuando el aviso de abajo lo ofrece (la marimba en la Luna de Xelajú)".to_string(),
             "K: pausa   ·   U / I: canción anterior / siguiente   ·   − / +: volumen (en la chapina)".to_string(),
             "T: ajustes en vivo   ·   M: sonido   ·   J: final / renacer   ·   F: gran llamarada de Faro".to_string(),
@@ -541,7 +541,7 @@ fn flight_panel(d: &mut RaylibDrawHandle, fonts: &Fonts, app: &App, width: f32) 
     let f = &app.flight;
     let c = &app.cycle;
     let clock = |seconds: f64| format!("{:02}:{:02}", (seconds / 60.0) as u32, (seconds % 60.0) as u32);
-    let (title, hint) = match (app.bottle_name(), c.phase) {
+    let (title, hint) = match (app.ship_name(), c.phase) {
         (Some(_), _) => ("Versión chapina".to_string(), "V: volver a OCASO"),
         (None, Phase::Agony) => (Phase::Agony.name().to_string(), "J: desatar el final"),
         (None, phase) => (format!("{}   {}", phase.name(), clock(c.tau)), "J: renacer"),
@@ -577,8 +577,8 @@ fn flight_panel(d: &mut RaylibDrawHandle, fonts: &Fonts, app: &App, width: f32) 
         last.value.push_str("   ·   choque");
         last.color = WARN;
     }
-    rows.push(match app.bottle_name() {
-        Some(name) => row("Nave", "B / 1-6", pretty(name)),
+    rows.push(match app.ship_name() {
+        Some(name) => row("Nave", "B / 1-9", pretty(name)),
         None => row("Guatemala", "V", "versión chapina"),
     });
     let (footer, footer_color) = if f.braking {
