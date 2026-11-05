@@ -226,6 +226,13 @@ impl Renderer {
         self.height
     }
 
+    /// Pixeles HDR del ultimo frame que no son numeros finitos (un NaN se
+    /// riega con el bloom y deja un cuadro negro).
+    #[cfg(test)]
+    pub fn non_finite(&self) -> Vec<usize> {
+        (0..self.hdr.len()).filter(|&i| { let c = self.hdr[i]; !(c.x.is_finite() && c.y.is_finite() && c.z.is_finite()) }).collect()
+    }
+
     /// La imagen del ultimo frame, RGBA8 por filas.
     pub fn rgba(&self) -> &[u8] {
         &self.rgba
