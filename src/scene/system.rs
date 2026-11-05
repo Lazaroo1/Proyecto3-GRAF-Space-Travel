@@ -1,5 +1,5 @@
-//! El sistema de OCASO: la estrella moribunda, sus cinco planetas y sus
-//! lunas.
+//! El sistema de OCASO: la estrella moribunda, su companera muerta (Faro,
+//! la estrella de neutrones), sus planetas y sus lunas.
 //!
 //! Todo movimiento es una funcion del tiempo de simulacion `t`: la posicion
 //! en la orbita, el giro sobre el eje y el latido de la estrella. Nada se
@@ -533,6 +533,36 @@ impl System {
             outer: 3.1,
             style: RingStyle::Wrecks,
         });
+        // En OCASO su orbita es de Faro: Cementerio solo existe en la version
+        // chapina (es la Capital).
+        cementerio.absent = true;
+        cementerio.hidden = true;
+
+        // Faro: la estrella de neutrones, a escala real (1 unidad = 1 km).
+        let faro = Body {
+            name: "Faro",
+            label: "Faro",
+            radius: super::faro::RADIUS_KM,
+            pulse: 0.0,
+            orbit_radius: 5200.0,
+            orbit_period: 2600.0,
+            orbit_phase: 3.1,
+            orbit_inclination: -0.06,
+            spin_period: super::faro::PERIOD,
+            spin_phase: 0.0,
+            axial_tilt: 0.1,
+            // La gravedad de juego de un planeta chico: la de verdad (1e14
+            // veces la de la Tierra) no dejaria acercarse.
+            mu: 3.5 * 140.0 * 140.0,
+            soi: 900.0,
+            mesh: 0,
+            material: Material::Faro,
+            surface: None,
+            rings: None,
+            hidden: false,
+            absent: false,
+            host: None,
+        };
         // Anillos delgados de polvo, por dentro de la orbita de su luna.
         vigia.rings = Some(Rings {
             inner: 1.45,
@@ -595,7 +625,7 @@ impl System {
         xela.hidden = true;
 
         let mut system = Self {
-            bodies: vec![star, pira, jardin, vigia, argos, cementerio, parpado, xela],
+            bodies: vec![star, pira, jardin, vigia, argos, cementerio, parpado, xela, faro],
             terrains: vec![
                 None,
                 Some(pira_terrain),
@@ -605,6 +635,7 @@ impl System {
                 Some(cementerio_terrain),
                 Some(parpado_terrain),
                 Some(xela_terrain),
+                None,
             ],
             atmospheres: vec![
                 None,
@@ -614,6 +645,7 @@ impl System {
                 argos_air,
                 None,
                 parpado_air,
+                None,
                 None,
             ],
             meshes,
@@ -658,7 +690,8 @@ impl System {
                         material: body.material,
                         surface: body.surface.clone(),
                         rings: body.rings,
-                        absent: false,
+                        // Faro no existe en la version chapina.
+                        absent: body.name == "Faro",
                         terrain: None,
                         atmosphere: None,
                         props: PropSet::default(),
@@ -783,7 +816,7 @@ impl System {
 
     /// Los lugares para visitar. En Pira (que le da siempre la misma cara a
     /// la estrella) y en Argos quedan cerca del terminador: la estrella baja
-    /// en el horizonte marca el relieve. En Cementerio, al pie de la baliza.
+    /// en el horizonte marca el relieve.
     fn build_sites(&self) -> Vec<Site> {
         let t = 40.0;
         let local = |index: usize, normal: DVec3, toward: DVec3| {
@@ -811,11 +844,6 @@ impl System {
             let (to_star, side, up) = axes(i);
             let (normal, forward) = local(i, (to_star * 0.35 - side * 0.85 + up * 0.4).normalize(), to_star);
             sites.push(Site { body: i, name: "El nido", normal, forward, view: Self::SITE_VIEW });
-        }
-        if let Some(i) = self.find("Cementerio") {
-            let normal = DVec3::new(0.32, 0.22, 0.92).normalize();
-            let forward = normal.cross(DVec3::Y).normalize();
-            sites.push(Site { body: i, name: "La baliza", normal, forward, view: Self::SITE_VIEW });
         }
         // En la luna de Vigia, a la orilla del lago: Vigia del otro lado del
         // agua, con su ojo mirando y reflejado.

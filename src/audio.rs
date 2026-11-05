@@ -11,6 +11,12 @@
 //!   atmosfera.
 //! - **El fondo**: un acorde grave que respira despacio y cambia de tono con
 //!   el planeta cercano.
+//! - **Faro**: un golpe seco cada vez que uno de sus haces pasa por la nave
+//!   (asi suenan los pulsares en un radiotelescopio), chisporroteo con sus
+//!   estallidos y, en la gran llamarada, el estruendo del pico y la cola que
+//!   pulsa con el giro, con las oscilaciones de la corteza que se midieron
+//!   en SGR 1806-20 (18, 26, 30, 92.5, 150 y 625 Hz; Israel et al. 2005,
+//!   Watts y Strohmayer 2006).
 //!
 //! El reloj del audio sigue al de la simulacion: si el juego salta (una
 //! vista fija, rebobinar), el audio salta con el sin disparar golpes viejos.
@@ -37,6 +43,18 @@ pub struct AudioParams {
     pub drone: f32,
     /// Volumen de la marimba de la version chapina (0 apagada).
     pub marimba: f32,
+    /// Faro: fase del giro (vueltas), vueltas por segundo, en que fraccion de
+    /// la vuelta pasa el haz norte por la nave y que tan fuerte se oye cada
+    /// haz (0 si la nave no esta en su cono).
+    pub pulsar_phase: f64,
+    pub pulsar_rate: f64,
+    pub pulse_at: f32,
+    pub pulse_north: f32,
+    pub pulse_south: f32,
+    /// Estallidos (0 a 1), el pico de la gran llamarada y su cola (0 a 1).
+    pub bursts: f32,
+    pub spike: f32,
+    pub tail: f32,
     pub master: f32,
 }
 
@@ -51,6 +69,14 @@ impl Default for AudioParams {
             drone_hz: 55.0,
             drone: 0.0,
             marimba: 0.0,
+            pulsar_phase: 0.0,
+            pulsar_rate: 0.5,
+            pulse_at: 0.0,
+            pulse_north: 0.0,
+            pulse_south: 0.0,
+            bursts: 0.0,
+            spike: 0.0,
+            tail: 0.0,
             master: 0.8,
         }
     }
@@ -104,7 +130,24 @@ pub struct Synth {
     click_lp: LowPass,
     marimba: crate::marimba::Marimba,
     marimba_level: f32,
+    /// Faro: fase del giro que suena, ultimo pulso disparado, los golpes que
+    /// suenan, el estruendo del pico, las fases de las oscilaciones y los
+    /// filtros del chisporroteo.
+    pulsar: f64,
+    last_pulse: i64,
+    ticks: Vec<Thump>,
+    boom: Option<f32>,
+    qpo: [f32; 6],
+    bursts: f32,
+    tail: f32,
+    crackle_hp: LowPass,
+    crackle_lp: LowPass,
+    rumble_lp: LowPass,
 }
+
+/// Oscilaciones de la corteza en la cola de la llamarada de SGR 1806-20: Hz y
+/// amplitud relativa.
+const QPO: [(f32, f32); 6] = [(18.0, 0.7), (26.0, 0.35), (30.0, 0.6), (92.5, 0.5), (150.0, 0.25), (625.0, 0.12)];
 
 impl Default for Synth {
     fn default() -> Self {
@@ -136,7 +179,23 @@ impl Synth {
             click_lp: LowPass::default(),
             marimba: crate::marimba::Marimba::new(),
             marimba_level: 0.0,
+            pulsar: 0.0,
+            last_pulse: i64::MIN,
+            ticks: Vec::new(),
+            boom: None,
+            qpo: [0.0; 6],
+            bursts: 0.0,
+            tail: 0.0,
+            crackle_hp: LowPass::default(),
+            crackle_lp: LowPass::default(),
+            rumble_lp: LowPass::default(),
         }
+    }
+
+    /// Indice del ultimo pulso de Faro en la fase `phase` (dos por vuelta:
+    /// el haz norte en `at` y el sur media vuelta despues).
+    fn pulse_index(phase: f64, at: f32) -> i64 {
+        ((phase - at as f64) * 2.0).floor() as i64
     }
 
     pub fn set(&mut self, params: AudioParams) {
@@ -185,6 +244,23 @@ impl Synth {
             self.last_beat = Self::beat_index(self.phase);
         } else {
             self.phase += (target.beat_phase - self.phase) * 0.1;
+        }
+        // La fase de Faro sigue a la del juego igual que la del latido.
+        if self.last_pulse == i64::MIN
+            || (target.pulsar_phase - self.pulsar).abs() > 0.3
+            || target.pulsar_phase < self.pulsar - 1e-3
+        {
+            self.pulsar = target.pulsar_phase;
+            self.last_pulse = Self::pulse_index(self.pulsar, target.pulse_at);
+        } else {
+            self.pulsar += (target.pulsar_phase - self.pulsar) * 0.1;
+        }
+        // El pico de la llamarada dispara el estruendo una sola vez.
+        if target.spike > 0.5 && self.boom.is_none() {
+            self.boom = Some(0.0);
+        }
+        if target.spike <= 0.0 && self.boom.is_some_and(|age| age > 3.0) {
+            self.boom = None;
         }
         let smooth = 1.0 - (-dt / 0.05).exp();
         for sample in out.iter_mut() {
@@ -253,7 +329,56 @@ impl Synth {
                 0.0
             };
 
-            let mix = (heart * 0.9 + engine + wind + drone + marimba) * target.master;
+            // Faro: un golpe por cada haz que pasa por la nave.
+            self.pulsar += target.pulsar_rate * dt as f64;
+            let index = Self::pulse_index(self.pulsar, target.pulse_at);
+            if index > self.last_pulse {
+                let amplitude = if index.rem_euclid(2) == 0 { target.pulse_north } else { target.pulse_south };
+                if amplitude > 0.01 {
+                    self.ticks.push(Thump { age: 0.0, amplitude, phase: 0.0 });
+                }
+                self.last_pulse = index;
+            }
+            let mut pulses = 0.0;
+            let click = self.white();
+            for tick in &mut self.ticks {
+                // Un chasquido de banda ancha y un golpe grave corto.
+                tick.phase = (tick.phase + (60.0 + 90.0 * (-tick.age * 40.0).exp()) * dt).fract();
+                let thud = (tick.phase * TAU).sin() * (-tick.age / 0.05).exp();
+                let snap = click * (-tick.age / 0.004).exp();
+                pulses += (thud * 0.8 + snap * 0.7) * tick.amplitude;
+                tick.age += dt;
+            }
+            self.ticks.retain(|t| t.age < 0.4);
+            // Estallidos: chisporroteo de ruido que sigue a su luz.
+            self.bursts += (target.bursts - self.bursts) * smooth * 4.0;
+            let noise = self.white();
+            let crackle_low = self.crackle_lp.run(noise, 5000.0);
+            let crackle = (crackle_low - self.crackle_hp.run(crackle_low, 400.0)) * self.bursts;
+            // El estruendo del pico: un barrido grave que tarda en apagarse.
+            let mut boom = 0.0;
+            if let Some(age) = self.boom {
+                let rumble = self.white();
+                let low = self.rumble_lp.run(rumble, 120.0);
+                boom = (low * 3.0 + (TAU * (28.0 + 40.0 * (-age * 1.5).exp()) * age).sin()) * (-age / 1.2).exp();
+                self.boom = Some(age + dt);
+            }
+            // La cola: las oscilaciones de la corteza, que se oyen mas en
+            // ciertas fases del giro, y el pulso de la bola de fuego que gira.
+            self.tail += (target.tail - self.tail) * smooth * 0.2;
+            let mut tail = 0.0;
+            if self.tail > 1e-4 {
+                let spin = (self.pulsar.fract() as f32 * TAU).cos();
+                let window = (0.5 + 0.5 * spin).powi(2);
+                for (k, &(hz, gain)) in QPO.iter().enumerate() {
+                    self.qpo[k] = (self.qpo[k] + hz * dt).fract();
+                    tail += (self.qpo[k] * TAU).sin() * gain;
+                }
+                tail *= self.tail.sqrt() * (0.35 + 0.65 * window) * 0.4;
+            }
+            let faro = pulses * 0.8 + crackle * 0.6 + boom * 0.9 + tail;
+
+            let mix = (heart * 0.9 + engine + wind + drone + marimba + faro) * target.master;
             // Saturacion suave: nunca sale de [-1, 1].
             *sample = mix / (1.0 + mix.abs());
         }

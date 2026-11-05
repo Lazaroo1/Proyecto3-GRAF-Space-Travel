@@ -322,6 +322,9 @@ fn run_window(options: &Options) -> Result<(), String> {
         if rl.is_key_pressed(KeyboardKey::KEY_J) {
             app.press_ending();
         }
+        if rl.is_key_pressed(KeyboardKey::KEY_F) {
+            app.press_flare();
+        }
         if rl.is_key_pressed(KeyboardKey::KEY_M) {
             app.muted = !app.muted;
         }
