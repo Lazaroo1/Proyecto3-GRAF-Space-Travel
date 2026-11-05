@@ -169,7 +169,7 @@ pub struct Preset {
     pub flare: Option<f64>,
 }
 
-pub const PRESETS: [Preset; 55] = [
+pub const PRESETS: [Preset; 56] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
@@ -353,8 +353,8 @@ pub const PRESETS: [Preset; 55] = [
         name: "16_arritmia",
         shot: Shot::Orbit {
             body: "Pira",
-            distance: 3.4,
-            azimuth: 0.3,
+            distance: 3.0,
+            azimuth: 0.6,
             elevation: 0.25,
         },
         time: 700.0,
@@ -804,6 +804,19 @@ pub const PRESETS: [Preset; 55] = [
         chapin: false,
         flare: Some(30.0),
     },
+    Preset {
+        name: "63_el_faro",
+        shot: Shot::Site {
+            body: "Faro",
+            altitude: 384.0,
+            back: 216.0,
+            lift: -120.0,
+        },
+        time: 40.0,
+        act: None,
+        chapin: false,
+        flare: None,
+    },
 ];
 
 pub struct App {
@@ -1002,7 +1015,8 @@ impl App {
         let center = planet.position(t);
         let to_star = (system.bodies[0].position(t) - center).normalize();
         let side = to_star.cross(DVec3::Y).normalize();
-        let start = center + (to_star * 0.8 + side * 0.6).normalize() * (planet.radius * 4.5);
+        // De lado, no entre Pira y la estrella (tan cerca, adentro de ella).
+        let start = center + (to_star * 0.35 + side * 0.94).normalize() * (planet.radius * 4.5);
         let aim = DQuat::look_rotation(center - start, DVec3::Y);
         let ship = ShipState::new(&system.bodies, start, aim, t);
         let eye = eye_target(&system, start, t);
@@ -1302,7 +1316,7 @@ impl App {
         let t = self.sim_time;
         let body = &self.system.bodies[i];
         let distance = (self.ship.world_pos - body.position(t)).length();
-        if distance > 6000.0 {
+        if distance > 8000.0 {
             return None;
         }
         let model = faro::model();
@@ -1314,7 +1328,7 @@ impl App {
             _ => FlarePhase::Ready,
         };
         Some(FaroReadout {
-            distance,
+            distance: distance / faro::SCALE,
             period,
             pdot: model.pdot,
             field: faro::braking_field(faro::PERIOD, model.pdot),
@@ -1747,7 +1761,7 @@ impl App {
             // brillan menos para no hacer una mancha. De muy cerca llenan la
             // pantalla: tambien se bajan.
             let body = &self.system.bodies[i];
-            let pixels = (faro::RADIUS_KM / ((body.position(t) - camera.pos).length() * pixel_angle).max(1e-9)) as f32;
+            let pixels = (faro::RADIUS / ((body.position(t) - camera.pos).length() * pixel_angle).max(1e-9)) as f32;
             let density = (pixels / 8.0).clamp(0.12, 1.0) * (90.0 / pixels).clamp(0.35, 1.0);
             faro::field_lines(&mut self.renderer.lines, body, t, self.faro_flare, camera.pos, density);
         }
@@ -1889,9 +1903,9 @@ impl App {
         // Faro: su tabla de geodesicas tambien depende solo de la distancia.
         let faro_index = self.system.find("Faro").filter(|&i| !self.system.bodies[i].hidden);
         if let Some(i) = faro_index {
-            let rs = faro::model().rs_km;
+            let rs = faro::rs();
             let observer = ((self.system.bodies[i].position(t) - camera.pos).length() / rs) as f32;
-            let radius = (faro::RADIUS_KM / rs) as f32;
+            let radius = (faro::RADIUS / rs) as f32;
             match &mut self.faro_lens {
                 Some(lens) if lens.fits(observer) => {}
                 Some(lens) => lens.rebuild(observer),
@@ -2003,6 +2017,14 @@ impl App {
                 let along = p.pos.dot(to_hole);
                 along < distance || along / p.pos.length() < cos_shadow
             });
+            // Los hilos de luz de Faro no estan en la profundidad que ve el
+            // agujero: detras de el, dentro del cono de su disco, se pintarian
+            // encima del disco y de la sombra.
+            let behind = |p: Vec3| {
+                let along = p.dot(to_hole);
+                along > distance && along / p.length() > hole.cone_cos
+            };
+            self.renderer.lines.retain(|l| !(behind(l.a) || behind(l.b)));
         }
         // La onda gravitacional sale del agujero cuando se abre el ojo y
         // cruza la pantalla en unos tres segundos.
@@ -2828,12 +2850,12 @@ fn faro_frame<'a>(
     let turn = faro::turn_at(body, t, flare);
     shaders::faro::Faro {
         center: (center - camera).as_vec3(),
-        radius: faro::RADIUS_KM as f32,
+        radius: faro::RADIUS as f32,
         lens,
         magnetic: crust.rotate(faro::magnetic_local()).as_vec3(),
         magnetic_before: before.rotate(faro::magnetic_local()).as_vec3(),
         to_crust: crust.conjugate().to_mat3().to_f32(),
-        redshift: (model.surface_lapse / (1.0 - model.rs_km / distance.max(faro::RADIUS_KM)).sqrt()) as f32,
+        redshift: (model.surface_lapse / (1.0 - faro::rs() / distance.max(faro::RADIUS)).sqrt()) as f32,
         pole_temperature: state.pole_temperature as f32,
         conductivity_ratio: faro::CONDUCTIVITY_RATIO as f32,
         polar_cap: model.polar_cap as f32,
@@ -2849,7 +2871,7 @@ fn faro_frame<'a>(
             core: model.core as f32,
             inner: model.inner_cone as f32,
             outer: model.outer_cone as f32,
-            height: model.inner_height_km as f32,
+            height: (model.inner_height_km * faro::SCALE) as f32,
             sparks: faro::SPARKS,
             carousel: (t / (faro::CAROUSEL_TURNS * faro::PERIOD)).fract() as f32,
         },
@@ -3390,6 +3412,48 @@ mod tests {
 
     use super::*;
 
+    /// Pegada a Faro, la nave se va con el motor a fondo hacia afuera (antes
+    /// su gravedad era la de un planeta de 140 km metida en 12 y la tragaba).
+    #[test]
+    fn the_ship_can_leave_faro_from_its_surface() {
+        let mut app = App::new(64, 36).unwrap();
+        let i = app.system.find("Faro").unwrap();
+        let t = 40.0;
+        let center = app.system.bodies[i].position(t);
+        let up = DVec3::new(0.3, 0.9, 0.3).normalize();
+        app.place(center + up * (faro::RADIUS + 3.0), DQuat::look_rotation(up, DVec3::X), t);
+        // Arriba (y) y adelante (hacia afuera) con turbo.
+        let input = FrameInput {
+            thrust: DVec3::new(0.0, 1.0, -1.0),
+            boost: true,
+            ..FrameInput::default()
+        };
+        for _ in 0..600 {
+            app.update(1.0 / 60.0, &input);
+        }
+        let altitude = (app.ship.world_pos - app.system.bodies[i].position(app.sim_time)).length() - faro::RADIUS;
+        assert!(altitude > 200.0, "{altitude}");
+    }
+
+    /// Con la estrella mas grande, ni el arranque ni ninguna vista fija dejan
+    /// la nave dentro de ella (ni rozando su superficie).
+    #[test]
+    fn no_view_starts_inside_the_star() {
+        let mut app = App::new(64, 36).unwrap();
+        let star = |app: &App| {
+            let t = app.sim_time;
+            let state = cycle::at(t, &app.timeline, app.system.star_base);
+            ((app.ship.world_pos - app.system.bodies[0].position(t)).length(), state.star_radius)
+        };
+        let (distance, radius) = star(&app);
+        assert!(distance > radius * 1.1, "arranque: {distance} vs {radius}");
+        for preset in PRESETS.iter() {
+            app.apply_preset(preset);
+            let (distance, radius) = star(&app);
+            assert!(radius == 0.0 || distance > radius * 1.1, "{}: {distance} vs {radius}", preset.name);
+        }
+    }
+
     /// Ningun pixel de Faro sale NaN o infinito, desde ninguna distancia ni
     /// angulo (un NaN se riega con el bloom y deja un cuadro negro).
     #[test]
@@ -3403,7 +3467,7 @@ mod tests {
             let center = app.system.bodies[i].position(t);
             let h = |s: u32| crate::math::hash_u32(k * 7 + s) as f64 / 4_294_967_296.0;
             let dir = DVec3::new(h(1) - 0.5, h(2) - 0.5, h(3) - 0.5).normalize();
-            let distance = 13.5 * (1.0 + 600.0 * h(4).powi(3));
+            let distance = faro::RADIUS * 1.12 * (1.0 + 600.0 * h(4).powi(3));
             let pos = center + dir * distance;
             // Mirando a Faro con algo de desvio.
             let look = (center - pos).normalize() + DVec3::new(h(5) - 0.5, h(6) - 0.5, h(7) - 0.5) * 0.6;

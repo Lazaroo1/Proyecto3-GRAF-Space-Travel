@@ -381,7 +381,8 @@ impl System {
         let star = Body {
             name: "Ocaso",
             label: "Ocaso",
-            radius: 320.0,
+            // El cuerpo mas grande del sistema (Vigia mide 540).
+            radius: 560.0,
             pulse: 0.012,
             orbit_radius: 0.0,
             orbit_period: 1.0,
@@ -408,7 +409,9 @@ impl System {
         let (mut pira, pira_terrain, pira_air) = PlanetSpec {
             name: "Pira",
             radius: 110.0,
-            orbit: 800.0,
+            // Pegada a la estrella, pero afuera de ella aun hinchada (605) y
+            // antes de Jardin (que empieza en 1100).
+            orbit: 950.0,
             period: 260.0,
             phase: 2.4,
             inclination: 0.0,
@@ -537,11 +540,12 @@ impl System {
             host: None,
         };
 
-        // Faro: la estrella de neutrones, a escala real (1 unidad = 1 km).
+        // Faro: la estrella de neutrones, con sus proporciones reales (1
+        // unidad = 500 m).
         let faro = Body {
             name: "Faro",
             label: "Faro",
-            radius: super::faro::RADIUS_KM,
+            radius: super::faro::RADIUS,
             pulse: 0.0,
             orbit_radius: 5200.0,
             orbit_period: 2600.0,
@@ -553,10 +557,12 @@ impl System {
             spin_period: 0.0,
             spin_phase: 0.0,
             axial_tilt: 0.1,
-            // La gravedad de juego de un planeta chico: la de verdad (1e14
-            // veces la de la Tierra) no dejaria acercarse.
-            mu: 3.5 * 140.0 * 140.0,
-            soi: 900.0,
+            // La gravedad de juego de un planeta chico (2 en la superficie,
+            // menos que la de Pira): la de verdad (1e11 veces la de la
+            // Tierra) no dejaria acercarse, y con mas los motores no sacan a
+            // la nave de junto a ella.
+            mu: 2.0 * super::faro::RADIUS * super::faro::RADIUS,
+            soi: 1800.0,
             mesh: 0,
             material: Material::Faro,
             surface: None,
@@ -664,7 +670,7 @@ impl System {
             prop_models: props::build_models(),
             props: Vec::new(),
             prop_seed: config::PROP_SEED,
-            star_base: 320.0,
+            star_base: 560.0,
             eye_body: 3,
             sites: Vec::new(),
             version: Version::Ocaso,
@@ -859,6 +865,21 @@ impl System {
                 normal,
                 forward,
                 view: (3.0, 6.0, 6.0),
+            });
+        }
+        // Faro no tiene suelo: se llega por encima de su ecuador, donde los
+        // haces barren, mirando a la estrella (el objetivo de la vista cae en
+        // su centro: altura * 0.25 + elevacion = -radio).
+        if let Some(i) = self.find("Faro") {
+            let normal = DVec3::new(0.85, 0.3, 0.43).normalize();
+            let forward = DVec3::Y.cross(normal).normalize();
+            let altitude = 16.0 * super::faro::RADIUS;
+            sites.push(Site {
+                body: i,
+                name: "El faro",
+                normal,
+                forward,
+                view: (altitude, 9.0 * super::faro::RADIUS, -(altitude * 0.25 + super::faro::RADIUS)),
             });
         }
         sites

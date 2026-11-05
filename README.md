@@ -43,9 +43,11 @@ con luces que alumbran lo de alrededor y algo que flota a su lado. La tecla
 
 Faro está hecha con los números de **1E 1547.0−5408**, un magnetar que también
 emite pulsos de radio (gira cada 2.07 s, campo de 3.2×10¹⁴ G), y todo lo
-demás sale de ecuaciones publicadas. Cerca de ella **1 unidad = 1 km**: la
-estrella mide 12 km, sus casquetes polares 130 m, sus haces nacen a 120 km y
-los arcos de su magnetosfera suben a 400-700 km. El tiempo también es el real.
+demás sale de ecuaciones publicadas. La estrella mide 12 km, sus casquetes
+polares 130 m, sus haces nacen a 120 km y los arcos de su magnetosfera suben a
+400-700 km, todo en su proporción real; se dibuja al doble (1 unidad = 500 m)
+para que se vea. El tiempo también es el real. Con **N** se llega a **El
+faro**, por encima de su ecuador, donde barren los haces.
 El detalle, las ecuaciones y las fuentes están en
 [EXPLICACION.md](EXPLICACION.md#faro-la-estrella-de-neutrones-que-es-púlsar-y-magnetar).
 
@@ -142,7 +144,7 @@ Opciones:
 
 ```sh
 cargo run --release -- --res 1920x1080        # resolución del render (por defecto 1280x720)
-cargo run --release -- --captura capturas     # las 55 vistas fijas como PNG, sin abrir ventana
+cargo run --release -- --captura capturas     # las 56 vistas fijas como PNG, sin abrir ventana
 cargo run --release -- --bench 30             # mide cada vista fija y da medianas por etapa
 cargo run --release -- --wire --lod           # empieza con wireframe y colores de LOD
 cargo test --release                          # pruebas de vuelo, raster, sombras y gas volumétrico
@@ -160,7 +162,7 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | Turbo | Shift |
 | **Freno de emergencia** (prioridad sobre turbo y crucero) | **X sostenida** |
 | **Recuperar posición** junto a Pira, conservando el ciclo | **H** (o Inicio / Home) |
-| **Viajar al siguiente lugar** (claro, géiseres, nido, espejo; en la versión chapina se llega de día) | **N** |
+| **Viajar al siguiente lugar** (claro, géiseres, nido, espejo y el faro; en la versión chapina se llega de día) | **N** |
 | Acercar / alejar la cámara | Rueda |
 | Cámara de persecución / cabina | C |
 | Asistente de vuelo / gravedad | Z / G |
@@ -174,7 +176,7 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | Saltar 30 s atrás / adelante en el tiempo | [ / ] |
 | **Desatar el final** de la estrella / hacerla renacer | **J** |
 | **Gran llamarada** de Faro | **F** |
-| Recorrer las vistas fijas (las mismas de `--captura`) | AvPág / RePág |
+| Recorrer las vistas fijas (las mismas de `--captura`) | AvPág / RePág, o **.** / **,** en las laptops |
 | **Ajustes en vivo** (radio, órbita, semilla, shaders...) | T, flechas y Shift |
 | Wireframe / colores de LOD / LOD encendido | F3 / F4 / F5 |
 | Otra semilla para los objetos de la superficie | F6 |
@@ -208,7 +210,7 @@ se muestran con F1; F2 abre contadores y F9 oculta el HUD.
 - La franja exterior impide escapar indefinidamente. H (o Inicio/Home) recupera una
   posicion segura: es una ayuda del piloto, no parte del recorrido evaluado.
 
-Vistas nuevas, accesibles tambien con AvPag/RePag:
+Vistas nuevas, accesibles tambien con AvPag/RePag (o el punto y la coma):
 
 ```sh
 cargo run --release -- --vista 22_agonia

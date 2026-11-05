@@ -7,10 +7,13 @@ magnetosfera, le revienta en estallidos y, con **F**, en una gran llamarada).
 Cementerio sigue existiendo solo en la versión chapina, como la Capital.
 
 Está hecha con los números de **1E 1547.0−5408**, un magnetar que también
-emite pulsos de radio, y todo lo demás sale de ecuaciones publicadas. En el
-juego **1 unidad = 1 km** cerca de Faro: la estrella mide 12 unidades, sus
-casquetes polares 130 m, sus haces nacen a 120 km y los arcos de su
-magnetosfera suben a 400-700 km, todo en su proporción real. Los tiempos
+emite pulsos de radio, y todo lo demás sale de ecuaciones publicadas. La
+estrella mide 12 km, sus casquetes polares 130 m, sus haces nacen a 120 km y
+los arcos de su magnetosfera suben a 400-700 km, todo en su proporción real.
+Se dibuja al doble (`faro::SCALE`: 1 unidad = 500 m, 24 unidades de radio)
+para que se vea junto a los planetas; la física no cambia. Su gravedad para la
+nave es la de un planeta chico (2 en la superficie): con la de un planeta de
+140 km metida en 12, los motores no la sacaban de junto a ella. Los tiempos
 también son reales: el giro de 2.07 s, estallidos de milisegundos y una cola
 de seis minutos después de la gran llamarada.
 
@@ -207,7 +210,7 @@ gran llamarada.
 
 | Real | Comprimido o visualizado |
 | --- | --- |
-| Proporciones de la estrella, sus casquetes, la magnetosfera y los haces (1 unidad = 1 km) | El sistema no está en km: la supergigante y las órbitas son de juego |
+| Proporciones de la estrella, sus casquetes, la magnetosfera y los haces | Se dibuja al doble (1 unidad = 500 m); el sistema no está en km: la supergigante y las órbitas son de juego |
 | Lente de Schwarzschild exacta, corrimiento al rojo | La corteza es de color falso (el ojo vería un blanco azulado parejo) y la gravedad sobre la nave es la de un planeta chico |
 | Giro de 2.07 s, estallidos de ms, pico de 0.2 s, cola de 380 s, antiglitch | La torsión se acumula en 8 s (de verdad, años) y el precursor llega 2 s antes |
 | Forma de las líneas (TLK), del haz (Rankin), del carrusel | El plasma brilla en visible y sus paquetes van 10⁴ veces más lentos |
@@ -770,7 +773,7 @@ cara a la estrella.
 | Vigía | Gigante gaseoso morado con un vórtice que gira y una tormenta en forma de ojo, de gas rosa, que sigue a la nave; la pupila late. Anillos delgados de polvo. |
 | Párpado | La luna de Vigía: cristal y lagos espejo donde se refleja el ojo. |
 | Argos | Carne en pliegues con un ojo enorme que gira dentro de ella para seguir a la nave por todo el sistema, con una corona de ojos chicos en sus párpados; parpadea, cierra la pupila de cerca y, volando bajo, va debajo de la nave. La carne está llena de ojos chicos que también te miran. |
-| Faro | La compañera muerta: una estrella de neutrones de 12 km, a escala, vista a través de su propia gravedad, con su magnetosfera torcida y dos haces que barren el sistema (ver la primera sección). |
+| Faro | La compañera muerta: una estrella de neutrones de 12 km, con sus proporciones reales, vista a través de su propia gravedad, con su magnetosfera torcida y dos haces que barren el sistema (ver la primera sección). |
 
 ## 4. Shaders ([shaders/](src/shaders))
 

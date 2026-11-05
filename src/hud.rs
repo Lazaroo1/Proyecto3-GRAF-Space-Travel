@@ -386,13 +386,13 @@ pub fn draw(
             "W / S: adelante / atrás   ·   A / D: lados   ·   Espacio / Ctrl: subir / bajar".to_string(),
             "Q / E: alabeo   ·   Shift: turbo   ·   C: cámara   ·   P: foto   ·   Tab: soltar el mouse".to_string(),
             "X: freno de emergencia   ·   H (o Inicio): volver al principio sin reiniciar el tiempo".to_string(),
-            "L: modo local   ·   O: crucero (rodea el planeta)   ·   N: ir al siguiente lugar".to_string(),
+            "L: modo local   ·   O: crucero (rodea el planeta)   ·   N: ir al siguiente lugar (también a Faro)".to_string(),
             "Y: ruta predicha, la línea de a dónde te lleva la gravedad (auto / siempre / nunca)".to_string(),
             "V: versión chapina / OCASO   ·   B o 1 a 6: nave botella (en la chapina)".to_string(),
             "K: pausa   ·   U / I: canción anterior / siguiente   ·   − / +: volumen (en la chapina)".to_string(),
             "T: ajustes en vivo   ·   M: sonido   ·   J: final / renacer   ·   F: gran llamarada de Faro".to_string(),
             "R: rebobinar   ·   [ ]: −30 / +30 s".to_string(),
-            "RePág / AvPág: vistas fijas   ·   F3: wireframe   ·   F4: colores de LOD   ·   F5: LOD".to_string(),
+            "RePág / AvPág o , / .: vistas fijas   ·   F3: wireframe   ·   F4: colores de LOD   ·   F5: LOD".to_string(),
             "F6: otra semilla   ·   F7: congelar frustum   ·   F1: ayuda   ·   F2: estadísticas   ·   F9: ocultar todo".to_string(),
         ];
         let top = lines_panel(d, fonts, 12.0, 12.0, &lines, Some(height));
