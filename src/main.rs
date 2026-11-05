@@ -44,6 +44,8 @@ enum Mode {
     Tour(PathBuf),
     /// Fotos del minijuego de la marimba, sin ventana.
     GameCapture(PathBuf),
+    /// Fotos de la carrera del Periferico, sin ventana.
+    RaceCapture(PathBuf),
 }
 
 struct Options {
@@ -54,8 +56,9 @@ struct Options {
     lod_colors: bool,
     fog_only: bool,
     preset: Option<usize>,
-    /// Abrir la marimba de la Luna al arrancar.
+    /// Abrir la marimba de la Luna (o la carrera) al arrancar.
     marimba: bool,
+    race: bool,
     /// La nave chapina con que se empieza (1 a 9).
     ship: Option<usize>,
 }
@@ -67,9 +70,11 @@ uso: ocaso [opciones]
   --vista NOMBRE       inicia o captura solo la vista elegida
   --recorrido MP4      graba vuelo, acercamiento, vuelta y alejamiento (ffmpeg)
   --marimba             arranca en la Luna de Xelaju con la marimba abierta
+  --carrera             arranca en la capital con la carrera del Periferico abierta
   --nave N              la nave de la version chapina (1-6 botellas, 7 tuk-tuk,
                         8 camioneta, 9 colectivo)
   --captura-marimba DIR guarda fotos del minijuego de la marimba sin ventana
+  --captura-carrera DIR guarda fotos de la carrera del Periferico sin ventana
   --bench FRAMES        mide cada vista fija FRAMES veces sin abrir ventana
   --wire                empieza con el wireframe encendido (F3)
   --lod                 empieza con los colores de LOD encendidos (F4)
@@ -85,6 +90,7 @@ fn parse_args() -> Result<Options, String> {
         fog_only: false,
         preset: None,
         marimba: false,
+        race: false,
         ship: None,
     };
     let mut args = std::env::args().skip(1);
@@ -115,12 +121,17 @@ fn parse_args() -> Result<Options, String> {
             }
             "--wire" => options.wireframe = true,
             "--marimba" => options.marimba = true,
+            "--carrera" => options.race = true,
             "--nave" => {
                 let n: usize = args.next().ok_or("--nave espera un numero")?.parse().map_err(|_| "nave invalida")?;
                 if !(1..=9).contains(&n) {
                     return Err("--nave va de 1 a 9".into());
                 }
                 options.ship = Some(n - 1);
+            }
+            "--captura-carrera" => {
+                let dir = args.next().ok_or("--captura-carrera espera una carpeta")?;
+                options.mode = Mode::RaceCapture(PathBuf::from(dir));
             }
             "--captura-marimba" => {
                 let dir = args.next().ok_or("--captura-marimba espera una carpeta")?;
@@ -163,6 +174,7 @@ fn main() {
         Mode::Bench(frames) => run_bench(&options, *frames),
         Mode::Tour(path) => run_tour(&options, path),
         Mode::GameCapture(dir) => run_game_capture(&options, dir),
+        Mode::RaceCapture(dir) => run_race_capture(&options, dir),
     };
     if let Err(error) = result {
         eprintln!("error: {error}");
@@ -190,6 +202,8 @@ fn run_window(options: &Options) -> Result<(), String> {
     let mut app = new_app(options)?;
     if options.marimba {
         app.apply_preset(xela_preset());
+    } else if options.race {
+        app.apply_preset(capital_preset());
     } else if options.preset.is_none() {
         app.apply_preset(&PRESETS[21]);
     }
@@ -247,10 +261,12 @@ fn run_window(options: &Options) -> Result<(), String> {
     });
     let mut game_block = vec![0.0f32; GAME_BLOCK];
     let mut minigame: Option<Box<dyn minijuegos::Minigame>> = None;
+    let mut opening: Option<minijuegos::Kind> = None;
     let mut game_frame = vec![0u8; options.width * options.height * 4];
-    if options.marimba {
+    if options.marimba || options.race {
         app.render();
-        minigame = Some(minijuegos::start(minijuegos::Kind::Marimba, app.renderer.rgba(), options.width, options.height));
+        let kind = if options.race { minijuegos::Kind::Carrera } else { minijuegos::Kind::Marimba };
+        minigame = Some(minijuegos::start(kind, &app));
         hud.intro_over = true;
     }
     // Las canciones de la version chapina.
@@ -302,11 +318,22 @@ fn run_window(options: &Options) -> Result<(), String> {
         if rl.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
             break;
         }
+        // Un minijuego pedido el frame pasado: ya se vio el aviso, se abre
+        // (la carrera tarda un par de segundos en hornear las naves).
+        if let Some(kind) = opening.take() {
+            minigame = Some(minijuegos::start(kind, &app));
+            continue;
+        }
         hud.prompt = minijuegos::available(&app).map(minijuegos::Kind::prompt);
         if rl.is_key_pressed(KeyboardKey::KEY_ENTER) || rl.is_key_pressed(KeyboardKey::KEY_KP_ENTER) {
             if let Some(kind) = minijuegos::available(&app) {
-                minigame = Some(minijuegos::start(kind, app.renderer.rgba(), options.width, options.height));
-                continue;
+                opening = Some(kind);
+                hud.prompt = None;
+                if kind == minijuegos::Kind::Carrera {
+                    // Ya visible en este frame (los avisos entran en 0.15 s).
+                    hud.banner = Some(("Horneando las naves…", hud.age - 0.3));
+                    hud.banner_where = None;
+                }
             }
         }
         if rl.is_key_pressed(KeyboardKey::KEY_TAB) {
@@ -524,11 +551,13 @@ fn run_window(options: &Options) -> Result<(), String> {
     Ok(())
 }
 
-/// Las teclas de un minijuego: D F J K, las flechas, Enter y Esc.
+/// Las teclas de un minijuego: D F J K, las flechas (y W A S D), Enter, Esc,
+/// Shift y H.
 fn read_game_keys(rl: &RaylibHandle) -> minijuegos::Keys {
     use KeyboardKey::*;
     let lanes = [KEY_D, KEY_F, KEY_J, KEY_K];
     let pressed = |keys: &[KeyboardKey]| keys.iter().any(|&k| rl.is_key_pressed(k));
+    let down = |keys: &[KeyboardKey]| keys.iter().any(|&k| rl.is_key_down(k));
     minijuegos::Keys {
         lane_pressed: lanes.map(|k| rl.is_key_pressed(k)),
         lane_down: lanes.map(|k| rl.is_key_down(k)),
@@ -536,9 +565,20 @@ fn read_game_keys(rl: &RaylibHandle) -> minijuegos::Keys {
         down: pressed(&[KEY_DOWN, KEY_S]),
         left: pressed(&[KEY_LEFT]),
         right: pressed(&[KEY_RIGHT]),
-        enter: pressed(&[KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]),
+        enter: pressed(&[KEY_ENTER, KEY_KP_ENTER]),
         escape: pressed(&[KEY_ESCAPE, KEY_BACKSPACE]),
+        steer: f32::from(i8::from(down(&[KEY_RIGHT, KEY_D])) - i8::from(down(&[KEY_LEFT, KEY_A]))),
+        throttle: down(&[KEY_UP, KEY_W]),
+        brake: down(&[KEY_DOWN, KEY_S]),
+        boost: pressed(&[KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT, KEY_SPACE]),
+        horn: pressed(&[KEY_H]),
     }
+}
+
+/// La capital de lejos, con su anillo (version chapina): ahi se ofrece la
+/// carrera.
+fn capital_preset() -> &'static app::Preset {
+    PRESETS.iter().find(|p| p.name == "51_capital").expect("la vista de la capital")
 }
 
 /// El lugar de la marimba en la Luna de Xelaju (version chapina): al
@@ -610,6 +650,49 @@ fn run_game_capture(options: &Options, dir: &Path) -> Result<(), String> {
         step(&mut game, &mut block, keys);
     }
     save(&mut game, &mut frame, "marimba_7_resultados")?;
+    Ok(())
+}
+
+/// Fotos de la carrera del Periferico con el piloto automatico: la largada,
+/// el semaforo, la carrera en varios momentos y la meta.
+fn run_race_capture(options: &Options, dir: &Path) -> Result<(), String> {
+    use minijuegos::Minigame;
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut app = new_app(options)?;
+    app.apply_preset(capital_preset());
+    let start = std::time::Instant::now();
+    let mut race = minijuegos::race(&app, minijuegos::Records::in_memory());
+    println!("naves horneadas en {:.0} ms", start.elapsed().as_secs_f64() * 1000.0);
+    let (w, h) = (options.width, options.height);
+    let mut frame = vec![0u8; w * h * 4];
+    let mut save = |race: &mut minijuegos::carrera::Carrera, name: &str| -> Result<(), String> {
+        // La mediana de nueve: un solo frame en frio no dice mucho.
+        let mut times: Vec<f64> = (0..9)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                race.draw(&mut frame);
+                start.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        times.sort_by(f64::total_cmp);
+        let ms = times[4];
+        let path = dir.join(format!("{name}.png"));
+        render::png::write_rgba(&path, w as u32, h as u32, &frame).map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("{name:<26} {ms:6.2} ms   -> {}", path.display());
+        Ok(())
+    };
+    save(&mut race, "carrera_1_largada")?;
+    race.set_autopilot(true);
+    race.start();
+    let dt = 1.0 / 60.0;
+    let mut elapsed = 0.0;
+    for (at, name) in [(1.6, "carrera_2_semaforo"), (7.0, "carrera_3_arranque"), (16.0, "carrera_4_curva"), (27.0, "carrera_5_loma"), (44.0, "carrera_6_tumulos"), (70.0, "carrera_7_segunda_vuelta"), (260.0, "carrera_8_meta")] {
+        while elapsed < at {
+            race.update(dt, &minijuegos::Keys::default());
+            elapsed += dt;
+        }
+        save(&mut race, name)?;
+    }
     Ok(())
 }
 

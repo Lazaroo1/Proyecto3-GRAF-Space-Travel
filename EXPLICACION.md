@@ -391,7 +391,8 @@ gran llamarada.
 # Los minijuegos
 
 Cada planeta va a tener su minijuego ([minijuegos/](src/minijuegos)). Por
-ahora está el de la Luna de Xelajú: **la marimba de la Luna**.
+ahora están el de la Luna de Xelajú, **la marimba de la Luna**, y el de la
+capital, **la carrera del Periférico**.
 
 ## El marco común ([minijuegos/mod.rs](src/minijuegos/mod.rs))
 
@@ -529,6 +530,116 @@ como récord. Un golpe 70 ms antes es Bien, y uno en otro carril no rompe
 la racha. Se dibuja sin huecos en el menú y jugando. Los récords se
 guardan y se leen, y con N se llega a la marimba y ahí se ofrece (en OCASO
 no).
+
+## La carrera del Periférico ([minijuegos/carrera.rs](src/minijuegos/carrera.rs))
+
+**Pseudo-3D, como los juegos de carreras de antes.** La pista es una lista
+de tramos de 4 m (594, unos 2.4 km). Cada tramo tiene su curva, que es cuánto
+gira el rumbo en él, y su altura. Las curvas se suavizan al entrar y salir y
+se escalan para que una vuelta gire exactamente 2π (la pista rodea a la
+capital). Desde la cámara se recorren hacia adelante sumando el rumbo
+relativo y el corrimiento lateral: `θ += curva` y `x += tramo · (θ + curva / 2)`.
+Cada borde se proyecta con `pantalla_x = centro + (x − x_cam) · f / z` y
+`pantalla_y = horizonte − (y − y_cam) · f / z`. Los tramos se recorren de
+cerca a lejos guardando la fila más alta ya cubierta: lo que cae abajo de
+ella está detrás de una loma y no se pinta. Cada fila guarda qué punto de
+la pista muestra. La distancia se interpola en `1/z`, que es lo lineal en
+pantalla, y así queda correcta en perspectiva. Con eso cada pixel se pinta
+en paralelo en metros: el asfalto (ruido de valor), las rayas discontinuas,
+la orilla amarilla, el bordillo, los túmulos de los carriles que tocan, la
+meta a cuadros, los charcos de luz de los postes y la neblina de lejos.
+
+**Las naves son sprites horneados** ([minijuegos/hornear.rs](src/minijuegos/hornear.rs)).
+Dibujar los 28 000 triángulos de cada nave en cada frame costaría lo que
+el 3D. En vez de eso, al abrir la carrera un rasterizador propio dibuja
+cada modelo una vez desde 15 rumbos (de −70° a 70°), y la propia desde
+otros 9 tal como la ve la cámara, a su tamaño en pantalla. Son 69 sprites
+en una sola pasada paralela, en menos de un segundo.
+
+- La proyección es ortográfica, con buffer de profundidad y funciones de
+  borde baricéntricas.
+- Lleva 2×2 muestras por pixel (la fracción cubierta es el alfa).
+- El sombreado es diferido: solo la muestra más cercana se sombrea, una vez.
+- La luz es de noche: luna fría, postes naranjas desde abajo y un cielo que
+  se refleja en la laca, el cromo y el vidrio. Las piezas salen de
+  `obj::Surface`.
+- Las LEDs se guardan aparte, se difuminan y se suman afuera del contorno,
+  como neón.
+
+En la pista, cada nave usa el sprite del ángulo con que la ve la cámara:
+el rumbo de la pista donde está menos el ángulo del rayo, `θ − atan(x / z)`.
+Se escala con `f / z`, se pega con alfa premultiplicado y pone su sombra en
+el suelo. Una loma más cercana la tapa: la fila muestra pista más cerca que
+ella. Las que pasan pegadas a la cámara se desvanecen.
+
+**El cielo y la capital.** El cubemap del cielo chapín se pasa una vez a un
+panorama (rumbo por altura). Cada pixel lo lee con el rumbo de la cámara más
+el ángulo de su columna, así que el cielo gira de verdad en las curvas. La
+capital es una esfera abajo a la derecha, y su centro avanza con la vuelta
+(la pista le da la vuelta). Cada pixel del cielo prueba su rayo contra la
+esfera. Si pega, pinta la ciudad de noche: tierra oscura, luces de sodio
+donde un ruido fBm dice que hay ciudad y no barranco (ruido *ridged*), nubes
+oscuras que las tapan y el halo de la atmósfera en el borde.
+
+**La física**, a 120 pasos por segundo:
+
+- **Acelerar**: `v += a (1 − v / v_max) dt`. Sin acelerador hay arrastre; el
+  freno quita 26 m/s².
+- **Fuera del asfalto** la velocidad máxima baja a la mitad, y las barandas
+  frenan.
+- **De lado**, el volante mueve con el manejo de cada nave (más a más
+  velocidad) y la curva empuja hacia afuera con `κ v² · 0.2` (`κ` es la
+  curvatura en 1/m). Entrar a fondo a la curva cerrada (radio de 73 m) con la
+  camioneta saca más de lo que su volante corrige: hay que frenar.
+- **Choques**: rectángulos. De lado se empujan según su masa; por atrás, el
+  de atrás baja a la velocidad del de adelante.
+- **Túmulos**: pasar uno en su carril a más de 18 m/s quita el 38 % de la
+  velocidad (la chela flota y no le hacen nada).
+- **Rebufo**: ir de 4 a 28 m atrás de otra nave, en su carril, carga el turbo.
+  El turbo da 25 % más de velocidad y 60 % más de empuje por hasta 3 s.
+- **Salida perfecta**: acelerar justo en el verde guarda turbo.
+
+**Las rivales y el tráfico.**
+
+- **La IA** apunta al lado de adentro de la curva que viene (la curvatura
+  promedio de los próximos 60 m).
+- Esquiva lo que va adelante y más lento, y busca un carril sin túmulo.
+- No pasa de lo que aguanta la curva más fuerte que tiene enfrente:
+  `v = √(2.8 · manejo / κ)`.
+- Gasta el turbo en las rectas.
+- Tiene un poco de liga: hasta 6 % más rápida si va lejos detrás de quien
+  juega y 5 % menos si va muy adelante.
+- **El tráfico** son 16 naves lentas de las cuatro clases. Cambian de carril
+  de vez en cuando y, si les pitan (H), se hacen a un lado.
+- **El humo negro**: las camionetas que aceleran sueltan soplos que se
+  quedan en la pista, crecen y se apagan. Pasar por uno nubla la pantalla.
+
+Con el piloto automático las cuatro clases terminan en 2:14-2:25 (unos 44 s
+por vuelta). La camioneta es la más difícil: gana en las rectas y pierde en
+las curvas.
+
+**El sonido** también se sintetiza:
+
+- **El motor de cada clase**: el tuk-tuk de dos tiempos son pulsos angostos
+  con zumbido, la camioneta un diésel en diente de sierra grave con un sub,
+  el colectivo un diente de sierra con su octava abajo, y la chela lleva
+  burbujas. Las vueltas suben en cada una de cinco marchas y caen al cambiar.
+- **Lo demás**: el viento sube con la velocidad y hay golpes para choques y
+  túmulos. El pito es de dos tonos según la nave, más el pitido del
+  semáforo y el soplido del turbo.
+
+**Pruebas.**
+
+- La pista cierra: gira 2π y vuelve a su altura, y el mapa cierra.
+- Nadie se mueve en el semáforo.
+- Con el piloto automático las cuatro clases terminan las tres vueltas en
+  tiempos de carrera.
+- Un choque por atrás separa a las naves y frena a la de atrás.
+- El pito mueve al tráfico de adelante.
+- Se dibuja sin huecos antes, durante y después.
+- Todo el texto usa letras que la fuente carga.
+- El horneado ve una caja de atrás y de lado del tamaño correcto, con la LED
+  encendida y su resplandor afuera del contorno.
 
 # Cambios de la sexta revisión
 
