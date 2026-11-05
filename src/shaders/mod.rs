@@ -15,6 +15,7 @@ pub(crate) mod argos;
 pub mod atmosphere;
 mod cementerio;
 pub(crate) mod detail;
+pub mod faro;
 pub mod gargantua;
 mod images;
 mod jardin;
@@ -136,6 +137,8 @@ pub struct Uniforms<'a> {
     pub plume: Option<crate::chapin::plume::Plume>,
     /// Gargantua, cuando ya existe.
     pub black_hole: Option<&'a BlackHole<'a>>,
+    /// Faro, la estrella de neutrones (solo en OCASO).
+    pub faro: Option<&'a faro::Faro<'a>>,
     /// Centro de la estrella, relativo a la camara.
     pub sun_pos: Vec3,
     pub sun_radius: f32,
@@ -262,6 +265,8 @@ pub enum Material {
     /// Un cuerpo de la version chapina (V).
     Chapin(crate::chapin::Chapin),
     Cementerio,
+    /// La estrella de neutrones: la esfera de apoyo del disco que se ve.
+    Faro,
     /// La luna de Vigia: cristal y lagos espejo.
     Parpado,
     Ship(ShipStyle),
@@ -271,6 +276,9 @@ pub enum Material {
     Prop(PropStyle),
     /// Una cinta de luz (la trayectoria predicha): solo emite su color.
     Line(Vec3),
+    /// Las lineas de plasma de la magnetosfera de Faro: emiten el color de
+    /// sus vertices.
+    Plasma,
 }
 
 impl Material {
@@ -295,11 +303,13 @@ pub fn shade(material: &Material, f: &Fragment, u: &Uniforms) -> Vec3 {
         Material::Vigia => vigia::shade(f, u),
         Material::Argos(look) => argos::shade(f, u, look),
         Material::Cementerio => cementerio::shade(f, u),
+        Material::Faro => faro::shade(f, u),
         Material::Parpado => parpado::shade(f, u),
         Material::Ship(style) => ship::shade(f, u, style),
         Material::Bottle => ship::bottle(f, u),
         Material::Prop(style) => props::shade(style, f, u),
         Material::Line(color) => line(f, *color),
+        Material::Plasma => f.color * (1.0 - (f.uv.y * 2.0 - 1.0).abs()).sqrt(),
     }
 }
 
@@ -350,6 +360,16 @@ pub fn has_volumes(u: &Uniforms) -> bool {
         || u.tail.is_some()
         || u.vapor.is_some()
         || u.plume.is_some()
+        || u.faro.is_some()
+}
+
+/// El cielo en la direccion `dir`, curvado por la gravedad de Faro.
+#[inline]
+pub fn lensed_sky(dir: Vec3, u: &Uniforms) -> Vec3 {
+    match u.faro {
+        Some(faro) => sky(faro.bend(dir.normalize()), u),
+        None => sky(dir, u),
+    }
 }
 
 /// Pasos de la atmosfera por pixel de cielo: ahi esta el detalle fino del
@@ -375,6 +395,9 @@ pub fn volumes(color: Vec3, dir: Vec3, depth: f32, sky: bool, u: &Uniforms) -> V
     }
     if let Some(tail) = &u.tail {
         color += tail.light(dir, depth, u.noise);
+    }
+    if let Some(faro) = u.faro {
+        color += faro.beams(dir, depth);
     }
     // Del anillo mas lejano al mas cercano.
     match u.rings {

@@ -13,7 +13,7 @@ use std::path::Path;
 
 use raylib::prelude::*;
 
-use crate::app::App;
+use crate::app::{App, FaroReadout, FlarePhase};
 use crate::parallel;
 use crate::player::PlayerView;
 use crate::scene::cycle::Phase;
@@ -46,7 +46,7 @@ const TOAST: f32 = 3.0;
 /// Donde estan las letras de Windows.
 const FONT_DIR: &str = "C:/Windows/Fonts";
 /// Lo que se carga de cada letra: ASCII y lo del espanol.
-const GLYPHS: &str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~áéíóúÁÉÍÓÚñÑüÜäöÄÖ¿¡°·–—−…’";
+const GLYPHS: &str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~áéíóúÁÉÍÓÚñÑüÜäöÄÖ¿¡°·–—−…’×√πψτ⁰¹²³⁴⁵⁶⁷⁸⁹⁻";
 
 /// Los estilos de letra: archivo y tamano en pixeles. Cada uno se dibuja a
 /// su tamano, sin escalar.
@@ -366,6 +366,11 @@ pub fn draw(
         fonts.draw(d, &distance, rect.x + 18.0 + nw, rect.y + 5.0, Style::Small, DIM);
     }
 
+    if let Some(readout) = app.faro_readout() {
+        let top = if hud.stats { 12.0 + 7.0 * LINE + 22.0 + 10.0 } else { 12.0 };
+        lines_panel(d, fonts, 12.0, top, &faro_lines(&readout), None);
+    }
+
     if tweaks.open {
         let lines = tweaks.lines(app);
         let h = lines.len() as f32 * LINE + 22.0;
@@ -430,6 +435,40 @@ pub fn draw(
         };
         fonts.draw_at(d, title, (width - w) * 0.5, top, Style::Title, size, color);
     }
+}
+
+/// `x` en notacion cientifica con exponente en superindice: 4.8×10⁻¹¹.
+fn scientific(x: f64, digits: usize) -> String {
+    let exponent = x.abs().log10().floor() as i32;
+    let mantissa = x / 10f64.powi(exponent);
+    let sup: String = exponent
+        .to_string()
+        .chars()
+        .map(|c| match c {
+            '-' => '⁻',
+            d => "⁰¹²³⁴⁵⁶⁷⁸⁹".chars().nth(d.to_digit(10).unwrap() as usize).unwrap(),
+        })
+        .collect();
+    format!("{mantissa:.digits$}×10{sup}")
+}
+
+/// El panel de Faro: las ecuaciones del modelo con sus numeros y lo que
+/// esta pasando.
+fn faro_lines(r: &FaroReadout) -> Vec<String> {
+    let flare = match r.flare {
+        FlarePhase::Ready => "lista".to_string(),
+        FlarePhase::Twisting => format!("la corteza tuerce: ψ {:.2} de {:.1} rad", r.twist, r.critical_twist),
+        FlarePhase::Fireball => format!("bola de fuego al {:.0} %, L = L0 (1 − t/380 s)³", r.fireball * 100.0),
+    };
+    vec![
+        format!("Faro · púlsar y magnetar (1E 1547.0−5408) · a {:.0} km", r.distance),
+        format!("P = {:.5} s   ·   dP/dt = {} s/s", r.period, scientific(r.pdot, 2)),
+        format!("B = 3.2×10¹⁹ √(P dP/dt) = {} G (el límite cuántico es 4.4×10¹³)", scientific(r.field, 1)),
+        format!("τ = P / 2(dP/dt) = {:.0} años   ·   dE/dt = 4π²I(dP/dt)/P³ = {} erg/s", r.age_years, scientific(r.edot, 1)),
+        format!("cilindro de luz cP/2π = {:.0} km   ·   rs/R = {:.3}: se ve el {:.0} % de la estrella", r.light_cylinder_km, r.compactness, 50.0 / (1.0 - r.compactness)),
+        format!("torsión ψ = {:.2} rad   ·   casquete {:.1}° a {:.1} MK   ·   corteza {:.1} MK", r.twist, r.cap_degrees, r.cap_temperature / 1e6, r.crust_temperature / 1e6),
+        format!("estallidos: {}   ·   gran llamarada [F]: {flare}", if r.storm > 0.3 { "tormenta" } else { "sueltos" }),
+    ]
 }
 
 /// El panel de vuelo, arriba a la derecha: un encabezado con la fase o la
@@ -675,4 +714,38 @@ fn draw_player(d: &mut RaylibDrawHandle, fonts: &Fonts, view: &PlayerView, scree
     let keys = "K pausa   ·   U / I canción   ·   − / + volumen";
     let kw = fonts.width(keys, Style::Small);
     fonts.draw(d, keys, x + (PLAYER_SIZE.0 as f32 - kw) * 0.5, y + PLAYER_SIZE.1 as f32 - 24.0, Style::Small, FAINT);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// El panel de Faro solo usa letras que se cargan de Segoe UI.
+    #[test]
+    fn the_faro_panel_only_uses_loaded_glyphs() {
+        let readout = FaroReadout {
+            distance: 812.0,
+            period: 2.0698,
+            pdot: 4.83e-11,
+            field: 3.2e14,
+            age_years: 679.0,
+            edot: 2.14e35,
+            light_cylinder_km: 98_760.0,
+            compactness: 0.345,
+            twist: 1.05,
+            critical_twist: 3.0,
+            cap_degrees: 10.0,
+            cap_temperature: 5.4e6,
+            crust_temperature: 1.8e6,
+            storm: 0.0,
+            flare: FlarePhase::Fireball,
+            fireball: 0.64,
+        };
+        for line in faro_lines(&readout) {
+            for c in line.chars() {
+                assert!(GLYPHS.contains(c), "falta {c:?} en: {line}");
+            }
+        }
+        assert_eq!(scientific(4.83e-11, 2), "4.83×10⁻¹¹");
+    }
 }
