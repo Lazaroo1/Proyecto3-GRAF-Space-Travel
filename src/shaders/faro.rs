@@ -102,7 +102,42 @@ pub struct Faro<'a> {
     pub wind_source: Vec3,
     pub wind_reference: f32,
     pub time: f32,
+    /// Lo que no cambia en el frame y cada pixel volvia a calcular (ver
+    /// `Faro::prepared`).
+    pub derived: Derived,
 }
+
+/// Lo que se saca una vez por frame de lo de arriba: la direccion a la
+/// estrella, la desviacion de la luz lejos de ella en una tabla, y lo de los
+/// haces (los tres ejes de la exposicion, el cono que los abarca, el pulso
+/// de cada uno y los ejes alrededor de cada haz para el azimut).
+#[derive(Clone, Debug, Default)]
+pub struct Derived {
+    to_star: Vec3,
+    /// La desviacion `delta = exit - (pi - s)` de los rayos a un angulo `s`
+    /// de la estrella mayor que el de `bend_cos`, en funcion de
+    /// `u = sqrt(1 + cos s)` (cerca de atras crece lineal en `u`):
+    /// `bend[i]` es la de `u = i / bend_scale`. Vacia si no hace falta o si
+    /// no alcanza la precision.
+    bend: Vec<f32>,
+    bend_cos: f32,
+    bend_scale: f32,
+    reach_cos: f32,
+    middle: Vec3,
+    cos_max: f32,
+    axes: [Vec3; 3],
+    pulses: [f32; 2],
+    /// Por eje y por haz (norte, sur): `side` y `up`.
+    frames: [[(Vec3, Vec3); 2]; 3],
+}
+
+/// Error maximo que se le acepta a la tabla de la desviacion contra
+/// `sight` (rad): a 720p un pixel mide unos 1.5e-3 rad, asi que es un 1 %
+/// de pixel. (La misma `sight` interpola su tabla de rayos y cerca de
+/// 0.6 rad ya difiere unos 5e-6 de una tabla mas fina.)
+const BEND_EPSILON: f32 = 2e-5;
+/// Muestras de la tabla.
+const BEND_SAMPLES: usize = 2048;
 
 /// Colores de la corteza: placas, grietas, grietas calientes y borde.
 const PLATE: Vec3 = Vec3::new(0.03, 0.012, 0.12);
@@ -119,6 +154,63 @@ const HALO: Vec3 = Vec3::new(0.42, 0.17, 1.0);
 const HALO_SCALE: f32 = 1.6;
 
 impl Faro<'_> {
+    /// Saca lo que no cambia en el frame (`Derived`).
+    ///
+    /// La desviacion de la luz: cada pixel del cielo pedia a la lente su
+    /// angulo (`atan2`, senos, cosenos, la desviacion debil), unos 300 ciclos.
+    /// Lejos de la estrella (mas de tres veces su radio aparente, y al menos
+    /// 0.5 rad) la desviacion es suave, asi que se tabula una vez por frame
+    /// con la misma `sight` y se comprueba en los puntos de en medio: si en
+    /// alguno se aleja mas de `BEND_EPSILON` de `sight`, no se usa la tabla.
+    pub fn prepared(mut self) -> Self {
+        use std::f32::consts::PI;
+        let distance = self.center.length();
+        let to_star = self.center / distance;
+        let apparent = (self.lens.radius * 1.5 / self.lens.observer.max(1e-3)).min(1.0).asin();
+        let start = (3.0 * apparent).max(0.5);
+        let delta = |s: f32| match self.lens.sight(s) {
+            Sight::Sky { exit } => Some(exit - (PI - s)),
+            Sight::Surface { .. } => None,
+        };
+        let u_max = (1.0 + start.cos()).max(0.0).sqrt();
+        let scale = (BEND_SAMPLES - 1) as f32 / u_max.max(1e-6);
+        let at = |u: f32| (u * u - 1.0).clamp(-1.0, 1.0).acos();
+        let table: Option<Vec<f32>> = (0..BEND_SAMPLES).map(|i| delta(at(i as f32 / scale))).collect();
+        let bend = table.filter(|table| {
+            (0..BEND_SAMPLES - 1).all(|i| {
+                let mid = delta(at((i as f32 + 0.5) / scale));
+                mid.is_some_and(|m| (0.5 * (table[i] + table[i + 1]) - m).abs() < BEND_EPSILON)
+            })
+        });
+        let bend_cos = if bend.is_some() { start.cos() } else { -2.0 };
+        let widest = self.beam.outer * 1.3;
+        let sweep = self.magnetic_before.dot(self.magnetic).clamp(-1.0, 1.0).acos();
+        let axes: [Vec3; 3] = std::array::from_fn(|k| {
+            let f = (k as f32 + 0.5) / 3.0;
+            (self.magnetic_before * (1.0 - f) + self.magnetic * f).normalize()
+        });
+        let frames = axes.map(|axis| {
+            [1.0f32, -1.0].map(|sign| {
+                let beam_axis = axis * sign;
+                let side = beam_axis.cross(if beam_axis.y.abs() < 0.9 { Vec3::Y } else { Vec3::X }).normalize();
+                (side, beam_axis.cross(side))
+            })
+        });
+        self.derived = Derived {
+            to_star,
+            bend: bend.unwrap_or_default(),
+            bend_cos,
+            bend_scale: scale,
+            reach_cos: (widest + 0.5 * sweep).cos(),
+            middle: (self.magnetic_before + self.magnetic).normalize(),
+            cos_max: widest.cos(),
+            axes,
+            pulses: [self.pulse(true), self.pulse(false)],
+            frames,
+        };
+        self
+    }
+
     /// Temperatura de la superficie con normal `n` (en el mundo), en
     /// unidades de la del polo, y que tan caliente es por los casquetes.
     fn temperature(&self, n: Vec3) -> (f32, f32) {
@@ -203,9 +295,26 @@ impl Faro<'_> {
     /// la luz de las estrellas de fondo (un anillo de Einstein de varios
     /// grados cuando se pasa cerca).
     pub fn bend(&self, dir: Vec3) -> Vec3 {
-        let distance = self.center.length();
-        let to_star = self.center / distance;
+        let d = &self.derived;
+        let to_star = d.to_star;
         let cos_s = dir.dot(to_star).clamp(-1.0, 1.0);
+        // Lejos de la estrella, de la tabla (ver `prepared`): con
+        // `exit = pi - s + delta`, la direccion de salida es
+        // `cos(delta) dir + sin(delta) (to_star sin s - e2 cos s)`.
+        if cos_s < d.bend_cos && !d.bend.is_empty() {
+            let sin_s = (1.0 - cos_s * cos_s).max(0.0).sqrt();
+            if sin_s < 1e-6 {
+                return dir;
+            }
+            let x = (1.0 + cos_s).max(0.0).sqrt() * d.bend_scale;
+            let i = (x as usize).min(d.bend.len() - 2);
+            let f = x - i as f32;
+            let delta = d.bend[i] + (d.bend[i + 1] - d.bend[i]) * f;
+            let e2 = (dir - to_star * cos_s) / sin_s;
+            let d2 = delta * delta;
+            let (sin_d, cos_d) = (delta * (1.0 - d2 / 6.0), 1.0 - 0.5 * d2);
+            return dir * cos_d + (to_star * sin_s - e2 * cos_s) * sin_d;
+        }
         let sin_s = dir.cross(to_star).length();
         if sin_s < 1e-6 {
             return dir;
@@ -278,21 +387,16 @@ impl Faro<'_> {
 
     /// Luz de los haces que el rayo `dir` (unitario) cruza antes de `depth`.
     pub fn beams(&self, dir: Vec3, depth: f32) -> Vec3 {
-        let widest = self.beam.outer * 1.3;
-        let cos_max = widest.cos();
+        let d = &self.derived;
         // Descarte: el cono que abarca toda la exposicion. La mayoria de los
         // pixeles no lo tocan y se ahorran los tres de adentro.
-        let sweep = self.magnetic_before.dot(self.magnetic).clamp(-1.0, 1.0).acos();
-        let middle = (self.magnetic_before + self.magnetic).normalize();
-        if !self.touches(dir, depth, middle, (widest + 0.5 * sweep).cos()) {
+        if !self.touches(dir, depth, d.middle, d.reach_cos) {
             return Vec3::ZERO;
         }
         let mut light = Vec3::ZERO;
         // Tres tiempos de exposicion: el haz barre su ancho en un frame.
         for k in 0..3 {
-            let f = (k as f32 + 0.5) / 3.0;
-            let axis = (self.magnetic_before * (1.0 - f) + self.magnetic * f).normalize();
-            light += self.cone_light(dir, depth, axis, cos_max) / 3.0;
+            light += self.cone_light(dir, depth, k, d.cos_max) / 3.0;
         }
         light * self.beam_gain
     }
@@ -320,8 +424,10 @@ impl Faro<'_> {
         }
     }
 
-    /// La luz de los dos conos con eje `axis` a lo largo del rayo.
-    fn cone_light(&self, dir: Vec3, depth: f32, axis: Vec3, cos_max: f32) -> Vec3 {
+    /// La luz de los dos conos con el eje `k` de la exposicion a lo largo
+    /// del rayo.
+    fn cone_light(&self, dir: Vec3, depth: f32, k: usize, cos_max: f32) -> Vec3 {
+        let axis = self.derived.axes[k];
         // Puntos del rayo relativos a la estrella: x(t) = p + t dir.
         let p = -self.center;
         let (pa, da, pd, pp) = (p.dot(axis), dir.dot(axis), p.dot(dir), p.dot(p));
@@ -337,7 +443,7 @@ impl Faro<'_> {
             if a <= 0.0 || c <= 0.0 {
                 return Vec3::ZERO;
             }
-            return self.segments_light(&[(0.0, depth)], dir, axis, pa, da, pd);
+            return self.segments_light(&[(0.0, depth)], dir, k, pa, da, pd);
         }
         let root = disc.sqrt();
         let (t1, t2) = if a.abs() < 1e-9 {
@@ -357,11 +463,12 @@ impl Faro<'_> {
             segments[1] = (t2.max(0.0), depth);
             2
         };
-        self.segments_light(&segments[..count], dir, axis, pa, da, pd)
+        self.segments_light(&segments[..count], dir, k, pa, da, pd)
     }
 
     /// La luz de los tramos `segments` del rayo que estan dentro de un cono.
-    fn segments_light(&self, segments: &[(f32, f32)], dir: Vec3, axis: Vec3, pa: f32, da: f32, pd: f32) -> Vec3 {
+    fn segments_light(&self, segments: &[(f32, f32)], dir: Vec3, k: usize, pa: f32, da: f32, pd: f32) -> Vec3 {
+        let axis = self.derived.axes[k];
         let p = -self.center;
         // La recta: punto mas cercano a la estrella y su distancia.
         let tc = -pd;
@@ -391,11 +498,10 @@ impl Faro<'_> {
             if s1 <= s0 {
                 continue;
             }
-            let pulse = self.pulse(north);
+            let pulse = self.derived.pulses[usize::from(!north)];
             let beam_axis = axis * sign;
             // Ejes alrededor del haz para el azimut de las chispas.
-            let side = beam_axis.cross(if beam_axis.y.abs() < 0.9 { Vec3::Y } else { Vec3::X }).normalize();
-            let up = beam_axis.cross(side);
+            let (side, up) = self.derived.frames[k][usize::from(!north)];
             // Cambio de variable t = tc + q tan(u): con 1/r^2 queda du / q.
             let (u0, u1) = (((s0 - tc) / q).atan(), ((s1 - tc) / q).atan());
             const STEPS: usize = 7;
