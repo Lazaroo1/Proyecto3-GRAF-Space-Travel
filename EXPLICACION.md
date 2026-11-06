@@ -393,7 +393,8 @@ gran llamarada.
 Cada planeta va a tener su minijuego ([minijuegos/](src/minijuegos)). Por
 ahora están el de la Luna de Xelajú, **la marimba de la Luna**; los dos de
 la capital, **la carrera del Periférico** (en su anillo) y **los shucos del
-Reformador** (en el suelo); y el de Antigua, **la Camioneta Surfers**.
+Reformador** (en el suelo); el de Antigua, **la Camioneta Surfers**; y el de
+San Andrés Xecul, **los barriletes**.
 
 ## El marco común ([minijuegos/mod.rs](src/minijuegos/mod.rs))
 
@@ -902,6 +903,58 @@ carril libre; sin saltar la carreta se choca y saltando se pasa; por la
 escalera se sube al techo; una segunda alfombra con los cucuruchos atrás es
 perder; el piloto automático corre más de 500 m en un minuto y junta lenes;
 y cada pantalla se dibuja sin huecos con texto que la fuente carga.
+
+## Barriletes de Xecul ([minijuegos/barriletes.rs](src/minijuegos/barriletes.rs))
+
+**La física**, de lado (x a favor del viento, y arriba), en metros y a 240
+pasos por segundo. El barrilete pesa 350 g y tiene 0.6 m².
+
+- **El viento** sopla a unos 8 m/s y crece con la altura (`W (1 + 0.006 y)`),
+  con su vaivén (una suma de senos) y ráfagas: suben en 1.2 s (el aviso da
+  tiempo de soltar), se quedan y se van, y soplan 35 % más.
+- **El aire sobre el barrilete**: con el viento aparente `w = W − v` y
+  `q = ½ ρ |w|² A`, la sustentación es `q C_L` perpendicular a `w` (hacia
+  arriba) y el arrastre `q C_D` a lo largo de `w`. Para una placa plana con
+  ángulo de ataque `α` (lo que se inclina con ← →):
+  `C_L = 1.2 sen 2α` (lo más a 45°) y `C_D = 0.08 + 1.2 sen² α`. Más el peso y
+  lo que arrastra la cola.
+- **El hilo es una restricción**: si el barrilete queda más lejos de la mano
+  que el largo del hilo, se le regresa al círculo y se le quita la velocidad
+  hacia afuera, `v_r = v · d`. Ese impulso, `m v_r`, entre el paso, es la
+  tensión (suavizada en 80 ms). Con 30 m de hilo y viento parejo queda en
+  unos 25 N; si pasa de 50 N por un cuarto de segundo, revienta. Jalar
+  acorta el hilo a 3 m/s (el barrilete sube contra el viento); soltar lo
+  alarga a 6 m/s (queda flojo: ya no tiene de dónde agarrarse y baja).
+- **La cola** es una cadena de 14 puntos con Verlet: cada uno sigue su
+  inercia, el viento lo empuja y la gravedad lo jala; después se corrigen las
+  distancias entre vecinos en tres pasadas.
+
+**Los cortes**: si un tramo de la cola cruza el hilo de otro barrilete
+(prueba de cruce de segmentos, con el hilo como polilínea combada si está
+flojo), ese hilo revienta y su barrilete se va con el viento; en 9 s ese
+patojo eleva otro. Los otros vuelan con su propia física y buscan su altura;
+a ratos (unos 8 s de cada 30, después de los primeros 10) atacan: buscan la
+altura del nuestro, y si su cola cruza nuestro hilo, nos lo cortan.
+
+**El dibujo**, en CPU por filas: el cielo de la tarde con el sol, las nubes
+(ruido de valor en dos escalas que corre con el viento) y los Cuchumatanes en
+dos capas (el perfil de cada columna se calcula una vez por frame). Encima,
+con las figuras de `figuras.rs` (que ahora tienen polígonos convexos): el
+pueblo, la iglesia de San Andrés Xecul (la fachada amarilla con sus columnas
+de colores y sus angelitos, las torres y la cúpula), los patojos con sus
+latas de hilo, los hilos, las colas con sus moños y los barriletes: un
+hexágono de papel de china con seis gajos, el centro, el fleco de la orilla
+y las cañas. La cámara sigue al barrilete y se aleja cuando sube.
+
+**El sonido**: el viento y el papel que tiembla con el viento aparente, el
+hilo que zumba cuando está tenso, el chasquido cuando revienta, el «zas» y la
+porra cuando cortás uno, y la marimba de la fiesta de fondo (la misma
+marimba procedural).
+
+**Pruebas**: con viento parejo vuela arriba de la mano, a favor del viento y
+con el hilo tenso; sin viento baja; con un ventarrón revienta el hilo; los
+segmentos que se cruzan se encuentran; con el piloto automático aguanta la
+tarde; y cada pantalla se dibuja sin huecos con texto que la fuente carga.
 
 # Cambios de la sexta revisión
 
