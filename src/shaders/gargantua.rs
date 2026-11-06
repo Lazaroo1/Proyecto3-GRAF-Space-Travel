@@ -407,6 +407,17 @@ impl BlackHole<'_> {
         };
         let radial = RadialTable::shared();
         let extent = self.extent();
+        let vacuum = if self.stream.is_some() { p2::config::STEP_RADIUS_FRACTION } else { VACUUM_STEP };
+        // Con `b` menor al critico (`3 sqrt(3) / 2 rs`, con margen) el foton
+        // no tiene punto de retorno: ya cayendo, dentro de 3 rs (donde no
+        // hay disco) no vuelve a cruzar gas. El brazo de Pira tambien
+        // empieza en 3 rs, pero sus tramos largos se revisan con medio paso
+        // de holgura: con el brazo se corta antes.
+        let falls_inside = if photon.impact_parameter() < 2.59 {
+            if self.stream.is_some() { 2.4 } else { p2::config::DISK_INNER_RADIUS }
+        } else {
+            0.0
+        };
         // El origen puede estar muy lejos del sistema: los pasos exteriores
         // son mayores sin saltarse la envoltura de 19 rs.
         for _ in 0..p2::config::MAX_STEPS {
@@ -421,12 +432,14 @@ impl BlackHole<'_> {
             if r > extent + 1.0 && previous.dot(photon.vel) > 0.0 {
                 break;
             }
+            if r < falls_inside && previous.dot(photon.vel) < 0.0 {
+                break;
+            }
+            let base = photon.step_length_with(vacuum);
             let step = if r > 40.0 && previous.dot(photon.vel) < 0.0 {
-                photon
-                    .step_length()
-                    .max((r - 35.0) * 0.1 / photon.vel.length().max(0.1))
+                base.max((r - 35.0) * 0.1 / photon.vel.length().max(0.1))
             } else {
-                p2::volume_step(&photon, medium)
+                p2::volume_step_from(&photon, medium, base)
             };
             photon.advance(step);
             let mid = (previous + photon.pos) * 0.5;
@@ -584,6 +597,15 @@ impl Gas {
         depth: f32::INFINITY,
     };
 }
+
+/// Tope del paso en el vacio, como fraccion del radio (el Proyecto 2 usa
+/// 0.1). Cerca del agujero manda el de la curvatura y en el gas el del
+/// volumen; esto solo alarga los pasos lejos de los dos. Comparado con una
+/// referencia de pasos cuatro veces mas finos, el error no crece (en El
+/// Ojo baja: el muestreo del gas solo cambia de fase). Con el brazo de Pira
+/// se queda el del Proyecto 2: sus tramos largos se aproximan con la cuerda
+/// y se notarian.
+const VACUUM_STEP: f32 = 0.2;
 
 /// Pixeles entre dos muestras del gas.
 const GAS_STRIDE: usize = 2;

@@ -1715,7 +1715,21 @@ coseno con la normal, así el borde brilla más, como en las nebulosas reales.
 - El gas se traza cada dos pixeles; un pixel entre cuatro muestras
   parecidas las interpola, y si no se parecen (la sombra, la orilla del
   disco, el anillo de fotones) traza su propio rayo. Un rayo que sale de la
-  envoltura ya no vuelve a cruzar gas y se corta. Lo que depende solo del
+  envoltura ya no vuelve a cruzar gas y se corta; uno con parámetro de
+  impacto menor al crítico (`b < 3√3/2 rs`) que ya va cayendo dentro de
+  3 rs tampoco (no tiene punto de retorno y ahí no hay disco). En el vacío,
+  lejos del gas y del anillo de fotones, el paso puede llegar a `0.2 r` (el
+  Proyecto 2 usa `0.1 r`): contra una referencia de pasos cuatro veces más
+  finos el error no crece (en El Ojo baja de 1.95 a 1.57 niveles de
+  promedio; el muestreo del gas solo cambia de fase) y las vistas van de
+  13 a 16 % más rápido. Con el brazo de Pira se queda el de `0.1 r`: sus
+  tramos largos se aproximan con la cuerda y ahí sí se notaba. Medido, casi
+  la mitad de los pasos de El Ojo eran de vacío; lo que se probó y no
+  sirvió: intercalar dos rayos por hilo (el hyperthreading ya tapa la
+  latencia del RK4; fue 12 % más lento), una `exp` propia en el gas (la de
+  la biblioteca ya era rápida) e interpolar los pixeles de orilla de celda
+  con solo sus dos muestras (el anillo de fotones mide un pixel y se
+  perdía). Lo que depende solo del
   radio (temperatura, Kepler, opacidad) y el color de cuerpo negro van en
   tablas; `gargantua_p2/disk.rs::prepare` sigue intacto como referencia.
   Superficies delanteras conservan su visibilidad; la sombra del agujero
