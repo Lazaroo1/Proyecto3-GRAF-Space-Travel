@@ -579,8 +579,8 @@ pasada paralela, en uno a dos segundos.
 
 En la pista, cada nave usa el sprite del ángulo con que la ve la cámara:
 el rumbo de la pista donde está menos el ángulo del rayo, `θ − atan(x / z)`,
-más el volante (en la propia, exagerado: `0.22` rad a fondo). Así en las
-curvas se le ve el costado.
+sin el volante (una nave girada, vista desde arriba, se ve chueca, como
+ladeada). Así en las curvas se le ve el costado.
 Se toma el sprite más cercano (mezclar dos vecinos dejaba la nave doble) y se
 corre a lo ancho para que su cola caiga donde caería la del rumbo de verdad:
 la cola sigue el giro sin saltos. Se escala con `f / z` y se pega con alfa
@@ -593,8 +593,8 @@ postes, humo, otras naves) no se pinta.
 **Las naves con vida.**
 
 - **Peso**: cada nave tiene un resorte de ladeo y uno de rebote por clase.
-  El ladeo es apenas (inclinar el sprite entero se veía como si la nave se
-  fuera de lado); un túmulo y la cresta de una loma la hacen saltar. El
+  Solo el tuk-tuk se ladea, apenas (inclinar el sprite entero se veía como
+  si la nave se fuera de lado); un túmulo y la cresta de una loma la hacen saltar. El
   tuk-tuk gira sobre la rueda de afuera. La chela flota: sube y baja.
 - **La chela** es de vidrio ámbar: contraluz en la silueta, cielo reflejado
   con Fresnel y cerveza con burbujas adentro. Debajo lleva un anillo

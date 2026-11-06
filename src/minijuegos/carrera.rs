@@ -253,10 +253,10 @@ impl Kind {
     /// y blanda (`omega = 5`, `zeta = 0.3`: se mece); el resto, firme.
     fn roll_spring(self) -> (f32, f32, f32) {
         match self {
-            Kind::TukTuk => (0.05, 90.0, 9.0),
-            Kind::Camioneta => (0.012, 25.0, 3.0),
-            Kind::Colectivo => (0.012, 60.0, 7.0),
-            Kind::Chela => (0.03, 60.0, 7.0),
+            Kind::TukTuk => (0.03, 90.0, 9.0),
+            Kind::Camioneta => (0.0, 25.0, 3.0),
+            Kind::Colectivo => (0.0, 60.0, 7.0),
+            Kind::Chela => (0.0, 60.0, 7.0),
         }
     }
 
@@ -2462,9 +2462,9 @@ impl Carrera {
             let wx = x + car.x - cam.x;
             let sx = cx + wx * cam.focal / d;
             // La chela flota y se mece: `0.6 + 0.12 sin(2.2 t + i)` de alto y
-            // `0.025 sin(1.3 t + i)` de ladeo.
+            // sin ladeo.
             let phase = i as f32;
-            let (hover, wobble) = if car.kind == Kind::Chela { (0.6 + 0.12 * (wall * 2.2 + phase).sin(), 0.025 * (wall * 1.3 + phase).sin()) } else { (spec.hover, 0.0) };
+            let (hover, wobble) = if car.kind == Kind::Chela { (0.6 + 0.12 * (wall * 2.2 + phase).sin(), 0.0) } else { (spec.hover, 0.0) };
             let sy = cam.horizon - (y + hover - cam.y) * cam.focal / d;
             let player = i == 0;
             // La apertura de la camara (`focal / (1 + fov)`) encoge todo; a
@@ -2478,15 +2478,15 @@ impl Carrera {
             // como la botella con dos cuellos.) La propia tiene un sprite
             // cada 1.25 grados, asi el salto de uno al siguiente es chico; las
             // demas, cada 10, pero se ven de lejos.
-            // La propia gira como las demas, con el rumbo de la pista donde
-            // va menos el angulo del rayo (en las curvas se le ve el
-            // costado), mas el volante exagerado, `0.22` rad a fondo (con solo
-            // el volante, `0.17`, se veia recta en las curvas).
+            // La propia sigue la pista: el rumbo de la pista donde va menos
+            // el angulo del rayo (en las curvas se le ve el costado). El
+            // volante no la gira: vista desde arriba, una nave girada se ve
+            // chueca, como ladeada, y apachar la flecha la inclinaba.
             let (set, kf, count) = if player {
-                let yaw = theta + car.steer * 0.22 - (wx / d).atan();
+                let yaw = theta - (wx / d).atan();
                 (usize::MAX, yaw / PLAYER_YAW_STEP + (PLAYER_YAWS / 2) as f32, PLAYER_YAWS)
             } else {
-                let yaw = theta + car.steer * 0.12 - (wx / d).atan();
+                let yaw = theta - (wx / d).atan();
                 (car.can.map_or(car.kind.index(), |c| Kind::ALL.len() + c as usize), yaw / YAW_STEP + (YAWS / 2) as f32, YAWS)
             };
             let kf = if kf.is_finite() { kf.clamp(0.0, (count - 1) as f32) } else { (count / 2) as f32 };
