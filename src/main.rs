@@ -67,6 +67,8 @@ struct Options {
     surfers: bool,
     /// La nave chapina con que se empieza (1 a 9).
     ship: Option<usize>,
+    /// Empezar (o grabar el recorrido) en la version chapina.
+    chapina: bool,
 }
 
 const USAGE: &str = "\
@@ -75,6 +77,7 @@ uso: ocaso [opciones]
   --captura CARPETA     guarda vistas fijas como PNG sin abrir ventana
   --vista NOMBRE       inicia o captura solo la vista elegida
   --recorrido MP4      graba vuelo, acercamiento, vuelta y alejamiento (ffmpeg)
+  --chapina             empieza (o graba el recorrido) en la version chapina
   --marimba             arranca en la Luna de Xelaju con la marimba abierta
   --carrera             arranca en la capital con la carrera del Periferico abierta
   --shucos              arranca en El Reformador con la carretilla de shucos abierta
@@ -104,6 +107,7 @@ fn parse_args() -> Result<Options, String> {
         shucos: false,
         surfers: false,
         ship: None,
+        chapina: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -121,6 +125,7 @@ fn parse_args() -> Result<Options, String> {
                 let dir = args.next().ok_or("--captura espera una carpeta")?;
                 options.mode = Mode::Capture(PathBuf::from(dir));
             }
+            "--chapina" => options.chapina = true,
             "--recorrido" => {
                 options.mode = Mode::Tour(PathBuf::from(
                     args.next().ok_or("--recorrido espera un archivo .mp4")?,
@@ -216,6 +221,9 @@ fn new_app(options: &Options) -> Result<App, String> {
         // Se pone al entrar a la version chapina.
         app.chapin_ship = ship;
     }
+    if options.chapina {
+        app.use_chapin();
+    }
     if let Some(i) = options.preset {
         app.apply_preset(&PRESETS[i]);
     }
@@ -234,6 +242,8 @@ fn run_window(options: &Options) -> Result<(), String> {
         app.apply_preset(reformador_preset());
     } else if options.surfers {
         app.apply_preset(PRESETS.iter().find(|p| p.name == "42_antigua").expect("la vista de Antigua"));
+    } else if options.chapina && options.preset.is_none() {
+        app.apply_preset(PRESETS.iter().find(|p| p.name == "40_chapin").expect("la vista chapina"));
     } else if options.preset.is_none() {
         app.apply_preset(&PRESETS[21]);
     }

@@ -144,13 +144,24 @@ sistema cuesta 50-140).
 
 ## Video
 
-El repositorio incluye [un recorrido continuo](media/recorrido-continuo.mp4)
-(vuelo, acercamiento, una vuelta completa a Jardín y alejamiento) grabado
-antes del rediseño de los planetas: hay que regrabarlo con `--recorrido`. El
-piloto usa la misma física del vuelo manual; se exporta a 24 fps con la
-simulación acelerada x3, así que no es una medición de FPS en tiempo real.
+Dos recorridos continuos, uno por versión, con todo lo que pide el
+requisito 5: **vuelo espacial, acercamiento, una vuelta completa al planeta
+y alejamiento**, sin cortes ni cambio de escena:
 
-Recorrido sugerido para grabarlo (F9 oculta el HUD):
+- [OCASO](media/recorrido-ocaso.mp4) (32 s): desde el espacio hasta Jardín,
+  la vuelta sobre el bosque de hongos (de noche y de día, con la estrella
+  encima) y la salida hasta ver el planeta entero con Vigía al fondo.
+- [Versión chapina](media/recorrido-chapina.mp4) (20 s): Petén con la
+  Gallo, sobre las ceibas, el amanecer a media vuelta y la salida.
+
+Los graba el programa sin ventana (`--recorrido`, y `--chapina` para la
+versión chapina): un piloto automático vuela con la misma física y los
+mismos controles que el vuelo manual (acelera hacia el planeta, frena, pasa
+al modo local, rodea el planeta con turbo hasta completar los 360° y se
+aleja). Se exportan a 24 fps con la simulación acelerada x3, así que no son
+una medición de FPS en tiempo real.
+
+Para grabar uno a mano en la demostración (F9 oculta el HUD):
 
 1. Desde el inicio, junto a Pira, alejarse con Shift para ver la cola de
    polvo que la estrella le arranca.
@@ -172,6 +183,8 @@ Opciones:
 
 ```sh
 cargo run --release -- --res 1920x1080        # resolución del render (por defecto 1280x720)
+cargo run --release -- --chapina              # empieza en la versión chapina
+cargo run --release -- --recorrido video.mp4  # graba el recorrido (ffmpeg); con --chapina, el chapín
 cargo run --release -- --captura capturas     # las 57 vistas fijas como PNG, sin abrir ventana
 cargo run --release -- --marimba              # arranca en la Luna de Xelajú con la marimba abierta
 cargo run --release -- --nave 8               # la nave chapina con que se empieza (7 tuk-tuk, 8 camioneta, 9 colectivo)
@@ -260,7 +273,7 @@ cargo run --release -- --vista 22_agonia
 cargo run --release -- --vista 23_jardin_biopunk
 cargo run --release -- --vista 24_el_ojo
 cargo run --release -- --captura capturas --vista 23_jardin_biopunk --res 1600x900
-cargo run --release -- --recorrido recorrido-continuo.mp4 --res 960x540
+cargo run --release -- --recorrido media/recorrido-ocaso.mp4
 ```
 
 La grabacion necesita `ffmpeg` en PATH o la variable `OCASO_FFMPEG` apuntando
