@@ -989,7 +989,10 @@ impl App {
             0 => {
                 self.aim = DQuat::look_rotation(-normal, DVec3::Y);
                 input.thrust.z = -1.0;
-                if altitude < 27.0 {
+                // En la chapina (Peten) las ceibas pasan de 27: mas arriba,
+                // para no atravesarlas.
+                let floor = if self.system.version == Version::Chapin { 48.0 } else { 27.0 };
+                if altitude < floor {
                     tour.phase = 1;
                     tour.phase_time = 0.0;
                 }
@@ -1409,6 +1412,13 @@ impl App {
                 Version::Ocaso => Toward::Ocaso,
             },
         });
+    }
+
+    /// Pasa a la version chapina sin transicion (`--chapina`).
+    pub fn use_chapin(&mut self) {
+        if self.system.version == Version::Ocaso {
+            self.switch_version();
+        }
     }
 
     /// Cambia de version sin transicion. En la chapina no hay final: se
