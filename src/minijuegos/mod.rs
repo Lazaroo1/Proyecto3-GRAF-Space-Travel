@@ -27,6 +27,7 @@ pub mod figuras;
 pub mod flota;
 pub mod hornear;
 pub mod lienzo;
+pub mod malla;
 pub mod marimba;
 pub mod personaje;
 pub mod posproceso;

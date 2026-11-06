@@ -52,7 +52,11 @@ fn assets() -> PathBuf {
 /// Una nave en metros: el frente a -z y arriba +y (como vuelan), con el
 /// alto que se pide, centrada.
 fn load(file: &str, height: f32) -> Result<(Mesh, Vec3), String> {
-    let mut mesh = load_vehicle(&assets().join("naves").join(format!("{file}-medium.obj")))?;
+    load_detail(file, "medium", height)
+}
+
+fn load_detail(file: &str, detail: &str, height: f32) -> Result<(Mesh, Vec3), String> {
+    let mut mesh = load_vehicle(&assets().join("naves").join(format!("{file}-{detail}.obj")))?;
     mesh.deform(|p| Vec3::new(-p.y, p.z, -p.x));
     mesh.normalize_size(1.0);
     let (lo, hi) = mesh.positions.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), &p| (lo.min(p), hi.max(p)));
@@ -82,6 +86,36 @@ pub fn fleet(ppm: f32) -> Option<Arc<Fleet>> {
 pub struct Side {
     pub bus: Sprite,
     pub tuk: Sprite,
+}
+
+/// Las mallas (las de poco detalle) para dibujarlas en perspectiva de
+/// cerca (`malla`): en metros, el frente a -z, centradas en x y z y con las
+/// llantas en `y = 0`.
+pub struct Meshes {
+    pub bus: Mesh,
+    pub tuk: Mesh,
+}
+
+pub fn meshes() -> Option<Arc<Meshes>> {
+    static CACHE: OnceLock<Option<Arc<Meshes>>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let grounded = |file: &str, height: f32| -> Result<Mesh, String> {
+                let (mut mesh, _) = load_detail(file, "low", height)?;
+                let (lo, hi) = mesh.positions.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), &p| (lo.min(p), hi.max(p)));
+                let shift = Vec3::new(-(lo.x + hi.x) * 0.5, -lo.y, -(lo.z + hi.z) * 0.5);
+                mesh.deform(|p| p + shift);
+                Ok(mesh)
+            };
+            match (grounded("02-la-mamaneta", BUS_HEIGHT), grounded("01-tuk-tuk-elena", TUK_HEIGHT)) {
+                (Ok(bus), Ok(tuk)) => Some(Arc::new(Meshes { bus, tuk })),
+                (Err(e), _) | (_, Err(e)) => {
+                    eprintln!("sin las mallas de las naves: {e}");
+                    None
+                }
+            }
+        })
+        .clone()
 }
 
 /// Desde que altura se ven de lado (rad): casi a la altura de los ojos.

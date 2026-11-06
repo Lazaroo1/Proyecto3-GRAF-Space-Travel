@@ -33,6 +33,7 @@ use super::flota::{self, Fleet};
 use super::hornear::{Lut, Pick, Sprite};
 use super::lienzo;
 use super::lienzo::{emission, write_emit};
+use super::malla::{self, Raster};
 use super::personaje::{self, RUN_FRAMES};
 use super::sonido;
 use super::posproceso::{self, Posproceso};
@@ -62,6 +63,9 @@ const BUS_LEN: f32 = 8.0;
 /// techos) y lo largo de la rampa de tablones que sube al primer techo.
 const BUS_GAP: f32 = 0.5;
 const RAMP_LEN: f32 = 5.0;
+/// Hasta que distancia las naves van en 3D (su malla en perspectiva); mas
+/// lejos, el sprite horneado (de lejos no se nota la diferencia).
+const RASTER_DIST: f32 = 42.0;
 const TUK_LEN: f32 = 2.6;
 /// El sol de la tarde: hacia donde esta (bajo, de la derecha y un poco de
 /// atras, normalizado), su color y el de la luz del cielo (la sombra).
@@ -413,6 +417,10 @@ pub struct TalegaSurfers {
     /// Meyer horneado (los cuadros de la carrera y el del salto), si esta
     /// el modelo; si no, se dibuja un patojo con figuras.
     meyer: Option<Arc<Vec<Sprite>>>,
+    /// Las mallas de las naves para dibujarlas de cerca, y el rasterizador.
+    meshes: Option<Arc<flota::Meshes>>,
+    /// Uno por nave de cerca: se arman en paralelo.
+    rasters: Vec<Raster>,
     /// Las naves chapinas horneadas (camionetas y tuk-tuks), si estan los
     /// modelos; si no, cajas pintadas.
     fleet: Option<Arc<Fleet>>,
@@ -439,6 +447,8 @@ impl TalegaSurfers {
             height,
             greeter: None,
             claxon: Arc::new(Vec::new()),
+            meshes: None,
+            rasters: Vec::new(),
             s: height as f32 / 720.0,
             focal: 0.95 * height as f32,
             horizon: 0.36 * height as f32,
@@ -487,6 +497,7 @@ impl TalegaSurfers {
         // Las naves, a un decimo de la escala de la camara (de cerca se
         // agrandan poco; de lejos van los mips).
         game.fleet = flota::fleet((game.focal / 10.0).round());
+        game.meshes = flota::meshes();
         game.reset();
         game
     }
@@ -1702,13 +1713,25 @@ impl TalegaSurfers {
     }
 }
 
+/// De la luz lineal al color de la pantalla, como al hornear los sprites:
+/// `1 - e^(-x)` y la gamma 2.2, en una tabla (por pixel, `powf` costaba).
+fn display(x: f32) -> f32 {
+    static TABLE: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| (0..=1024).map(|i| (1.0 - (-(i as f32) / 128.0).exp()).powf(1.0 / 2.2)).collect());
+    let k = (x.max(0.0) * 128.0).min(1023.999);
+    let i = k as usize;
+    table[i] + (table[i + 1] - table[i]) * (k - i as f32)
+}
+
 /// La fila `yf` de la bienvenida: la luz calida detras de Meyer y Meyer de
 /// frente (premultiplicado) con los pies en `at`, sobre la imagen ya
 /// terminada.
 fn greet_row(sprite: &Sprite, at: (f32, f32), height: f32, yf: f32, row: &mut [u8], width: usize) {
     let center = (at.0, at.1 - 0.45 * sprite.height as f32);
     let reach = 0.42 * height;
-    for x in 0..width {
+    // Solo donde la luz se nota: `0.22 e^(-1.6 r^2) > 0.004` es `r < 1.6`.
+    let (gx0, gx1) = (((center.0 - 1.6 * reach).max(0.0) as usize).min(width), ((center.0 + 1.6 * reach).max(0.0) as usize).min(width));
+    for x in gx0..gx1 {
         let (dx, dy) = ((x as f32 + 0.5 - center.0) / reach, (yf - center.1) / (1.2 * reach));
         let glow = (-(dx * dx + dy * dy) * 1.6).exp() * 0.22;
         if glow > 0.004 {
@@ -2514,6 +2537,56 @@ impl TalegaSurfers {
     /// La carreta de helados: el cajon blanco con sus franjas y su helado
     /// pintado, las llantas, la tapa de lamina, la sombrilla de gajos de
     /// colores y las campanitas.
+    /// El color de un pixel de una nave en 3D: la clase de cada pieza (la
+    /// pintura con su brillo, el metal, el vidrio que refleja el cielo, el
+    /// hule y las LEDs que emiten y corren), con la luz del cielo y la del
+    /// sol de la tarde si le da (`sunlit`), la ceniza y la neblina. La
+    /// normal se voltea hacia la camara (las mallas tienen caras abiertas) y
+    /// la pintura de las camionetas sale permutando sus canales (tres
+    /// pinturas, como los sprites).
+    fn vehicle_shade(&self, f: &malla::Fragment, ash: f32, cam: &Camera, haze: Vec3) -> (Vec3, f32) {
+        use crate::scene::Surface;
+        let view = (f.world - cam.pos).normalize();
+        let mut n = f.normal.normalize();
+        if n.dot(view) > 0.0 {
+            n = -n;
+        }
+        let paint = match self.obstacles.get(f.tag as usize) {
+            Some(o) if o.thing != Thing::TukTuk => (o.seed % 3) as u8,
+            _ => 0,
+        };
+        let albedo = match paint {
+            1 => Vec3::new(f.color.y, f.color.z, f.color.x),
+            2 => Vec3::new(f.color.z, f.color.x, f.color.y),
+            _ => f.color,
+        };
+        let sun = Self::sunlit(f.world) * (1.0 - 0.8 * ash);
+        let ndl = n.dot(SUN_DIR).max(0.0);
+        let sky = SKY_LIGHT * (0.75 + 0.35 * n.y.max(0.0)) * (1.0 - 0.5 * ash);
+        let r = view - n * (2.0 * view.dot(n));
+        let reflection = Vec3::new(1.0, 0.62, 0.42).lerp(Vec3::new(0.3, 0.38, 0.62), r.y.clamp(0.0, 1.0)) * 0.8;
+        let fresnel = 0.04 + 0.96 * (1.0 + view.dot(n)).clamp(0.0, 1.0).powi(5);
+        let h = (SUN_DIR - view).normalize();
+        let spec = |power: i32| n.dot(h).max(0.0).powi(power) * sun;
+        let (lin, glow) = match Surface::from_code(f.class) {
+            Surface::Light => {
+                let pulse = 0.6 + 0.4 * (self.wall * 5.0 + f.world.z * 1.7 + f.world.y * 3.0).sin();
+                (albedo * (0.4 + 2.6 * pulse), 0.75 * pulse)
+            }
+            Surface::Metal => (albedo * (sky * 1.3 + SUN * (ndl * sun) + reflection * 0.6) + SUN * (spec(40) * 1.4), 0.0),
+            Surface::Glass => (albedo * 0.25 + reflection * (0.25 + 0.75 * fresnel) + SUN * (spec(90) * 1.2), 0.0),
+            Surface::Rubber => (albedo * (sky + SUN * (ndl * sun * 0.5)), 0.0),
+            Surface::Paint => {
+                let gloss = (0.5 - f.value).clamp(0.0, 0.5);
+                (albedo * (sky * 1.35 + SUN * (ndl * sun * 1.15)) + SUN * (spec(24) * (0.15 + gloss)) + reflection * (fresnel * 0.35), 0.0)
+            }
+        };
+        let lin = lin * 1.25;
+        let c = Vec3::new(display(lin.x), display(lin.y), display(lin.z)) * (1.0 - 0.3 * ash);
+        let fog = 1.0 - fast_exp(-f.depth / 120.0);
+        (c.lerp(haze, fog), glow * (1.0 - fog))
+    }
+
     /// La rampa de tablones, de abajo hacia arriba en el orden en que se
     /// tapan: su sombra en el empedrado (proyectada con la direccion del
     /// sol), los caballetes que la sostienen (postes y una cruz, del lado que
@@ -3021,8 +3094,48 @@ impl Minigame for TalegaSurfers {
         // la ve la camara, su mip y sus colores; las que ya quedaron atras
         // del patojo se pintan despues de el.
         let mut rides: Vec<(Ride, bool)> = Vec::new();
+        // Las de cerca van en 3D: su malla en perspectiva, con la camara del
+        // juego (de cerca un sprite es una tarjeta: sin costado y corto
+        // desde arriba).
+        let has_meshes = self.meshes.is_some();
+        let near3d = |o: &Obstacle| has_meshes && matches!(o.thing, Thing::Parked | Thing::Bus | Thing::TukTuk) && o.z - cam.pos.z < RASTER_DIST && o.z + o.len > cam.pos.z + 0.05;
+        let mut rasters = std::mem::take(&mut self.rasters);
+        let near: Vec<usize> = (0..self.obstacles.len()).filter(|&i| near3d(&self.obstacles[i])).collect();
+        rasters.resize_with(near.len(), Raster::default);
+        if let Some(meshes) = self.meshes.clone() {
+            let view = malla::View { pos: cam.pos, focal: cam.focal, cx: cam.cx, horizon: cam.horizon };
+            let (obstacles, height) = (&self.obstacles, self.height);
+            parallel::chunks_mut(&mut rasters, 1, 1, |k, slot| {
+                let raster = &mut slot[0];
+                raster.clear(height);
+                let index = near[k];
+                let o = &obstacles[index];
+                // Las paradas y los tuk-tuks de espaldas (media vuelta); las
+                // que vienen, de frente.
+                let (mesh, turn) = match o.thing {
+                    Thing::Parked => (&meshes.bus, true),
+                    Thing::Bus => (&meshes.bus, false),
+                    _ => (&meshes.tuk, true),
+                };
+                let (min, max) = o.bounds();
+                let center = Vec3::new((min.x + max.x) * 0.5, 0.0, o.z + o.len * 0.5);
+                let place = |p: Vec3| if turn { Vec3::new(-p.x, p.y, -p.z) } else { p };
+                for tri in &mesh.indices {
+                    let v = tri.map(|i| {
+                        let i = i as usize;
+                        malla::Vertex { world: place(mesh.positions[i]) + center, normal: place(mesh.normals[i]), color: mesh.colors[i] }
+                    });
+                    let uv = mesh.uvs.get(tri[0] as usize).copied().unwrap_or_default();
+                    raster.add(&view, v, uv.x, uv.y, index as u32);
+                }
+            });
+        }
+        self.rasters = rasters;
         if let Some(fleet) = &self.fleet {
             for o in &self.obstacles {
+                if near3d(o) {
+                    continue;
+                }
                 let (set, len) = match o.thing {
                     Thing::Parked => (&fleet.bus_back, fleet.bus.z),
                     Thing::Bus => (&fleet.bus_front, fleet.bus.z),
@@ -3078,6 +3191,12 @@ impl Minigame for TalegaSurfers {
             let yf = y as f32 + 0.5;
             let mut depth = vec![f32::MAX; width];
             this.row(y, row, &mut depth, &cam, &boxes, ash, &bg, &sky);
+            // Las naves de cerca, en 3D, con su profundidad.
+            for raster in &this.rasters {
+                if !raster.is_empty() {
+                    raster.row(y, width, &mut depth, |f| this.vehicle_shade(f, ash, &cam, haze), |x, c, e| write_emit(&mut row[x * 4..x * 4 + 4], c, e));
+                }
+            }
             // Lo de atras (lenes, bombas, carretas, papel picado) y las naves,
             // de lejos a cerca.
             let mut vi = 0;
@@ -3249,6 +3368,23 @@ mod tests {
             crate::render::png::write_rgba(&path, w as u32, h as u32, &frame).expect("png");
             println!("{} y {:.2}", path.display(), g.run.y);
         }
+        // A la par de una fila parada (en el carril de la derecha).
+        let mut side = TalegaSurfers::new(w, h, Records::in_memory());
+        side.start();
+        side.obstacles.clear();
+        side.coins.clear();
+        side.gen_z = 1e9;
+        side.run.lane = 2;
+        side.run.x = lane_x(2);
+        for b in 0..3 {
+            side.obstacles.push(Obstacle { thing: Thing::Parked, lanes: 0b010, z: 4.0 + b as f32 * (BUS_LEN + BUS_GAP), len: BUS_LEN, v: 0.0, seed: 21 + b, stepped: false });
+        }
+        while side.run.z < 9.0 && side.running() {
+            side.update(1.0 / 60.0, &Keys::default());
+        }
+        let mut frame = vec![0u8; w * h * 4];
+        side.draw(&mut frame);
+        crate::render::png::write_rgba(&std::env::temp_dir().join("surfers_a_la_par.png"), w as u32, h as u32, &frame).expect("png");
         let path = std::env::temp_dir().join("surfers_calle.png");
         crate::render::png::write_rgba(&path, w as u32, h as u32, &rgba).expect("png");
         println!("{}", path.display());
