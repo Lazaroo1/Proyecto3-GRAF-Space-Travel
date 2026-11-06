@@ -3597,6 +3597,31 @@ mod tests {
         assert_eq!(app.renderer.width(), 160);
     }
 
+    /// Un minijuego abierto mientras la resolucion dinamica va chica se
+    /// dibuja del tamano de la pantalla (la carrera tomaba el del render
+    /// chico y tronaba al dibujar).
+    #[test]
+    fn minigames_open_at_full_size_while_the_resolution_is_low() {
+        use crate::minijuegos::{self, Kind};
+        let mut app = App::new(160, 90).unwrap();
+        app.dynamic.enabled = true;
+        app.render();
+        for k in 0..3 {
+            app.aim = DQuat::from_axis_angle(DVec3::Y, 0.4 * (k + 1) as f64) * app.aim;
+            app.render();
+        }
+        assert!(app.dynamic.is_low());
+        let mut frame = vec![0u8; 160 * 90 * 4];
+        for kind in [Kind::Marimba, Kind::Carrera, Kind::Shucos, Kind::Surfers] {
+            let mut game = minijuegos::start(kind, &app);
+            game.demo_start();
+            for _ in 0..3 {
+                game.update(1.0 / 60.0, &minijuegos::Keys::default());
+                game.draw(&mut frame);
+            }
+        }
+    }
+
     /// En la version chapina, N llega a cada lugar de dia (menos Antigua,
     /// en Pira, que le da siempre la misma cara a la estrella y ya esta de
     /// dia).

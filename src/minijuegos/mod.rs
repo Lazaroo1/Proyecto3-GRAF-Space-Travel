@@ -210,7 +210,8 @@ pub fn race(app: &App, records: Records) -> carrera::Carrera {
         .collect();
     let can_models: Vec<Model> = cans.iter().map(|(mesh, i)| Model { mesh, finish: Finish::Bottle, meters: meters(Class::Chela, *i), name: ships[*i].name }).collect();
     let sky = |dir: crate::math::Vec3| app.system.sky.sample(dir);
-    carrera::Carrera::new(models, &can_models, player, &sky, app.renderer.width(), app.renderer.height(), records)
+    let (width, height) = app.frame_size();
+    carrera::Carrera::new(models, &can_models, player, &sky, width, height, records)
 }
 
 /// Donde se guardan los records: junto al programa si se corre desde la
