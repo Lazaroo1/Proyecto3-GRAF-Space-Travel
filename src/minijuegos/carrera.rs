@@ -28,8 +28,16 @@
 //!   camara), una raya ambar bajo cada poste y el cielo con Fresnel.
 //! - **Las naves son sprites horneados** al abrir el juego (`hornear`) con
 //!   los modelos de Blender: 15 angulos para verlas desde cualquier lado y 9
-//!   de cerca para la propia, que se ladea al girar. Se eligen por el angulo
-//!   entre el rumbo de la nave y el rayo de la camara.
+//!   de cerca para la propia (cada 2.5 grados, mezclados: gira sin saltos).
+//!   Se eligen por el angulo entre el rumbo de la nave y el rayo de la
+//!   camara, con el mip que toca a su tamano (de lejos no centellean) y, de
+//!   cerca, con un barrido de movimiento. Sus LEDs van aparte y se animan
+//!   por clase (las ambar corren, las magentas respiran, los stops se
+//!   encienden al frenar); los postes y el neon de las barandas las
+//!   alumbran; se ladean con un resorte en las curvas (el tuk-tuk sobre la
+//!   rueda de afuera) y rebotan en los tumulos. La camioneta echa humo negro
+//!   por sus chimeneas, cada clase tiene su turbo y los roces, choques y
+//!   tumulos sacan chispas.
 //! - **El mundo en metros**: la pista tambien guarda su trazo en el plano
 //!   (x al este, z al norte) y la camara sabe donde esta y a que altura
 //!   (400 m sobre la ciudad). Cada columna de la pantalla es un rayo
@@ -79,7 +87,7 @@ use std::sync::OnceLock;
 
 use super::ciudad::{self, Ciudad, unit};
 use super::escenario::{self, KITE_EXTENT, PAPEL};
-use super::hornear::{self, Finish, Sprite};
+use super::hornear::{self, Finish, Lut, Pick, Sprite, Texel};
 use super::lienzo::{self, cover, emission, halo, over, write_emit};
 use super::posproceso::{self, Posproceso};
 use super::{Align, Font, Keys, Minigame, Overlay, Records};
@@ -87,7 +95,7 @@ use crate::audio::SAMPLE_RATE;
 use crate::math::{Vec3, fast_atan2, fast_exp, hash_u32, smoothstep};
 use crate::parallel;
 use crate::render::transition;
-use crate::scene::Mesh;
+use crate::scene::{Mesh, Surface};
 
 /// Largo de un tramo, ancho de un carril y medio ancho del asfalto (m).
 const SEGMENT: f32 = 4.0;
@@ -146,9 +154,15 @@ const MAX_SPARK_SEGS: usize = 600;
 /// Rumbo de los angulos horneados: de -70 a 70 grados, cada 10.
 const YAWS: usize = 15;
 const YAW_STEP: f32 = 10.0 * PI / 180.0;
-/// Los de la nave propia: de -20 a 20, cada 5.
-const PLAYER_YAWS: usize = 9;
-const PLAYER_YAW_STEP: f32 = 5.0 * PI / 180.0;
+/// Los de la nave propia: de -10 a 10, cada 1.25 (se toma el mas cercano;
+/// mezclar dos vecinos la dejaba doble, ver `view`).
+const PLAYER_YAWS: usize = 17;
+const PLAYER_YAW_STEP: f32 = 1.25 * PI / 180.0;
+/// Las chispas de la pista: cuantas a la vez como mucho.
+const MAX_TRACK_SPARKS: usize = 600;
+/// El humo de las chimeneas: cuantos soplos a la vez y cuanto vive cada uno.
+const MAX_PUFFS: usize = 80;
+const PUFF_LIFE: f32 = 2.2;
 const RATE: f32 = SAMPLE_RATE as f32;
 
 /// Las clases de nave.
@@ -224,6 +238,20 @@ impl Kind {
             Kind::TukTuk => "carrera_tuk_tuk",
             Kind::Camioneta => "carrera_camioneta",
             Kind::Colectivo => "carrera_colectivo",
+        }
+    }
+
+    /// Como se ladea en las curvas: cuanto (rad a fondo y a toda
+    /// velocidad) y el resorte, `(K, C)` de `roll'' = K (meta - roll) - C
+    /// roll'`. El tuk-tuk es alto y angosto: se ladea mucho y rapido, con
+    /// `zeta = C / (2 sqrt K) ~ 0.47` (se pasa y rebota); la camioneta, lenta
+    /// y blanda (`omega = 5`, `zeta = 0.3`: se mece); el resto, firme.
+    fn roll_spring(self) -> (f32, f32, f32) {
+        match self {
+            Kind::TukTuk => (0.22, 90.0, 9.0),
+            Kind::Camioneta => (0.07, 25.0, 3.0),
+            Kind::Colectivo => (0.05, 60.0, 7.0),
+            Kind::Chela => (0.12, 60.0, 7.0),
         }
     }
 
@@ -473,6 +501,18 @@ struct Car {
     bumped: f32,
     /// Las calaveras (0 a 1): suben a 12/s al frenar y bajan a 5/s.
     brake_light: f32,
+    /// Si acelera en este paso (el humo sale solo acelerando).
+    throttle: bool,
+    /// El ladeo (rad, + a la derecha de la pantalla) y su velocidad: un
+    /// resorte amortiguado hacia lo que pide la curva.
+    roll: f32,
+    roll_v: f32,
+    /// Lo que salta (m) y su velocidad: otro resorte que patean los
+    /// tumulos y las crestas.
+    bounce: f32,
+    bounce_v: f32,
+    /// Lo que se junta para la siguiente chispa de su turbo (el tuk-tuk).
+    spark_due: f32,
 }
 
 impl Car {
@@ -496,6 +536,12 @@ impl Car {
             smoke: 0.0,
             bumped: 10.0,
             brake_light: 0.0,
+            throttle: false,
+            roll: 0.0,
+            roll_v: 0.0,
+            bounce: 0.0,
+            bounce_v: 0.0,
+            spark_due: 0.0,
         }
     }
 
@@ -504,13 +550,57 @@ impl Car {
     }
 }
 
-/// Un soplo de humo negro de la camioneta, quieto en la pista.
+/// Un soplo de humo negro de las chimeneas de una camioneta: donde va en
+/// la pista (`s`, `x`, y su altura `y`, m), cuanto lleva, a que velocidad
+/// sigue a lo largo (sale con la camioneta y el aire lo frena), su radio
+/// al nacer, como va girado su ruido y su semilla.
 #[derive(Clone, Copy, Debug)]
 struct Puff {
     s: f32,
     x: f32,
     y: f32,
     age: f32,
+    vs: f32,
+    r0: f32,
+    rot: f32,
+    seed: f32,
+    /// Si sale de la nave propia (su humo va tenue: sale delante de la
+    /// camara y taparia la pista).
+    own: bool,
+}
+
+impl Puff {
+    /// El radio (m): `r0 + 1.4 edad^0.7`, crece rapido y despues despacio.
+    fn radius(&self) -> f32 {
+        self.r0 + 1.4 * self.age.max(0.0).powf(0.7)
+    }
+}
+
+/// Una chispa en la pista (m, con su velocidad en m/s): la del roce con la
+/// baranda, los choques, los tumulos y el turbo del tuk-tuk. Cae con la
+/// gravedad y rebota en el asfalto. Con edad negativa todavia no sale.
+#[derive(Clone, Copy, Debug)]
+struct TrackSpark {
+    s: f32,
+    x: f32,
+    y: f32,
+    vs: f32,
+    vx: f32,
+    vy: f32,
+    age: f32,
+    life: f32,
+    color: Vec3,
+    /// Cuanto devuelve al rebotar.
+    bounce: f32,
+}
+
+/// Donde van en una nave (m, desde su centro a lo largo con `+z` hacia
+/// atras, `x` a la derecha y `y` desde el suelo) las chimeneas (de cada
+/// lado, si tiene) y el escape.
+#[derive(Clone, Debug, Default)]
+struct Rig {
+    stacks: Vec<Vec3>,
+    exhaust: Vec3,
 }
 
 /// Un aviso en la pantalla.
@@ -685,6 +775,21 @@ pub struct Carrera {
     minimap: Vec<[f32; 4]>,
     map_size: usize,
     puffs: Vec<Puff>,
+    /// Las chimeneas y el escape de cada clase, y desde que altura (rad)
+    /// se horneo la nave propia.
+    rigs: [Rig; 4],
+    player_elevation: f32,
+    /// Las chispas en la pista y lo que se junta para la siguiente del
+    /// roce con la baranda (salen 120 por segundo; las del turbo llevan su
+    /// cuenta en cada nave, `Car::spark_due`).
+    sparks: Vec<TrackSpark>,
+    spark_acc: f32,
+    /// El contador del azar de las chispas y el de los soplos de humo.
+    rng: u32,
+    puff_count: u32,
+    /// Donde roza la nave propia cada baranda (`s`) y cuanto queda del
+    /// destello blanco del neon (baja 2.5 por segundo).
+    scrape: [(f32, f32); 2],
     width: usize,
     height: usize,
     /// Sacudida de la camara y humo en la pantalla.
@@ -730,7 +835,7 @@ impl Carrera {
         let mut jobs = Vec::new();
         for m in &models {
             for &yaw in &yaws {
-                jobs.push(hornear::Job { mesh: m.mesh, finish: m.finish, yaw, elevation: 0.16, meters: m.meters, pixels_per_meter: 46.0 * s });
+                jobs.push(hornear::Job { mesh: m.mesh, finish: m.finish, yaw, elevation: RIVAL_ELEVATION, meters: m.meters, pixels_per_meter: 46.0 * s });
             }
         }
         // La propia, de cerca: tal como la ve la camara, a su tamano en
@@ -751,6 +856,7 @@ impl Carrera {
             sets.push(std::mem::replace(&mut baked, rest));
         }
         let tint = std::array::from_fn(|k| if Kind::ALL[k] == Kind::Chela { Vec3::new(1.0, 0.7, 0.3) } else { led_tint(&sets[k][YAWS / 2]) });
+        let rigs = std::array::from_fn(|k| rig_of(&models[k]));
         let track = Track::new();
         let kites = escenario::barriletes();
         let kite_spots = kite_spots(&track);
@@ -783,6 +889,13 @@ impl Carrera {
             minimap,
             map_size,
             puffs: Vec::new(),
+            rigs,
+            player_elevation: elevation,
+            sparks: Vec::new(),
+            spark_acc: 0.0,
+            rng: 0x51A7,
+            puff_count: 0,
+            scrape: [(0.0, 0.0); 2],
             width,
             height,
             shake: 0.0,
@@ -836,6 +949,13 @@ impl Carrera {
         self.cars = cars;
         self.clock = 0.0;
         self.puffs.clear();
+        self.sparks.clear();
+        self.scrape = [(0.0, 0.0); 2];
+        // El azar de las chispas y del humo vuelve a empezar: cada carrera
+        // sale igual.
+        self.spark_acc = 0.0;
+        self.rng = 0x51A7;
+        self.puff_count = 0;
         self.messages.clear();
         self.new_record = false;
         self.shake = 0.0;
@@ -982,6 +1102,7 @@ impl Carrera {
             // Las calaveras siguen al freno (tambien en la largada).
             let light = &mut self.cars[i].brake_light;
             *light = if brake { (*light + 12.0 * STEP).min(1.0) } else { (*light - 5.0 * STEP).max(0.0) };
+            self.cars[i].throttle = throttle && racing;
             if !racing {
                 // En la largada nadie se mueve (el trafico tampoco).
                 continue;
@@ -1017,28 +1138,95 @@ impl Carrera {
             car.steer += (steer - car.steer) * (1.0 - (-10.0 * STEP).exp());
             car.x += steer * spec.handling * (0.35 + 0.65 * grip) * STEP;
             car.x -= kappa * car.v * car.v * CENTRIFUGAL * STEP;
-            // Las barandas.
+            // El ladeo: un resorte amortiguado hacia
+            // `meta = -volante (v / top) ladeo` (hacia afuera de la curva),
+            // con Euler semi-implicito: primero la velocidad y con ella el
+            // angulo.
+            let (lean, stiff, damp) = car.kind.roll_spring();
+            let goal = -car.steer * (car.v / spec.top).clamp(0.0, 1.2) * lean;
+            car.roll_v += (stiff * (goal - car.roll) - damp * car.roll_v) * STEP;
+            car.roll += car.roll_v * STEP;
+            // Las barandas: la propia, si roza con velocidad, saca chispas
+            // (120 por segundo) y pone blanco el neon donde roza.
             let limit = RAIL - spec.width * 0.5;
+            let mut scrape = None;
             if car.x.abs() > limit {
                 car.x = car.x.clamp(-limit, limit);
                 car.v *= 1.0 - 0.6 * STEP;
+                if car.role == Role::Player && car.v > 10.0 {
+                    scrape = Some((car.s, car.x.signum(), car.v, spec.length));
+                }
             }
             let before = car.s;
             car.s += car.v * STEP;
             car.bumped += STEP;
-            // Los tumulos: si se pasa uno en su carril con velocidad.
+            // La cresta: al cambiar la pendiente de un tramo al siguiente,
+            // `bounce' -= dpendiente v 0.05` (en una cresta la pendiente baja
+            // y la nave se despega un poco).
             let crossed = self.track.index(before) != self.track.index(car.s);
+            if crossed {
+                let slope = |s: f32| (self.track.height(s + 0.5 * SEGMENT) - self.track.height(s - 0.5 * SEGMENT)) / SEGMENT;
+                let after = self.cars[i].s;
+                let change = slope(after) - slope(before);
+                let car = &mut self.cars[i];
+                car.bounce_v -= change * car.v * 0.05;
+            }
+            // Los tumulos: si se pasa uno en su carril con velocidad.
+            let mut bumped_at = None;
             if crossed && spec.hover == 0.0 {
-                let segment = self.track.segment(car.s);
+                let segment = *self.track.segment(self.cars[i].s);
+                let car = &mut self.cars[i];
                 let lane = (((car.x + HALF_ROAD) / LANE).floor() as i32).clamp(0, 3);
                 if segment.bumps & (1 << lane) != 0 && car.v > 18.0 {
                     car.v *= 0.62;
+                    car.bounce_v += 1.8;
+                    bumped_at = Some((car.s, car.x, car.v));
                     if car.role == Role::Player {
                         self.shake = 1.0;
                         self.message("¡Túmulo!", [255, 214, 90, 255]);
                         self.sound(Sound::Bump);
                     }
                 }
+            }
+            // El rebote: `bounce'' = -140 bounce - 9 bounce'` (unos 1.9
+            // rebotes por segundo que se apagan en medio segundo).
+            let car = &mut self.cars[i];
+            car.bounce_v += (-140.0 * car.bounce - 9.0 * car.bounce_v) * STEP;
+            car.bounce += car.bounce_v * STEP;
+            let near = (car.s - player_s).abs() < 260.0;
+            if let (Some((s, x, v)), true) = (bumped_at, near) {
+                // Las llantas contra el tumulo: 24 chispas naranjas y otras
+                // 24 un poco despues (las de atras).
+                let y = self.track.height(s) + 0.15;
+                for delay in [0.0, 0.12] {
+                    self.spawn_sparks(24, (s, x, y), (v * 0.55, 0.0, 2.2), (4.0, 2.5, 1.5), Vec3::new(1.0, 0.5, 0.15) * 2.5, (0.3, 0.6), 0.35, delay);
+                }
+            }
+            if let Some((s, side, v, length)) = scrape {
+                self.spark_acc += 120.0 * STEP;
+                let count = self.spark_acc.floor();
+                self.spark_acc -= count;
+                let y = self.track.height(s) + 0.5;
+                for _ in 0..count as u32 {
+                    let along = s + (self.random() - 0.5) * length * 0.8;
+                    self.spawn_sparks(1, (along, side * (RAIL - 0.1), y), (v * 0.65, -side * 1.5, 1.8), (3.0, 1.2, 1.4), Vec3::new(1.0, 0.85, 0.5) * 2.5, (0.35, 0.7), 0.35, 0.0);
+                }
+                let k = (side > 0.0) as usize;
+                self.scrape[k] = (s, 1.0);
+            }
+            // El turbo del tuk-tuk: chispas que saltan del escape, muchas y
+            // cortas (90 por segundo que viven de 0.12 a 0.35 s: unas 20 a
+            // la vez), cada nave con su cuenta.
+            let car = &mut self.cars[i];
+            if car.kind == Kind::TukTuk && car.boost > 0.0 && near {
+                car.spark_due += 90.0 * STEP;
+                let count = car.spark_due.floor();
+                car.spark_due -= count;
+                let (s0, x0, v) = (car.s, car.x, car.v);
+                let ex = self.rigs[Kind::TukTuk.index()].exhaust;
+                let s = s0 - ex.z;
+                let y = self.track.height(s) + ex.y;
+                self.spawn_sparks(count as u32, (s, x0 + ex.x, y), (v * 0.6, 0.0, 2.0), (2.5, 1.8, 1.5), Vec3::new(1.0, 0.7, 0.3) * 2.0, (0.12, 0.35), 0.4, 0.0);
             }
             let car = &mut self.cars[i];
             // Vueltas y meta.
@@ -1068,6 +1256,69 @@ impl Carrera {
         self.draft();
         self.traffic_lanes();
         self.exhaust();
+        self.move_sparks();
+    }
+
+    /// Un numero al azar de 0 a 1 (un contador por un hash).
+    fn random(&mut self) -> f32 {
+        self.rng = self.rng.wrapping_add(1);
+        unit(hash_u32(self.rng.wrapping_mul(0x9E37_79B9) ^ 0x5EA7))
+    }
+
+    /// Echa `n` chispas desde `at` (`s`, `x`, `y`) con la velocidad `vel`
+    /// (`vs`, `vx`, `vy`) mas `spread` al azar de cada lado, del color
+    /// `color`, que viven de `life.0` a `life.1` s, devuelven `bounce` al
+    /// rebotar y salen dentro de `delay` s. Si ya hay `MAX_TRACK_SPARKS` se
+    /// van las mas viejas.
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_sparks(&mut self, n: u32, at: (f32, f32, f32), vel: (f32, f32, f32), spread: (f32, f32, f32), color: Vec3, life: (f32, f32), bounce: f32, delay: f32) {
+        for _ in 0..n {
+            let r = [self.random(), self.random(), self.random(), self.random()];
+            let spark = TrackSpark {
+                s: at.0,
+                x: at.1,
+                y: at.2,
+                vs: vel.0 + spread.0 * (2.0 * r[0] - 1.0),
+                vx: vel.1 + spread.1 * (2.0 * r[1] - 1.0),
+                vy: vel.2 + spread.2 * r[2],
+                age: -delay,
+                life: life.0 + (life.1 - life.0) * r[3],
+                color,
+                bounce,
+            };
+            if self.sparks.len() >= MAX_TRACK_SPARKS {
+                self.sparks.remove(0);
+            }
+            self.sparks.push(spark);
+        }
+    }
+
+    /// Las chispas: tiro parabolico (`g = 9.8`) con un poco de aire
+    /// (`e^(-1.5 dt)` a lo largo y de lado), y al tocar el asfalto rebotan,
+    /// `vy = -rebote vy`, y se frenan. Las que aun no salen esperan.
+    fn move_sparks(&mut self) {
+        let drag = (-1.5 * STEP).exp();
+        for p in &mut self.sparks {
+            if p.age < 0.0 {
+                p.age += STEP;
+                continue;
+            }
+            p.vy -= 9.8 * STEP;
+            p.vs *= drag;
+            p.vx *= drag;
+            p.s += p.vs * STEP;
+            p.x += p.vx * STEP;
+            p.y += p.vy * STEP;
+            let ground = self.track.height(p.s);
+            if p.y < ground {
+                p.y = ground;
+                p.vy = -p.bounce * p.vy;
+                p.vs *= 0.8;
+                p.vx *= 0.8;
+            }
+            p.age += STEP;
+        }
+        self.sparks.retain(|p| p.age < p.life);
     }
 
     /// Lo que hace la IA de la nave `i`: volante, acelerador, freno y turbo.
@@ -1155,11 +1406,24 @@ impl Carrera {
                     back_car.s -= overlap_s;
                     self.cars[front].v += 1.5;
                 }
+                // Las chispas del golpe, en el punto de contacto (a lo mas
+                // una vez cada 0.4 s por pareja y cerca de la camara).
+                let fresh = self.cars[a].bumped > 0.4 && self.cars[b].bumped > 0.4 && (self.cars[a].s - self.cars[0].s).abs() < 200.0;
                 if player && self.cars[0].bumped > 0.4 {
                     self.cars[0].bumped = 0.0;
                     self.shake = 0.8;
                     self.message("¡Pum!", [255, 130, 100, 255]);
                     self.sound(Sound::Thud);
+                }
+                if fresh {
+                    let (ca, cb) = (&self.cars[a], &self.cars[b]);
+                    let s = (ca.s + cb.s) * 0.5;
+                    let x = (ca.x + cb.x) * 0.5;
+                    let v = (ca.v + cb.v) * 0.5;
+                    let y = self.track.height(s) + 0.6;
+                    self.cars[a].bumped = 0.0;
+                    self.cars[b].bumped = 0.0;
+                    self.spawn_sparks(40, (s, x, y), (v * 0.7, 0.0, 2.5), (5.0, 4.0, 2.0), Vec3::new(1.0, 0.8, 0.45) * 2.5, (0.3, 0.6), 0.35, 0.0);
                 }
             }
         }
@@ -1237,30 +1501,51 @@ impl Carrera {
         }
     }
 
-    /// El humo negro de las camionetas que aceleran.
+    /// El humo negro de las chimeneas de las camionetas que aceleran (cerca
+    /// de la camara): un soplo cada 0.05 s (0.025 con turbo, a bocanadas),
+    /// alternando chimenea, que sale con `0.8 v` a lo largo. El aire lo
+    /// frena, `vs *= e^(-1.8 dt)`, y sube cada vez mas rapido,
+    /// `y' = 0.9 + 0.6 edad` (el humo caliente). Vive 2.2 s.
     fn exhaust(&mut self) {
+        let player_s = self.cars[0].s;
         for i in 0..self.cars.len() {
             let car = &mut self.cars[i];
-            if car.kind != Kind::Camioneta || car.v < 8.0 {
+            if car.kind != Kind::Camioneta || !car.throttle || car.v < 3.0 || !(-40.0..260.0).contains(&(car.s - player_s)) {
                 continue;
             }
             car.smoke -= STEP;
-            if car.smoke <= 0.0 {
-                car.smoke = 0.11;
-                let spec = car.kind.spec();
-                let s = car.s - spec.length * 0.55;
-                let puff = Puff { s, x: car.x + 0.8, y: self.track.height(s) + 2.4, age: 0.0 };
-                self.puffs.push(puff);
+            if car.smoke > 0.0 {
+                continue;
             }
+            car.smoke = if car.boost > 0.0 { 0.025 } else { 0.05 };
+            let (s0, x0, v, own) = (car.s, car.x, car.v, i == 0);
+            self.puff_count = self.puff_count.wrapping_add(1);
+            let rig = &self.rigs[Kind::Camioneta.index()];
+            let stack = if rig.stacks.is_empty() { Vec3::new(0.8, 2.4, 0.55 * Kind::Camioneta.length()) } else { rig.stacks[self.puff_count as usize % rig.stacks.len()] };
+            let s = s0 - stack.z;
+            let r = [self.random(), self.random(), self.random()];
+            let puff = Puff { s, x: x0 + stack.x, y: self.track.height(s) + stack.y, age: 0.0, vs: v * 0.8, r0: 0.6 + 0.15 * r[0], rot: TAU * r[1], seed: 64.0 * r[2], own };
+            if self.puffs.len() >= MAX_PUFFS {
+                self.puffs.remove(0);
+            }
+            self.puffs.push(puff);
         }
+        let drag = (-1.8 * STEP).exp();
         for puff in &mut self.puffs {
+            puff.vs *= drag;
+            puff.s += puff.vs * STEP;
+            puff.y += (0.9 + 0.6 * puff.age) * STEP;
             puff.age += STEP;
-            puff.y += 0.6 * STEP;
         }
-        self.puffs.retain(|p| p.age < 2.6);
-        // Si quien juega pasa por el humo, se le nubla la vista.
-        let (s, x) = (self.cars[0].s, self.cars[0].x);
-        let dense = self.puffs.iter().any(|p| (p.s - s).abs() < 2.5 && (p.x - x).abs() < 1.5 + p.age && p.age < 1.6);
+        self.puffs.retain(|p| p.age < PUFF_LIFE);
+        // Si la camara pasa por el humo, se le nubla la vista: un soplo
+        // denso (de menos de 1.6 s) que esta a menos de 2.5 m delante de la
+        // camara y con el ojo adentro de su nucleo (`hypot(dx, dy) < 0.8
+        // radio` en el corte de frente). (Midiendo solo a lo ancho y desde
+        // la nave, el humo de la camioneta del carril de al lado nublaba la
+        // vista entera.)
+        let cam = self.camera();
+        let dense = self.puffs.iter().any(|p| (0.0..2.5).contains(&(p.s - cam.s)) && (p.x - cam.x).hypot(p.y - cam.y) < 0.8 * p.radius() && p.age < 1.6);
         if dense && self.cars[0].kind != Kind::Camioneta {
             if self.smoke_screen < 0.3 {
                 self.message("¡Humo negro!", [200, 200, 200, 255]);
@@ -1268,6 +1553,50 @@ impl Carrera {
             self.smoke_screen = 1.0;
         }
     }
+}
+
+/// Las chimeneas y el escape de una nave, de su malla en metros (`Rig`):
+///
+/// - las chimeneas son las piezas de metal del 35 % de adelante que pasan
+///   del 80 % del alto: de cada lado (por el signo de `x`) el vertice mas
+///   alto y, si empatan, el mas afuera (la boca del tubo);
+/// - el escape, el centro de los vertices de metal del 15 % de atras bajo
+///   el 25 % del alto (el tubo bajo la defensa). Si no hay (la botella), el
+///   centro de la cara de atras a un cuarto del alto.
+fn rig_of(model: &Model) -> Rig {
+    let mesh = model.mesh;
+    let m = model.meters;
+    let (lo, hi) = mesh.positions.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), &p| (lo.min(p), hi.max(p)));
+    if mesh.positions.is_empty() {
+        return Rig::default();
+    }
+    let length = (hi.z - lo.z) * m;
+    let top = (hi.y - lo.y) * m;
+    let mid_x = (lo.x + hi.x) * 0.5;
+    let mid_z = (lo.z + hi.z) * 0.5;
+    let to_m = |p: Vec3| Vec3::new((p.x - mid_x) * m, (p.y - lo.y) * m, (p.z - mid_z) * m);
+    let metal = |i: usize| model.finish == Finish::Vehicle && mesh.uvs.get(i).is_some_and(|uv| Surface::from_code(uv.x) == Surface::Metal);
+    let mut stacks = [None::<Vec3>; 2];
+    let (mut sum, mut count) = (Vec3::ZERO, 0.0f32);
+    for (i, &p) in mesh.positions.iter().enumerate() {
+        if !metal(i) {
+            continue;
+        }
+        let q = to_m(p);
+        if q.z < -0.5 * length + 0.35 * length && q.y > 0.8 * top {
+            let side = (q.x > 0.0) as usize;
+            let better = stacks[side].is_none_or(|b| q.y > b.y + 1e-3 || ((q.y - b.y).abs() <= 1e-3 && q.x.abs() > b.x.abs()));
+            if better {
+                stacks[side] = Some(q);
+            }
+        }
+        if q.y < 0.25 * top && q.z > 0.5 * length - 0.15 * length {
+            sum += q;
+            count += 1.0;
+        }
+    }
+    let exhaust = if count > 0.0 { sum * (1.0 / count) } else { Vec3::new(0.0, 0.25 * top, 0.5 * length) };
+    Rig { stacks: stacks.into_iter().flatten().collect(), exhaust }
 }
 
 /// Donde va la camara: cuanto atras y cuanto arriba de la nave.
@@ -1383,6 +1712,9 @@ impl Minigame for Carrera {
         self.sky_update(dt);
         self.shake = (self.shake - dt * 2.5).max(0.0);
         self.smoke_screen = (self.smoke_screen - dt * 1.1).max(0.0);
+        for scrape in &mut self.scrape {
+            scrape.1 = (scrape.1 - 2.5 * dt).max(0.0);
+        }
         self.horn_cooldown = (self.horn_cooldown - dt).max(0.0);
         // La camara se abre con la velocidad y mas con el turbo: un resorte
         // amortiguado hacia `0.10 (v / top)^2 + 0.12 turbo`, con
@@ -2022,45 +2354,250 @@ impl Carrera {
                 items.push(place(d, kind, 0.0, x, y));
             }
         }
-        // El humo.
+        // Cuanto alumbra el poste mas cercano a `s`: `e^(-(ds / 6)^2)`.
+        let lamp_near = |s: f32| {
+            let n = lamp_after(s - LAMP_EVERY, length);
+            (n..n + 3).map(|n| (lamp(n, length).0 - s) * (1.0 / 6.0)).map(|q| fast_exp(-q * q)).fold(0.0f32, f32::max)
+        };
+        // El humo: cada soplo con su luz del poste y su giro.
+        let mut puff_draws = Vec::new();
         for puff in &self.puffs {
             let d = puff.s - cam.s;
             if let Some((x, _, _)) = at(d) {
-                items.push(place(d, ItemKind::Puff { age: puff.age }, puff.x, x, puff.y));
+                let id = puff_draws.len() as u16;
+                let (sin, cos) = puff.rot.sin_cos();
+                puff_draws.push(PuffDraw { age: puff.age, radius: puff.radius(), sin, cos, seed: puff.seed, lamp: lamp_near(puff.s), weight: if puff.own { 0.4 } else { 1.0 } });
+                let mut item = place(d, ItemKind::Puff { id }, puff.x, x, puff.y);
+                let r = puff.radius() * item.scale;
+                (item.top, item.bottom) = (item.y - r - 1.0, item.y + r + 1.0);
+                items.push(item);
             }
         }
-        // Las naves.
+        // Las chispas de la pista: una capsula de donde estaba hace 1/45 s
+        // (con su velocidad de ahora) a donde esta, cada una con su
+        // profundidad (las tapa lo que este mas cerca). La capsula mide como
+        // mucho 12 px: las que vuelan hacia la camara se corren mucho en la
+        // pantalla en 1/45 s y, sin tope, eran rayas rectas hasta la orilla
+        // (como laser, no chispas). Las de a menos de 2 m no se pintan.
+        let mut spark_draws = Vec::new();
+        let project_track = |s: f32, x: f32, y: f32| -> Option<(f32, f32, f32)> {
+            let d = s - cam.s;
+            let (xo, _, _) = at(d)?;
+            Some((cx + (xo + x - cam.x) * cam.focal / d, cam.horizon - (y - cam.y) * cam.focal / d, d))
+        };
+        for p in self.sparks.iter().filter(|p| p.age >= 0.0) {
+            let tau = 1.0 / 45.0;
+            let (Some(head), Some(tail)) = (project_track(p.s, p.x, p.y), project_track(p.s - p.vs * tau, p.x - p.vx * tau, p.y - p.vy * tau)) else { continue };
+            if head.2 < 2.0 {
+                continue;
+            }
+            let (tx, ty) = (tail.0 - head.0, tail.1 - head.1);
+            let long = tx.hypot(ty);
+            let cut = if long > 12.0 { 12.0 / long } else { 1.0 };
+            let tail = (head.0 + tx * cut, head.1 + ty * cut, tail.2);
+            // Se enfria: del color al rojo, y se apaga `(1 - t)^1.5`.
+            let t = (p.age / p.life).clamp(0.0, 1.0);
+            let bright = (1.0 - t) * (1.0 - t).sqrt() * (1.0 - fog_at(head.2));
+            if bright < 0.02 {
+                continue;
+            }
+            let color = p.color.lerp(Vec3::new(1.0, 0.2, 0.03) * p.color.max_element() * 0.6, t) * bright;
+            let w = (0.03 * cam.focal / head.2).clamp(0.6, 1.4);
+            let reach = 8.0 * w + 1.0;
+            let id = spark_draws.len() as u16;
+            spark_draws.push(SparkSeg { a: (tail.0, tail.1), b: (head.0, head.1), color, emit: bright.min(1.0), w, tail: 0.3, lo: (head.0.min(tail.0) - reach, head.1.min(tail.1) - reach), hi: (head.0.max(tail.0) + reach, head.1.max(tail.1) + reach) });
+            let mut item = Item::new(head.2, ItemKind::Spark { id }, head.0, head.1, cam.focal / head.2);
+            (item.top, item.bottom) = (head.1.min(tail.1) - reach, head.1.max(tail.1) + reach);
+            items.push(item);
+        }
+        // Las naves. Las tablas de sus LEDs: la persecucion de feria (las
+        // ambar), `0.5 + 0.5 smoothstep(0.55, 1, 0.5 + 0.5 sin(2 pi (4 f /
+        // 64 - 1.6 t)))`, un pulso que corre por la fase `f` (cuatro por
+        // vuelta de fase, seis vueltas a lo largo de la nave; con piso de
+        // 0.5, asi los focos se apagan a medias y la nave sigue de feria), y
+        // la respiracion (magentas, cianes y azules), `0.7 + 0.3 sin(2.1 t +
+        // 0.1 f)`. Cada nave las lee corridas por su numero (no van todas al
+        // compas); las fijas a 1 y los stops a `0.6 + 1.4 calaveras`. Todo
+        // por 0.3 en el trafico (que no le gane a las rivales) y por 1.25 con
+        // turbo. La tabla va por el byte del patron tal cual (`patron << 6 |
+        // fase`, ver `hornear::Lut`).
+        let wall = self.wall;
+        let chase: [f32; 64] = std::array::from_fn(|f| 0.5 + 0.5 * smoothstep(0.55, 1.0, 0.5 + 0.5 * (TAU * (f as f32 / 64.0 * 4.0 - wall * 1.6)).sin()));
+        let breathe: [f32; 64] = std::array::from_fn(|f| 0.7 + 0.3 * (wall * 2.1 + f as f32 * 0.1).sin());
+        let mut luts: Vec<Lut> = Vec::new();
+        let mut car_draws: Vec<CarDraw> = Vec::new();
+        let mut flames: Vec<FlameDraw> = Vec::new();
+        let player_v = self.cars[0].v;
         for (i, car) in self.cars.iter().enumerate() {
             let spec = car.kind.spec();
             let d = car.s - cam.s;
             let Some((x, y, theta)) = at(d) else { continue };
             let wx = x + car.x - cam.x;
             let sx = cx + wx * cam.focal / d;
-            let sy = cam.horizon - (y + spec.hover - cam.y) * cam.focal / d;
-            let yaw = theta + car.steer * 0.12 - (wx / d).atan();
-            let (set, sprite) = if i == 0 {
-                let k = ((car.steer * 0.17 / PLAYER_YAW_STEP).round() as i32 + (PLAYER_YAWS / 2) as i32).clamp(0, PLAYER_YAWS as i32 - 1);
-                (usize::MAX, k as usize)
-            } else {
-                let k = ((yaw / YAW_STEP).round() as i32 + (YAWS / 2) as i32).clamp(0, YAWS as i32 - 1);
-                (car.kind.index(), k as usize)
-            };
-            let glow = if car.boost > 0.0 { 1.0 } else { 0.0 };
+            // La chela flota y se mece: `0.6 + 0.12 sin(2.2 t + i)` de alto y
+            // `0.08 sin(1.3 t + i)` de ladeo.
+            let phase = i as f32;
+            let (hover, wobble) = if car.kind == Kind::Chela { (0.6 + 0.12 * (wall * 2.2 + phase).sin(), 0.08 * (wall * 1.3 + phase).sin()) } else { (spec.hover, 0.0) };
+            let sy = cam.horizon - (y + hover - cam.y) * cam.focal / d;
+            let player = i == 0;
             // La apertura de la camara (`focal / (1 + fov)`) encoge todo; a
             // la nave propia se le devuelve la mitad, `1 + fov / 2`, para
             // que no pierda presencia con el turbo.
-            let keep = if i == 0 { 1.0 + 0.5 * self.fov.max(0.0) } else { 1.0 };
-            let kind = ItemKind::Car { set, sprite, length: spec.length, boost: glow, player: i == 0, spill: self.arch_spill(car.s) };
-            items.push(Item::new(d, kind, sx, sy, cam.focal / d * keep));
+            let keep = if player { 1.0 + 0.5 * self.fov.max(0.0) } else { 1.0 };
+            let k = cam.focal / d * keep;
+            // El rumbo: el angulo en pasos de horneado, `kf`, cae entre dos
+            // sprites y se toma el mas cercano. (Mezclar los dos vecinos no
+            // sirve: solo coincide lo que se alinea, y lo demas sale doble,
+            // como la botella con dos cuellos.) La propia tiene un sprite
+            // cada 1.25 grados, asi el salto de uno al siguiente es chico; las
+            // demas, cada 10, pero se ven de lejos.
+            let (set, kf, count) = if player {
+                (usize::MAX, car.steer * 0.17 / PLAYER_YAW_STEP + (PLAYER_YAWS / 2) as f32, PLAYER_YAWS)
+            } else {
+                let yaw = theta + car.steer * 0.12 - (wx / d).atan();
+                (car.kind.index(), yaw / YAW_STEP + (YAWS / 2) as f32, YAWS)
+            };
+            let kf = if kf.is_finite() { kf.clamp(0.0, (count - 1) as f32) } else { (count / 2) as f32 };
+            let sprites: &[Sprite] = if player { &self.player_set } else { self.sets.get(set).map_or(&[], |v| v.as_slice()) };
+            let k0 = (kf.round() as usize).min(count - 1);
+            let Some(sprite) = sprites.get(k0) else { continue };
+            let scale = k / sprite.scale;
+            // La cola de una nave larga gira alrededor del centro: del rumbo
+            // `k0` al de verdad, `kf`, se corre `L/2 sin(rumbo)` (px por
+            // metro del ancla). El sprite se corre a lo ancho para que su
+            // cola caiga donde cae la del rumbo de verdad: la cola sigue el
+            // giro sin saltos y solo lo de adelante salta, poquito.
+            let step = if player { PLAYER_YAW_STEP } else { YAW_STEP };
+            let mid = (count / 2) as f32;
+            let tail = |k: f32| -0.5 * spec.length * ((k - mid) * step).sin() * sprite.scale;
+            let ax = sprite.anchor.0 - (tail(kf) - tail(k0 as f32));
+            // El mip: `log2(1 / escala)` (cuantos pixeles del sprite caen en
+            // uno de la pantalla) menos 1: un nivel mas fino que lo justo,
+            // que el bilineal aguanta casi sin centellear, asi las de lejos
+            // salen nitidas (con 0.6 se veian borrosas junto a las de antes,
+            // sin mips) y la propia, apenas encogida por la apertura, se
+            // queda en el nivel 0.
+            let lod = if scale > 0.0 { ((1.0 / scale).log2() - 1.0).max(0.0) } else { 0.0 };
+            // Las que pasan pegadas a la camara se desvanecen solo a menos de
+            // 1.6 m (antes de 5.5: pasaban como fantasmas).
+            let near = if player { 1.0 } else { smoothstep(0.8, 1.6, d) };
+            // El barrido: de cerca (el sprite agrandado mas de 2.2 veces, asi
+            // que siempre por la recta de `draw_car`), la que pasa (o a la
+            // que se pasa) se emborrona a lo ancho lo que se mueve respecto a
+            // la camara, `0.02 |dv|` pixeles del sprite (hasta 6). Mas lo
+            // que esconde los pixeles del sprite agrandado,
+            // `0.25 (escala - 2)` (hasta 1.5), y nada si no llega a un pixel
+            // de la pantalla.
+            let smear = if !player && scale > 2.2 { ((car.v - player_v).abs() * 0.02).max((0.25 * (scale - 2.0)).min(1.5)).min(6.0) } else { 0.0 };
+            let smear = if smear * scale < 1.0 { 0.0 } else { smear.min(6.0) };
+            let roll = car.roll + wobble;
+            let (sin, cos) = roll.sin_cos();
+            // El tuk-tuk gira sobre la rueda de afuera (levanta la de adentro):
+            // el pivote se va a `0.45 ancho` del lado al que se ladea.
+            let pivot = if car.kind == Kind::TukTuk { roll.signum() * spec.width * 0.45 * smoothstep(0.06, 0.14, roll.abs()) * k } else { 0.0 };
+            let rail = (fast_exp(-(car.x + RAIL) / 3.0), fast_exp(-(RAIL - car.x) / 3.0));
+            let off = (i * 13) % 64;
+            let gain = if car.role == Role::Traffic { 0.3 } else { 1.0 } * if car.boost > 0.0 { 1.25 } else { 1.0 };
+            let stop = 0.6 + 1.4 * car.brake_light;
+            luts.push(std::array::from_fn(|b| {
+                let f = b & 63;
+                gain * match b >> 6 {
+                    0 => 1.0,
+                    1 => chase[(f + off) % 64],
+                    2 => breathe[(f + off) % 64],
+                    _ => stop,
+                }
+            }));
+            let cd = CarDraw {
+                set,
+                k: k0,
+                ax,
+                length: spec.length,
+                spill: self.arch_spill(car.s),
+                smear,
+                sin,
+                cos,
+                pivot,
+                lift: car.bounce * k,
+                stretch: 1.0 / (1.0 + 0.04 * car.bounce_v.clamp(-5.0, 5.0)),
+                lamp: lamp_near(car.s),
+                rail,
+                neon: std::array::from_fn(|i| {
+                    let tx = i as f32 / RELIGHT_TAPS as f32;
+                    let g = NEON[0] * (RELIGHT_NEON * rail.0 * smoothstep(0.6, 0.0, tx)) + NEON[1] * (RELIGHT_NEON * rail.1 * smoothstep(0.4, 1.0, tx));
+                    Vec3::new(fast_exp(-g.x), fast_exp(-g.y), fast_exp(-g.z))
+                }),
+                near,
+                lod,
+                pick: sprite.pick(lod),
+                // De muy lejos (escala bajo 0.12, mas de unos 60 m) se suma
+                // un poco de la luz del mip siguiente, hasta 0.3, para que
+                // las luces no se apaguen al promediarse; solo sobre el
+                // cuerpo (por su alfa), asi no agranda la silueta. (Con dos
+                // niveles arriba y hasta 2.4 desde 0.25, las de 30 a 120 m
+                // quedaban como manchas rosas con forma de caja.)
+                far_pick: sprite.pick(lod + 1.0),
+                far: if scale < 0.12 { 0.3 * smoothstep(0.12, 0.06, scale) } else { 0.0 },
+                solid: near >= 1.0 && (player || k >= 6.0),
+            };
+            let id = car_draws.len() as u16;
+            car_draws.push(cd);
+            let mut item = Item::new(d, ItemKind::Car { id }, sx, sy, k);
+            (item.top, item.bottom) = self.car_rows(&item, &cd);
+            items.push(item);
+            // El turbo, en el escape: un cono de llama a lo largo del chorro,
+            // que sale hacia atras (hacia la camara). Se pinta justo delante
+            // del sprite: el escape es la cola, lo mas cerca de la camara
+            // (pintado antes que el sprite lo tapaba la defensa entero).
+            if car.boost > 0.0 {
+                let ex = self.rigs[car.kind.index()].exhaust;
+                // Donde cae el escape en el sprite: con el rumbo `th` y la
+                // altura de la vista `e` del horneado,
+                // `x = ex.x cos th - ex.z sin th` y
+                // `y = ex.y cos e - (ex.x sin th + ex.z cos th) sin e` sobre el
+                // ancla (lo de atras, mas cerca de la camara, baja). Despues,
+                // girado con la nave: `(rx, ry)` desde el pivote y de vuelta a
+                // la pantalla.
+                let th = (kf - mid) * step;
+                let e = if player { self.player_elevation } else { RIVAL_ELEVATION };
+                let (st, ct) = th.sin_cos();
+                let (se, ce) = e.sin_cos();
+                let up = ex.y * ce - (ex.x * st + ex.z * ct) * se;
+                let (rx, ry) = ((ex.x * ct - ex.z * st) * k - pivot, -up * k / cd.stretch - cd.lift);
+                let (fx, fy) = (sx + pivot + rx * cos - ry * sin, sy + rx * sin + ry * cos);
+                // La punta: el chorro mide `largo` metros hacia la camara, de
+                // la profundidad del escape `de = d - ex.z` a `de - largo`, y
+                // en perspectiva se corre lo que cambia `1 / profundidad`:
+                // `(x, alto - camara) f (1 / (de - largo) - 1 / de)` (de cerca
+                // baja mucho en la pantalla: el cono apunta a quien mira).
+                let (reach, r0, r1) = flame_shape(car.kind);
+                let de = (d - ex.z).max(1.0);
+                let dt = (de - reach).max(0.6 * de).max(1.0);
+                let grow = cam.focal * (1.0 / dt - 1.0 / de);
+                let wy = y + ex.y + hover - cam.y;
+                let tip = (fx + (wx + ex.x) * grow, fy - wy * grow);
+                let (r0, r1) = (r0 * cam.focal / de, r1 * cam.focal / dt);
+                let id = flames.len() as u16;
+                flames.push(FlameDraw { kind: car.kind, power: (car.boost / 0.3).min(1.0), seed: phase * 7.3, length: spec.length, tip, r0, r1 });
+                let r = r0.max(r1) * 1.6 + 1.0;
+                let mut flame = Item::new(d - 0.01, ItemKind::Flame { id }, fx, fy, k);
+                (flame.top, flame.bottom) = (fy.min(tip.1) - r, fy.max(tip.1) + r);
+                items.push(flame);
+            }
         }
         items.sort_by(|a, b| b.depth.total_cmp(&a.depth));
         // De que fila a que fila cae cada cosa: las demas filas ni la miran.
+        // (Las naves, el humo, las chispas y el turbo ya lo traen.)
         for item in &mut items {
-            (item.top, item.bottom) = self.item_rows(item);
+            if item.top == f32::MIN {
+                (item.top, item.bottom) = self.item_rows(item);
+            }
         }
-        // Las naves que tapan pista opacas: la propia y las demas que ya
-        // no se desvanecen (a mas de 5.5 m) y miden algo en la pantalla.
-        let solid_items = items.iter().filter(|i| matches!(i.kind, ItemKind::Car { player, .. } if player || (i.depth >= 5.5 && i.scale >= 6.0))).copied().collect();
+        // Las naves que tapan pista opacas: la propia y las demas que ya no
+        // se desvanecen y que miden algo en la pantalla (ver
+        // `CarDraw::solid`; las barridas tambien, con lo opaco angostado lo
+        // que alcanza el barrido, ver `solid_cols`).
+        let solid_items = items.iter().filter(|i| matches!(i.kind, ItemKind::Car { id } if car_draws.get(id as usize).is_some_and(|c| c.solid))).copied().collect();
         // El charco de luz de cada nave: las diez mas cercanas a la vista.
         let mut pools: Vec<(f32, Pool)> = self
             .cars
@@ -2298,37 +2835,69 @@ impl Carrera {
             fw_buckets,
             fw_flash,
             fw_flash_road,
+            car_draws,
+            luts,
+            puff_draws,
+            spark_draws,
+            flames,
         }
     }
 
-    /// De que fila a que fila de la pantalla cae algo (con un margen): la
-    /// nave, su sprite (y el fuego del turbo de la propia); el poste, la
-    /// torre, el arco y el barrilete, lo que miden en metros por los
-    /// pixeles por metro; el humo, su radio.
+    /// El sprite de una nave: el de su rumbo (ver `CarDraw::k`).
+    fn car_sprite(&self, cd: &CarDraw) -> Option<&Sprite> {
+        let set: &[Sprite] = if cd.set == usize::MAX { &self.player_set } else { self.sets.get(cd.set)? };
+        set.get(cd.k)
+    }
+
+    /// De que fila a que fila cae una nave: las cuatro esquinas del
+    /// rectangulo de su sprite (con el barrido) llevadas a la pantalla con
+    /// su ladeo, su salto y su estiramiento (ver `CarDraw`), y un pixel de
+    /// margen. Lo que se muestrea afuera del rectangulo no se pinta.
+    fn car_rows(&self, item: &Item, cd: &CarDraw) -> (f32, f32) {
+        let Some(sprite) = self.car_sprite(cd) else { return (0.0, -1.0) };
+        let scale = item.scale / sprite.scale;
+        if !(scale > 0.0) {
+            return (0.0, -1.0);
+        }
+        let (mut top, mut bottom) = (f32::MAX, f32::MIN);
+        for sx in [-cd.smear, sprite.width as f32 + cd.smear] {
+            for sy in [0.0, sprite.height as f32] {
+                // `rx = (sx - ax) escala - pivote`, `ry = (sy - ay) escala
+                // / estiramiento - salto`, y de vuelta a la pantalla,
+                // `dy = rx sin + ry cos`.
+                let rx = (sx - cd.ax) * scale - cd.pivot;
+                let ry = (sy - sprite.anchor.1) * scale / cd.stretch - cd.lift;
+                let dy = rx * cd.sin + ry * cd.cos;
+                top = top.min(item.y + dy);
+                bottom = bottom.max(item.y + dy);
+            }
+        }
+        (top - 1.0, bottom + 1.0)
+    }
+
+    /// De que fila a que fila de la pantalla cae algo (con un margen): el
+    /// poste, la torre, el arco y el barrilete, lo que miden en metros por
+    /// los pixeles por metro.
     fn item_rows(&self, item: &Item) -> (f32, f32) {
         let k = item.scale;
         let y = item.y;
         match item.kind {
-            ItemKind::Car { set, sprite, player, .. } => {
-                let sprite = if set == usize::MAX { self.player_set.get(sprite) } else { self.sets.get(set).and_then(|s| s.get(sprite)) };
-                let Some(sprite) = sprite else { return (0.0, -1.0) };
-                let scale = k / sprite.scale;
-                let (mut top, mut bottom) = (y - sprite.anchor.1 * scale, y + (sprite.height as f32 - sprite.anchor.1) * scale);
-                if player {
-                    top = top.min(y - 2.1 * k);
-                    bottom = bottom.max(y + 1.1 * k);
-                }
-                (top - 1.0, bottom + 1.0)
-            }
+            // Las naves, el humo, las chispas y el turbo las sacan al
+            // ponerse (ver `view`).
+            ItemKind::Car { .. } | ItemKind::Puff { .. } | ItemKind::Spark { .. } | ItemKind::Flame { .. } => (item.top, item.bottom),
             ItemKind::Lamp { .. } => (y - 11.5 * k, y + 0.3 * k),
             ItemKind::Tower { .. } => (y - (TOWER_TOP - 1.0) * k - 4.0 * beacon_spread(k), y + 0.3 * k),
             ItemKind::Arch { .. } => (y - (ARCH_B + 1.2) * k, y + 0.5 * k),
             ItemKind::Kite { size, lift, .. } => (y - (lift + 0.62 * size) * k - 2.0, y + 0.3 * k),
-            ItemKind::Puff { age } => {
-                let radius = (1.0 + 1.6 * age) * k;
-                (y - radius, y + radius)
-            }
         }
+    }
+}
+
+/// La tabla de LEDs de una nave es la de su numero.
+fn item_lut(item: &Item) -> usize {
+    match item.kind {
+        ItemKind::Car { id } => id as usize,
+        _ => usize::MAX,
     }
 }
 
@@ -2567,9 +3136,8 @@ struct RoadRow {
 
 #[derive(Clone, Copy, Debug)]
 enum ItemKind {
-    /// Una nave: su juego de sprites (`usize::MAX` el propio) y cual, su
-    /// largo (m) y la luz de los arcos de foquitos que le cae.
-    Car { set: usize, sprite: usize, length: f32, boost: f32, player: bool, spill: Vec3 },
+    /// Una nave: su numero en `View::car_draws` (y en `View::luts`).
+    Car { id: u16 },
     Lamp { side: f32 },
     /// Un barrilete: su diseno, cuanto mide (m), su numero, cuanto se
     /// angosta puesto de canto y a que altura va su centro (m).
@@ -2582,8 +3150,168 @@ enum ItemKind {
     /// cuanto se angosta visto de canto y si hace eco del semaforo (0 no,
     /// 1 rojo, 2 verde).
     Arch { id: u32, squash: f32, signal: u8 },
-    Puff { age: f32 },
+    /// Un soplo de humo (`View::puff_draws`).
+    Puff { id: u16 },
+    /// Una chispa de la pista (`View::spark_draws`).
+    Spark { id: u16 },
+    /// El fuego del turbo de una nave (`View::flames`).
+    Flame { id: u16 },
 }
+
+/// Lo de una nave que se pinta en este frame.
+///
+/// Su sprite se muestrea al reves: para cada pixel de la pantalla, su
+/// corrimiento `(dx, dy)` desde el pivote `P = (x + pivote, y)` se gira por
+/// el ladeo, `rx = dx cos + dy sin`, `ry = -dx sin + dy cos`, y en el
+/// sprite es `sx = (rx + pivote) / escala + ancla_x`,
+/// `sy = (ry + salto) / escala * estiramiento + ancla_y`.
+#[derive(Clone, Copy, Debug)]
+struct CarDraw {
+    /// Su juego de sprites (`usize::MAX` el propio) y el rumbo.
+    set: usize,
+    k: usize,
+    /// La `x` de su ancla, corrida para que su cola caiga donde cae la del
+    /// rumbo de verdad (ver `view`).
+    ax: f32,
+    /// Su largo (m).
+    length: f32,
+    /// La luz de los arcos de foquitos que le cae.
+    spill: Vec3,
+    /// El barrido (pixeles del sprite a cada lado).
+    smear: f32,
+    /// El seno y el coseno del ladeo, el pivote (px desde su centro, a lo
+    /// ancho), lo que salta (px) y el estiramiento vertical del sprite.
+    sin: f32,
+    cos: f32,
+    pivot: f32,
+    lift: f32,
+    stretch: f32,
+    /// Cuanto la alumbra el poste mas cercano y el neon de cada baranda, y
+    /// lo que deja pasar el neon, `e^(-neon(tx))`, en 17 puntos a lo ancho
+    /// del sprite (ver `draw_car`).
+    lamp: f32,
+    rail: (f32, f32),
+    neon: [Vec3; RELIGHT_TAPS + 1],
+    /// Lo que se ve (se desvanece pegada a la camara), el mip (y que
+    /// niveles lee, sacado una vez por nave) y cuanto se suma de la luz del
+    /// mip siguiente (de muy lejos, ver `view`).
+    near: f32,
+    lod: f32,
+    pick: Pick,
+    far_pick: Pick,
+    far: f32,
+    /// Si tapa la pista: opaca entera donde su sprite (en los mips que
+    /// lee, y con lo que alcanzan el barrido y la recta) lo es; sin
+    /// desvanecerse.
+    solid: bool,
+}
+
+/// Un soplo de humo en este frame: su edad, su radio (m), su giro, su
+/// semilla, cuanto lo alumbra el poste mas cercano y cuanto pesa (0.4 el
+/// de la nave propia).
+#[derive(Clone, Copy, Debug)]
+struct PuffDraw {
+    age: f32,
+    radius: f32,
+    sin: f32,
+    cos: f32,
+    seed: f32,
+    lamp: f32,
+    weight: f32,
+}
+
+/// El fuego del turbo de una nave: de que clase es, cuanto queda (se
+/// apaga los ultimos 0.3 s), su semilla, el largo de la nave, la punta del
+/// cono en la pantalla (la boca es el punto del `Item`) y su radio en la
+/// boca y en la punta (px).
+#[derive(Clone, Copy, Debug)]
+struct FlameDraw {
+    kind: Kind,
+    power: f32,
+    seed: f32,
+    /// El largo de su nave (m).
+    length: f32,
+    tip: (f32, f32),
+    r0: f32,
+    r1: f32,
+}
+
+/// La forma del chorro del turbo de cada clase (m): cuanto mide y su radio
+/// en la boca y en la punta. El tuk-tuk, una brasa chica (lo suyo son las
+/// chispas).
+fn flame_shape(kind: Kind) -> (f32, f32, f32) {
+    match kind {
+        Kind::Colectivo => (1.7, 0.16, 0.34),
+        Kind::Camioneta => (1.5, 0.2, 0.5),
+        Kind::Chela => (1.1, 0.16, 0.36),
+        Kind::TukTuk => (0.35, 0.08, 0.12),
+    }
+}
+
+/// Un sprite de nave en `(sx, sy)` (ver `CarDraw`): el cuerpo y la luz de
+/// las LEDs animada por su tabla, con el mip de la nave (cero afuera de su
+/// rectangulo); de muy lejos, mas la luz del mip siguiente por el alfa del
+/// cuerpo (que no agrande la silueta).
+#[inline(always)]
+fn car_texel(sprite: &Sprite, cd: &CarDraw, lut: &Lut, sx: f32, sy: f32) -> Texel {
+    if !(sy >= 0.0 && sy <= sprite.height as f32 && sx >= 0.0 && sx <= sprite.width as f32) {
+        return Texel::default();
+    }
+    let mut t = sprite.sample_pick(&cd.pick, sx, sy, lut);
+    if cd.far > 0.0 && t.body[3] > 0.0 {
+        let g = sprite.sample_pick(&cd.far_pick, sx, sy, lut);
+        let w = cd.far * t.body[3];
+        for c in 0..3 {
+            t.light[c] += g.light[c] * w;
+        }
+    }
+    t
+}
+
+/// Lo que hay en `dx` de una recta muestreada cada `1 / inv_step` desde
+/// `start` (ver `draw_car`): la interpolacion lineal de las dos muestras
+/// vecinas. Afuera, la de la orilla.
+#[inline(always)]
+fn line_at(line: &[Texel], start: f32, inv_step: f32, dx: f32) -> Texel {
+    let n = line.len();
+    if n < 2 {
+        return line.first().copied().unwrap_or_default();
+    }
+    let f = ((dx - start) * inv_step).clamp(0.0, n as f32 - 1.001);
+    let i = (f as usize).min(n - 2);
+    line[i].lerp(line[i + 1], f - i as f32)
+}
+
+/// Desde que agrandamiento una nave se muestrea por la recta de cada fila
+/// (ver `draw_car`).
+const LINE_SCALE: f32 = 2.0;
+/// Cuantas muestras lleva como mucho la recta de `draw_car` (mas, y se
+/// muestrea pixel por pixel).
+const LINE_MAX: usize = 4096;
+
+thread_local! {
+    /// Las rectas de `draw_car` (la que se usa y la cruda del barrido) de
+    /// cada hilo: se reusan de fila en fila.
+    static LINES: std::cell::RefCell<(Vec<Texel>, Vec<Texel>)> = const { std::cell::RefCell::new((Vec::new(), Vec::new())) };
+}
+
+/// Cuanto alumbra a una nave el poste que tiene encima y el neon de la
+/// baranda a su lado. Se multiplica por su color ya con tono (no luz
+/// lineal): con 1.4 y 0.5 la laca pasaba de roja a rosa palido bajo cada
+/// poste, y con 0.6 (y aun con 0.25) el techo azul marino de la camioneta,
+/// que mira hacia arriba, pasaba a gris lavanda.
+const RELIGHT_LAMP: f32 = 0.15;
+const RELIGHT_NEON: f32 = 0.35;
+
+/// El resplandor de la ciudad que alumbra por abajo el humo (con tono).
+const CITY_UNDERLIGHT: Vec3 = Vec3::new(0.09, 0.045, 0.025);
+
+/// Desde que altura (rad) se hornean las otras naves (se ven de lejos).
+const RIVAL_ELEVATION: f32 = 0.16;
+
+/// En cuantos tramos se tabula la re-iluminacion de una nave a lo ancho.
+const RELIGHT_TAPS: usize = 16;
+
 
 /// Algo encima de la pista, con su punto en el suelo en la pantalla.
 #[derive(Clone, Copy, Debug)]
@@ -2653,6 +3381,13 @@ struct View<'a> {
     fw_flash: Vec3,
     /// El mismo destello para la pista (con su propio tope).
     fw_flash_road: Vec3,
+    /// Las naves de este frame, la tabla de sus LEDs (por patron y fase),
+    /// el humo, las chispas de la pista y el fuego de los turbos.
+    car_draws: Vec<CarDraw>,
+    luts: Vec<Lut>,
+    puff_draws: Vec<PuffDraw>,
+    spark_draws: Vec<SparkSeg>,
+    flames: Vec<FlameDraw>,
 }
 
 /// El charco de luz de una nave en la pista: donde va (`s`, `x`), su medio
@@ -2701,6 +3436,9 @@ const BUMP_YELLOW: Vec3 = Vec3::new(0.85, 0.65, 0.05);
 const BUMP_BLACK: Vec3 = Vec3::new(0.03, 0.03, 0.03);
 /// El rojo de las calaveras en el piso.
 const BRAKE_RED: Vec3 = Vec3::new(1.0, 0.08, 0.05);
+/// Donde va el aro antigravedad de lo que flota, en la elipse de su charco
+/// (ver `surface`).
+const RING_AT: f32 = 0.75;
 /// Cuanto del cielo refleja la pista mojada (con Fresnel encima).
 const SKY_REFLECT: f32 = 0.6;
 const NEON: [Vec3; 2] = [Vec3::new(1.0, 0.2, 0.6), Vec3::new(0.15, 0.85, 1.0)];
@@ -3030,6 +3768,27 @@ impl View<'_> {
         // El ruido de la fila: la `y` es la misma en toda la fila, asi que
         // se interpolan una vez las esquinas de cada celda a lo ancho.
         let spill = game.arch_spill(s);
+        // El destello blanco del neon donde roza la nave propia,
+        // `destello e^(-(ds / 5)^2)`.
+        let flare: [f32; 2] = std::array::from_fn(|k| {
+            let (at, f) = game.scrape[k];
+            let q = (s - at) * 0.2;
+            if f > 0.0 { f * fast_exp(-q * q) } else { 0.0 }
+        });
+        // Los anillos de lo que flota: en la elipse de `1.3 hw` por `1.3 hl`
+        // alrededor de la nave.
+        let mut rings = [RingRow::default(); 2];
+        let mut n_rings = 0;
+        for p in self.pools.iter().filter(|p| p.hover) {
+            let ds = s - p.s;
+            let ll = p.hl * 1.3;
+            if ds.abs() >= ll * 1.1 || n_rings == rings.len() {
+                continue;
+            }
+            rings[n_rings] = RingRow { x: p.x, inv_w: 1.0 / (p.hw * 1.3), ey: ds / ll, px: r.per_meter * p.hw, ds, gain: (0.5 * p.gain).min(1.0) };
+            n_rings += 1;
+        }
+        let ripple = game.wall * 1.5;
         let resolved = smoothstep(0.6, 0.15, px);
         let grain_on = px < 0.12;
         let grain_amp = 0.18 * smoothstep(0.12, 0.03, px);
@@ -3074,6 +3833,11 @@ impl View<'_> {
             // manchas (el promedio de las muestras lo apaga con la
             // velocidad).
             grain: if grain_on { NoiseLine::blurred(17.0 - HALF_ROAD * 6.0 - 0.1, s * 6.0, blur * 6.0) } else { NoiseLine::default() },
+            flare,
+            rings,
+            n_rings,
+            ripples: [fract(ripple), fract(ripple + 0.5)],
+            caustic: (0.7 * game.wall.sin(), game.wall * 0.6),
         }
     }
 
@@ -3086,23 +3850,25 @@ impl View<'_> {
         let sparks: Vec<Spark> = self.sparks[..to].iter().filter(|s| s.hi.1 >= yf).copied().collect();
         let span = sparks.iter().fold((f32::MAX, f32::MIN), |(lo, hi), s| (lo.min(s.lo.0), hi.max(s.hi.0)));
         let ctx = self.row_ctx(y, &sparks, span);
+        // Lo que una nave cercana tapa del todo no se pinta: ella lo
+        // sobreescribe entero (color y emision) mas abajo. Ni la pista ni lo
+        // que va detras de ella (mas lejos que su centro: se pinta antes).
+        let mut cut = [(0usize, 0usize, 0.0f32); 8];
+        let mut n = 0;
+        for item in &self.solid_items {
+            let (a, b) = self.solid_cols(item, y, yf);
+            if b > a && n < cut.len() {
+                cut[n] = (a, b, item.depth);
+                n += 1;
+            }
+        }
+        let cut = &mut cut[..n];
+        cut.sort_unstable_by_key(|c| c.0);
         match &ctx.near {
             Some(st) => {
-                // Lo que una nave cercana tapa del todo no se pinta: ella lo
-                // sobreescribe entero (color y emision) mas abajo. Se
-                // pintan los huecos entre sus tramos.
-                let mut cut = [(0usize, 0usize); 8];
-                let mut n = 0;
-                for item in &self.solid_items {
-                    let (a, b) = self.solid_cols(item, y, yf);
-                    if b > a && n < cut.len() {
-                        cut[n] = (a, b);
-                        n += 1;
-                    }
-                }
-                cut[..n].sort_unstable();
+                // Se pintan los huecos entre sus tramos.
                 let mut from = 0;
-                for &(a, b) in cut[..n].iter().chain(std::iter::once(&(game.width, game.width))) {
+                for &(a, b, _) in cut.iter().chain(std::iter::once(&(game.width, game.width, 0.0))) {
                     for x in from..a.max(from) {
                         let (c, e) = self.road(st, x as f32 + 0.5, &ctx, x);
                         write_emit(&mut row[x * 4..x * 4 + 4], c, e);
@@ -3122,7 +3888,7 @@ impl View<'_> {
             if yf < item.top || yf > item.bottom {
                 continue;
             }
-            self.draw_item(item, y, yf, row);
+            self.draw_item_behind(item, y, yf, row, cut);
         }
     }
 
@@ -3175,10 +3941,13 @@ impl View<'_> {
     /// la cola de la nave (una loma la tapa), ninguna.
     fn solid_cols(&self, item: &Item, y: usize, yf: f32) -> (usize, usize) {
         let game = self.game;
-        let ItemKind::Car { set, sprite, length, .. } = item.kind else { return (0, 0) };
-        let sprite = if set == usize::MAX { game.player_set.get(sprite) } else { game.sets.get(set).and_then(|s| s.get(sprite)) };
-        let Some(sprite) = sprite else { return (0, 0) };
-        let front = item.depth - 1.0 - 0.5 * length;
+        let ItemKind::Car { id } = item.kind else { return (0, 0) };
+        let Some(cd) = self.car_draws.get(id as usize) else { return (0, 0) };
+        if !cd.solid || yf < item.top || yf > item.bottom {
+            return (0, 0);
+        }
+        let Some(sprite) = game.car_sprite(cd) else { return (0, 0) };
+        let front = item.depth - 1.0 - 0.5 * cd.length;
         if self.rows[y].is_some_and(|r| r.depth < front) || self.far[y].is_some_and(|r| r.depth < front) {
             return (0, 0);
         }
@@ -3186,15 +3955,35 @@ impl View<'_> {
         if !(scale > 0.0) {
             return (0, 0);
         }
-        let (lo, hi) = sprite.solid_span((yf - item.y) / scale + sprite.anchor.1);
-        if hi <= lo {
+        // Las mismas rectas que `draw_car`: `sx = gx dx + bx + ancla_x`,
+        // `sy = gy dx + by + ancla_y`, y lo opaco en todas las filas del
+        // sprite que cruza la fila de la pantalla (inclinada con el ladeo).
+        let inv = 1.0 / scale;
+        let dy = yf - item.y;
+        let px = item.x + cd.pivot;
+        let (gx, gy) = (cd.cos * inv, -cd.sin * inv * cd.stretch);
+        let (bx, by) = ((dy * cd.sin + cd.pivot) * inv, (dy * cd.cos + cd.lift) * inv * cd.stretch);
+        // De cerca, la recta de `draw_car` lee hasta un pixel del sprite a
+        // cada lado, y con el barrido (que solo hay de cerca) otro mas la
+        // recta cruda y lo que alcanza el barrido: lo opaco se angosta eso.
+        let shrink = if scale > LINE_SCALE { if cd.smear > 0.0 { cd.smear + 2.02 } else { 1.01 } } else { 0.0 };
+        let (ax, ay) = (cd.ax, sprite.anchor.1);
+        let (d0, d1) = ((-bx - ax) / gx, (sprite.width as f32 - bx - ax) / gx);
+        let (s0, s1) = (gy * d0 + by + ay, gy * d1 + by + ay);
+        let (c0, c1) = sprite.solid_rows(s0.min(s1), s0.max(s1), cd.lod);
+        let (c0, c1) = (c0 + shrink, c1 - shrink);
+        if c1 <= c0 {
             return (0, 0);
         }
-        // El pixel `x` (centro en `x + 0.5`) cae en el tramo si
-        // `xa <= x + 0.5 < xb`.
-        let (xa, xb) = (item.x + (lo - sprite.anchor.0) * scale, item.x + (hi - sprite.anchor.0) * scale);
-        let b = ((xb - 0.5).ceil().max(0.0) as usize).min(game.width);
-        let a = ((xa - 0.5).ceil().max(0.0) as usize).min(b);
+        let lo = ((c0 - bx - ax) / gx).max(d0);
+        let hi = ((c1 - bx - ax) / gx).min(d1);
+        if !(hi > lo) {
+            return (0, 0);
+        }
+        // El pixel `x` (centro en `x + 0.5`) cae adentro si
+        // `px + lo <= x + 0.5 < px + hi` (con un pelito de holgura).
+        let b = ((px + hi - 0.5 - 1e-3).ceil().max(0.0) as usize).min(game.width);
+        let a = ((px + lo - 0.5 + 1e-3).ceil().max(0.0) as usize).min(b);
         (a, b)
     }
 
@@ -3480,7 +4269,8 @@ impl View<'_> {
         if a > RAIL + 0.35 {
             let (back, e) = if x > ctx.far_span.0 && x < ctx.far_span.1 { self.far_road(x, ctx) } else { self.background(column, ctx) };
             let side = (u > 0.0) as usize;
-            let glow = NEON[side] * (0.45 * halo((a - RAIL - 0.35) * r.per_meter, 6.0 + 0.5 * r.per_meter));
+            let neon = if st.flare[side] > 0.0 { NEON[side].lerp(Vec3::ONE, 0.6 * st.flare[side]) } else { NEON[side] };
+            let glow = neon * (0.45 * halo((a - RAIL - 0.35) * r.per_meter, 6.0 + 0.5 * r.per_meter));
             return (back + glow * (1.0 - ctx.fog), e);
         }
         self.surface(st, u, x, ctx.fog, ctx)
@@ -3528,11 +4318,13 @@ impl View<'_> {
             // tubo mide pocos pixeles, la linea se apaga y queda el color.
             let pulse = st.pulse;
             let t = (a - RAIL) * (2.0 / 0.35) - 1.0;
-            let mut c = NEON[side] * ((0.55 + 0.45 * (1.0 - t * t)) * (0.8 + 0.2 * pulse));
+            // Donde roza la nave propia, el gas se pone blanco.
+            let neon = if st.flare[side] > 0.0 { NEON[side].lerp(Vec3::ONE, 0.6 * st.flare[side]) } else { NEON[side] };
+            let mut c = neon * ((0.55 + 0.45 * (1.0 - t * t)) * (0.8 + 0.2 * pulse));
             let tube_px = 0.35 * r.per_meter;
             if tube_px > 1.5 {
                 let core = cover(t.abs() * 0.5 * tube_px - (0.06 * tube_px).max(0.4)) * smoothstep(1.5, 6.0, tube_px) * (0.5 + 0.4 * pulse);
-                c = c.lerp(NEON[side] * 0.25 + Vec3::splat(0.75), core);
+                c = c.lerp(neon * 0.25 + Vec3::splat(0.75), core);
             }
             return (c.lerp(haze, fog), 0.9 * pulse * (1.0 - fog));
         }
@@ -3684,6 +4476,40 @@ impl View<'_> {
             let curb = if a > HALF_ROAD { 0.5 } else { 1.0 };
             c = c * at(10) + Vec3::new(at(6), at(7), at(8)) * ((0.6 + 0.4 * wet) * curb) + BRAKE_RED * (at(9) * curb);
         }
+        // El anillo antigravedad de lo que flota: con `e` la distancia en la
+        // elipse de `1.3 hw` por `1.3 hl`, un aro cian fino en `e = 0.75`
+        // (`cubre((|e - 0.75| - 0.012) hw px)`, de un pixel o poco mas, que
+        // emite) con un brillo suave aparte, `0.35 e^(-((e - 0.75) / 0.06)^2)`,
+        // todo a 0.3; dos ondas finas que salen del centro (`e = fract(1.5 t
+        // + j / 2)`, que se apagan al abrirse) y adentro la caustica ambar de
+        // la botella, un ruido que corre, `(1 - e) (0.6 + 0.4 ruido)`. (El
+        // aro grueso a 0.5 en `e = 0.92` dominaba el tercio de abajo de la
+        // pantalla y lo cortaba la orilla: se leia como calcomania.)
+        if st.n_rings > 0 && a <= HALF_ROAD {
+            for ring in &st.rings[..st.n_rings] {
+                let du = u - ring.x;
+                let lx = du * ring.inv_w;
+                if lx.abs() >= 1.1 {
+                    continue;
+                }
+                let el = len(lx, ring.ey);
+                if el >= 1.1 {
+                    continue;
+                }
+                let off = el - RING_AT;
+                let band = cover((off.abs() - 0.012) * ring.px);
+                let mut aura = band + 0.35 * fast_exp(-(off * off) * (1.0 / (0.06 * 0.06)));
+                for &rk in &st.ripples {
+                    aura += cover(((el - rk).abs() - 0.012) * ring.px) * (1.0 - rk) * 0.4;
+                }
+                c = c + Vec3::new(0.4, 0.9, 1.0) * (0.3 * aura * ring.gain);
+                if el < 1.0 {
+                    let n = value_noise(du * 2.5 + st.caustic.0, ring.ds * 2.5 + st.caustic.1);
+                    c = c + Vec3::new(1.0, 0.6, 0.15) * (0.25 * (1.0 - el) * (0.6 + 0.4 * n) * ring.gain);
+                }
+                e = e.max(0.5 * band * ring.gain);
+            }
+        }
         // El neon de la baranda tine el bordillo, el hombro y la orilla.
         if a > HALF_ROAD - 1.5 {
             c = c + Vec3::new(at(3), at(4), at(5));
@@ -3695,16 +4521,43 @@ impl View<'_> {
 
     /// Lo que cae en la fila `y` de un objeto encima de la pista. No se ve
     /// donde la pista que muestra la fila esta mas cerca (una loma lo tapa).
+    #[cfg(test)]
     fn draw_item(&self, item: &Item, y: usize, yf: f32, row: &mut [u8]) {
+        self.draw_item_behind(item, y, yf, row, &[]);
+    }
+
+    /// `draw_item` sabiendo que tramos de la fila tapan del todo las naves
+    /// opacas (`cut`: columnas `[desde, hasta)` y la profundidad de la
+    /// nave): lo que esta detras de una no se pinta (ella lo sobreescribe
+    /// despues), solo se ahorra.
+    fn draw_item_behind(&self, item: &Item, y: usize, yf: f32, row: &mut [u8], cut: &[(usize, usize, f32)]) {
         let game = self.game;
         let road = self.rows[y];
         let far = self.far[y];
+        // Los tramos de las naves opacas mas cerca que esta cosa, en `x` del
+        // centro de cada pixel: `[desde + 0.5, hasta + 0.5)`.
+        let mut occ = [(0.0f32, 0.0f32); 8];
+        let mut n_occ = 0;
+        for &(a, b, depth) in cut {
+            if depth < item.depth - 1e-3 && n_occ < occ.len() {
+                occ[n_occ] = (a as f32 + 0.5, b as f32 + 0.5);
+                n_occ += 1;
+            }
+        }
+        let occ = &occ[..n_occ];
         // Lo tapa la pista que esta mas cerca que su punta de adelante (una
         // loma). Para una nave es la cola, medio largo mas cerca que su
         // centro: el sprite visto desde arriba baja en la pantalla hasta
         // la cola, y si se midiera desde el centro la pista de enfrente le
         // cortaria las llantas de atras en recto (la Mamaneta mide 9.6 m).
-        let front = item.depth - 1.0 - if let ItemKind::Car { length, .. } = item.kind { 0.5 * length } else { 0.0 };
+        // (El fuego del turbo va en la cola de su nave: lo mismo.)
+        let front = item.depth
+            - 1.0
+            - match item.kind {
+                ItemKind::Car { id } => self.car_draws.get(id as usize).map_or(0.0, |c| 0.5 * c.length),
+                ItemKind::Flame { id } => self.flames.get(id as usize).map_or(0.0, |f| 0.5 * f.length),
+                _ => 0.0,
+            };
         // Lo que tapa cada pista en esta fila es un tramo de `x` (entre
         // sus barandas, `|x - centro| < (RAIL + 0.4) px por metro`), que
         // se saca una vez por fila y no por pixel.
@@ -3713,80 +4566,39 @@ impl View<'_> {
             _ => (f32::MAX, f32::MIN),
         };
         let (near_road, far_road) = (reach(road), reach(far));
-        let hidden = |x: f32| (x > near_road.0 && x < near_road.1) || (x > far_road.0 && x < far_road.1);
+        let hidden = |x: f32| (x > near_road.0 && x < near_road.1) || (x > far_road.0 && x < far_road.1) || occ.iter().any(|&(a, b)| x >= a && x < b);
         // La neblina del horizonte se mide en la fila para lo alto (la
         // torre, los barriletes, los postes y los arcos): con la de su pie,
         // que de lejos cae en el horizonte, se borrarian enteros.
-        let tall = !matches!(item.kind, ItemKind::Car { .. } | ItemKind::Puff { .. });
+        let tall = !matches!(item.kind, ItemKind::Car { .. } | ItemKind::Puff { .. } | ItemKind::Spark { .. } | ItemKind::Flame { .. });
         let fog = fog_at(item.depth).max(horizon_fog(if tall { yf } else { item.y } - self.cam.horizon, item.depth));
         let haze = self.haze_row[y];
         let k = item.scale;
         // Coordenadas en metros alrededor del punto en el suelo (y hacia arriba).
         let my = (item.y - yf) / k;
         match item.kind {
-            ItemKind::Car { set, sprite, boost, player, spill, .. } => {
-                let sprite = if set == usize::MAX { &game.player_set[sprite] } else { &game.sets[set][sprite] };
-                let scale = k / sprite.scale;
-                // Las que pasan pegadas a la camara se desvanecen: de tan
-                // cerca el sprite se estiraria y taparia la pantalla.
-                let near = if player { 1.0 } else { smoothstep(2.5, 5.5, item.depth) };
-                if near <= 0.0 {
+            ItemKind::Car { id } => {
+                if yf < item.top || yf > item.bottom {
                     return;
                 }
-                let top = item.y - sprite.anchor.1 * scale;
-                let bottom = item.y + (sprite.height as f32 - sprite.anchor.1) * scale;
-                if yf < top || yf >= bottom {
+                if let Some(cd) = self.car_draws.get(id as usize) {
+                    self.draw_car(item, cd, yf, row, (near_road, far_road), occ, fog, haze);
+                }
+            }
+            ItemKind::Spark { id } => {
+                if yf < item.top || yf > item.bottom {
                     return;
                 }
-                let sy = (yf - item.y) / scale + sprite.anchor.1;
-                // Solo las columnas donde la fila del sprite tiene algo (si
-                // no tiene nada, ninguna; el fuego del turbo va aparte).
-                let (lo, hi) = sprite.span(sy);
-                let x0 = (item.x + (lo - sprite.anchor.0) * scale).floor().max(0.0) as usize;
-                let x1 = if hi > lo { ((item.x + (hi - sprite.anchor.0) * scale).ceil().max(0.0) as usize + 1).min(game.width) } else { 0 };
-                for x in x0..x1 {
-                    let xf = x as f32 + 0.5;
-                    if hidden(xf) {
-                        continue;
-                    }
-                    let sx = (xf - item.x) / scale + sprite.anchor.0;
-                    let [r, g, b, a] = sprite.sample(sx, sy);
-                    if a <= 0.0 && r + g + b <= 0.0 {
-                        continue;
-                    }
-                    // Emiten solo las LEDs, con la emision que guardo el
-                    // horneado de las piezas con clase LED (no la laca,
-                    // el vidrio crema ni las letras claras, aunque esten
-                    // casi blancas). A 0.8: la camioneta lleva decenas de
-                    // focos juntos y a toda fuerza velaria su propia laca.
-                    let e_src = 0.8 * near * sprite.emit_at(sx, sy) * (1.0 - fog);
-                    let (r, g, b, a) = (r * near, g * near, b * near, a * near);
-                    let p = &mut row[x * 4..x * 4 + 4];
-                    let back = lienzo::read(p);
-                    let mut src = Vec3::new(r, g, b);
-                    // La luz del arco de foquitos que le cae encima.
-                    // (A 0.6 y no mas: la laca se tine sin perder su color.)
-                    src = src + src * (spill * 0.6);
-                    // De lejos se pierde en la neblina.
-                    src = src.lerp(haze * a, fog);
-                    write_emit(p, src + back * (1.0 - a), e_src + emission(p) * (1.0 - a));
+                if let Some(seg) = self.spark_draws.get(id as usize) {
+                    self.draw_spark(seg, yf, row, &hidden);
                 }
-                // El fuego del turbo atras de la propia.
-                if player && boost > 0.0 {
-                    let flame = (item.x, item.y - 0.5 * k);
-                    let reach = 1.6 * k;
-                    if (yf - flame.1).abs() < reach {
-                        let x0 = (flame.0 - reach).max(0.0) as usize;
-                        let x1 = ((flame.0 + reach) as usize).min(game.width);
-                        for x in x0..x1 {
-                            let d = ((x as f32 + 0.5 - flame.0) / reach).hypot((yf - flame.1) / (reach * 0.5));
-                            if d < 1.0 {
-                                let flicker = 0.8 + 0.2 * (game.wall * 40.0 + x as f32 * 0.3).sin();
-                                let p = &mut row[x * 4..x * 4 + 4];
-                                write_emit(p, lienzo::read(p) + Vec3::new(0.3, 0.6, 1.0) * ((1.0 - d) * flicker), emission(p).max(0.2 * (1.0 - d) * (1.0 - d)));
-                            }
-                        }
-                    }
+            }
+            ItemKind::Flame { id } => {
+                if yf < item.top || yf > item.bottom {
+                    return;
+                }
+                if let Some(f) = self.flames.get(id as usize) {
+                    self.draw_flame(item, f, yf, row, &hidden, fog);
                 }
             }
             ItemKind::Lamp { side } => {
@@ -4142,48 +4954,367 @@ impl View<'_> {
                     }
                 }
             }
-            ItemKind::Puff { age } => {
-                let radius = (1.0 + 1.6 * age) * k;
-                let dy = (yf - item.y) / radius;
-                if dy.abs() >= 1.0 {
-                    return;
-                }
-                // Pegada a la camara (a menos de 4 m) se desvanece: de tan
-                // cerca taparia media pantalla con cientos de miles de
-                // pixeles, y ese humo ya lo pinta el de la pantalla.
-                let opacity = 0.6 * smoothstep(2.6, 0.4, age) * smoothstep(0.0, 0.15, age) * smoothstep(1.5, 4.0, item.depth);
-                if opacity < 0.004 {
-                    return;
-                }
-                // Solo la cuerda del disco en la fila, `|dx| < r sqrt(1 - dy^2)`.
-                let chord = radius * (1.0 - dy * dy).max(0.0).sqrt();
-                let x0 = (item.x - chord).max(0.0) as usize;
-                let x1 = ((item.x + chord).max(0.0) as usize + 1).min(game.width);
-                let inv_r = 1.0 / radius;
-                for x in x0..x1 {
-                    let xf = x as f32 + 0.5;
-                    if hidden(xf) {
-                        continue;
-                    }
-                    let d = len((xf - item.x) * inv_r, dy);
-                    if d >= 1.0 {
-                        continue;
-                    }
-                    // El ruido horneado del posproceso (no un Perlin por
-                    // pixel): un cuadro de la textura cada dos radios, que
-                    // sube con la edad. El borde sale de un umbral sobre el
-                    // ruido, `v = n + 0.5 (1 - d^2) - 0.45` y
-                    // `alfa = smoothstep(0, 0.3, v)`: al centro casi todo
-                    // pasa y hacia la orilla solo lo que tiene mas ruido,
-                    // asi la bocanada se rompe en volutas y no es una bola.
-                    // Adentro, el mismo ruido le da cuerpo, `0.5 + 0.5 n`.
-                    let n = game.post.tex(xf / radius * 0.5, yf / radius * 0.5 + age * 0.3);
-                    let v = n + 0.5 * (1.0 - d * d) - 0.45;
-                    let a = opacity * smoothstep(0.0, 0.3, v) * (0.5 + 0.5 * n);
-                    let p = &mut row[x * 4..x * 4 + 4];
-                    write_emit(p, over(lienzo::read(p), Vec3::new(0.05, 0.045, 0.04), a), emission(p) * (1.0 - a));
+            ItemKind::Puff { id } => {
+                let Some(pd) = self.puff_draws.get(id as usize) else { return };
+                self.draw_puff(item, pd, yf, row, &hidden);
+            }
+        }
+    }
+
+    /// La fila `yf` de una nave (ver `CarDraw`): su sprite con el mip que
+    /// toca, la luz de sus LEDs animada por su tabla, lo que la alumbra y su
+    /// emision.
+    ///
+    /// - **LEDs**: `src = cuerpo + luz`, con la luz ya animada en cada
+    ///   esquina del bilineal (ver `hornear::bilinear8`), y emite
+    ///   `smoothstep(0.25, 0.85, max(luz))`. Si `src` pasa de 1 se divide
+    ///   por su maximo (y no se recorta cada canal): un stop que estalla al
+    ///   frenar sigue rojo y una ambar sigue ambar, no se van a blanco.
+    /// - **Ladeo y salto**: el pixel se gira alrededor del pivote antes de
+    ///   leer el sprite (ver `CarDraw`).
+    /// - **Re-iluminacion** (solo el cuerpo, donde hay alfa): el poste mas
+    ///   cercano la barre de arriba, `LAMP 0.15 poste (0.3 + 0.7 (1 - ty))`,
+    ///   y el neon de cada baranda pinta su costado,
+    ///   `NEON 0.35 baranda smoothstep(...)` con `tx` a lo ancho del sprite;
+    ///   con tope suave, `cuerpo (1 - e^(-x))`.
+    /// - **Barrido**: con `smear` (solo de cerca, por la recta), el promedio
+    ///   de cuatro muestras de `sx - smear` a `sx + smear` (ocho si el
+    ///   barrido pasa de 4 px de la pantalla: con cuatro las orillas salian
+    ///   en peine).
+    #[allow(clippy::too_many_arguments)]
+    fn draw_car(&self, item: &Item, cd: &CarDraw, yf: f32, row: &mut [u8], roads: ((f32, f32), (f32, f32)), occ: &[(f32, f32)], fog: f32, haze: Vec3) {
+        let game = self.game;
+        let Some(a) = game.car_sprite(cd) else { return };
+        let Some(lut) = self.luts.get(item_lut(item)) else { return };
+        let k = item.scale;
+        let scale = k / a.scale;
+        if !(scale > 0.0) || cd.near <= 0.0 {
+            return;
+        }
+        let inv = 1.0 / scale;
+        let (sin, cos) = (cd.sin, cd.cos);
+        let dy = yf - item.y;
+        // En la fila, `sx` y `sy` son lineales en `dx = x - P.x`:
+        // `sx = gx dx + bx + ancla_x`, `sy = gy dx + by + ancla_y`.
+        let px = item.x + cd.pivot;
+        let (gx, gy) = (cos * inv, -sin * inv * cd.stretch);
+        let (bx, by) = ((dy * sin + cd.pivot) * inv, (dy * cos + cd.lift) * inv * cd.stretch);
+        let (ax, ay) = (cd.ax, a.anchor.1);
+        // Las columnas: donde el sprite cae adentro de su rectangulo (con el
+        // barrido) y su fila tiene algo.
+        let (w, h) = (a.width as f32, a.height as f32);
+        let (mut lo, mut hi) = ((-cd.smear - bx - ax) / gx, (w + cd.smear - bx - ax) / gx);
+        if gy.abs() > 1e-6 {
+            let (t0, t1) = ((-by - ay) / gy, (h - by - ay) / gy);
+            lo = lo.max(t0.min(t1));
+            hi = hi.min(t0.max(t1));
+        } else if !(0.0..=h).contains(&(by + ay)) {
+            return;
+        }
+        if !(hi > lo) {
+            return;
+        }
+        let (sy0, sy1) = (gy * lo + by + ay, gy * hi + by + ay);
+        let (c0, c1) = a.span_rows(sy0.min(sy1), sy0.max(sy1), cd.lod);
+        if c1 <= c0 {
+            return;
+        }
+        lo = lo.max((c0 - cd.smear - bx - ax) / gx);
+        hi = hi.min((c1 + cd.smear - bx - ax) / gx);
+        if !(hi > lo) {
+            return;
+        }
+        let x0 = ((px + lo).floor().max(0.0) as usize).min(game.width);
+        let x1 = (((px + hi).ceil().max(0.0) as usize) + 1).min(game.width);
+        let (near_road, far_road) = roads;
+        let hidden = |x: f32| (x > near_road.0 && x < near_road.1) || (x > far_road.0 && x < far_road.1) || occ.iter().any(|&(a, b)| x >= a && x < b);
+        // La re-iluminacion de la fila: el poste por la altura en el sprite
+        // (`ty`, casi la misma en toda la fila) y el neon por `tx` a lo
+        // ancho. Como `1 - e^(-(poste + neon)) = 1 - e^(-poste) e^(-neon)`,
+        // la parte del neon viene tabulada por nave (`CarDraw::neon`) y en
+        // la fila solo se saca la del poste.
+        let ty = ((by + ay) / h).clamp(0.0, 1.0);
+        let lamp = LAMP_COLOR * (RELIGHT_LAMP * cd.lamp * (0.3 + 0.7 * (1.0 - ty)));
+        let lamp_keep = Vec3::new(fast_exp(-lamp.x), fast_exp(-lamp.y), fast_exp(-lamp.z));
+        // (Lo que suma menos de un 5 % no se calcula.)
+        let relight = cd.lamp > 0.1 || cd.rail.0 > 0.1 || cd.rail.1 > 0.1;
+        let to_tap = RELIGHT_TAPS as f32 / a.width.max(1) as f32;
+        let spill = Vec3::ONE + cd.spill * 0.6;
+        let fade = cd.near * (1.0 - fog);
+        let smear = cd.smear;
+        // De cerca (el sprite agrandado mas del doble) la recta que la fila
+        // cruza en el sprite se muestrea una vez por pixel del sprite (cada
+        // `step` pixeles de la pantalla) y cada pixel interpola entre las dos
+        // muestras vecinas: cada pixel del sprite cubre varios de la
+        // pantalla, asi se lee una vez y no varias. El barrido se hace sobre
+        // esa recta una vez por fila y a cada pixel le queda una sola
+        // interpolacion. Las rectas van en dos buffers de cada hilo que se
+        // reusan (nada de memoria nueva por fila).
+        let step = 1.0 / gx.abs().max(gy.abs()).max(1e-6);
+        let inv_step = 1.0 / step;
+        let start = (x0 as f32 + 0.5 - px) - step;
+        let n = (((x1 as f32 - 0.5 - px) + step - start) * inv_step).ceil().max(0.0) as usize + 2;
+        let smear_px = smear / gx;
+        let extra = if smear > 0.0 { (smear_px * inv_step).ceil() as usize + 1 } else { 0 };
+        let line = scale > LINE_SCALE && n + 2 * extra <= LINE_MAX;
+        // (El barrido solo pasa de 2.2 de escala: siempre va por la recta.)
+        debug_assert!(smear == 0.0 || scale > LINE_SCALE);
+        LINES.with(|cell| {
+            let mut lines = cell.borrow_mut();
+            let (mixed, raw_line) = &mut *lines;
+            if line {
+                let sample_at = |dx: f32| car_texel(a, cd, lut, gx * dx + bx + ax, gy * dx + by + ay);
+                mixed.clear();
+                if smear <= 0.0 {
+                    mixed.extend((0..n).map(|j| sample_at(start + j as f32 * step)));
+                } else {
+                    // La recta cruda, de `smear_px` antes a `smear_px`
+                    // despues, y en cada muestra el promedio de `taps`
+                    // puntos parejos de `-smear_px` a `smear_px`.
+                    let raw_start = start - extra as f32 * step;
+                    raw_line.clear();
+                    raw_line.extend((0..n + 2 * extra).map(|j| sample_at(raw_start + j as f32 * step)));
+                    let taps = if smear_px.abs() > 4.0 { 8 } else { 4 };
+                    let (span, weight) = (2.0 * smear_px / (taps - 1) as f32, 1.0 / taps as f32);
+                    mixed.extend((0..n).map(|j| {
+                        let mut t = Texel::default();
+                        let from = start + j as f32 * step - smear_px;
+                        for q in 0..taps {
+                            let s = line_at(raw_line, raw_start, inv_step, from + q as f32 * span);
+                            for c in 0..4 {
+                                t.body[c] += s.body[c] * weight;
+                            }
+                            for c in 0..3 {
+                                t.light[c] += s.light[c] * weight;
+                            }
+                        }
+                        t
+                    }));
                 }
             }
+            for x in x0..x1 {
+                let xf = x as f32 + 0.5;
+                if hidden(xf) {
+                    continue;
+                }
+                let dx = xf - px;
+                let sxa = gx * dx + bx + ax;
+                let t = if line { line_at(mixed, start, inv_step, dx) } else { car_texel(a, cd, lut, sxa, gy * dx + by + ay) };
+                let alpha = t.body[3];
+                let top = t.light[0].max(t.light[1]).max(t.light[2]);
+                if alpha <= 0.0 && t.body[0] + t.body[1] + t.body[2] <= 0.0 && top <= 0.0 {
+                    continue;
+                }
+                let base = Vec3::new(t.body[0], t.body[1], t.body[2]);
+                let mut src = base * spill;
+                if relight && alpha > 0.0 {
+                    // El poste de arriba y el neon de los lados, con tope
+                    // suave `1 - e^(-x)` sobre lo que se suma.
+                    let f = (sxa * to_tap).clamp(0.0, RELIGHT_TAPS as f32 - 0.001);
+                    let i = (f as usize).min(RELIGHT_TAPS - 1);
+                    let keep = cd.neon[i].lerp(cd.neon[i + 1], f - i as f32) * lamp_keep;
+                    src += base * (Vec3::ONE - keep);
+                }
+                src += Vec3::new(t.light[0], t.light[1], t.light[2]);
+                let peak = src.x.max(src.y).max(src.z);
+                if peak > 1.0 {
+                    src = src * (1.0 / peak);
+                }
+                // Emite lo que brilla de verdad (los focos), no el halo tenue:
+                // `smoothstep(0.25, 0.85, max(luz))` (si no, el brillo del
+                // posproceso abre un velo sobre toda la camioneta).
+                let q = ((top - 0.25) * (1.0 / 0.6)).clamp(0.0, 1.0);
+                let e_src = q * q * (3.0 - 2.0 * q) * fade;
+                let a = alpha * cd.near;
+                // De lejos se pierde en la neblina.
+                let src = (src * cd.near).lerp(haze * a, fog);
+                let p = &mut row[x * 4..x * 4 + 4];
+                if a >= 1.0 {
+                    // Opaca: tapa todo lo de atras (sin leerlo).
+                    write_emit(p, src, e_src);
+                } else {
+                    let back = lienzo::read(p);
+                    write_emit(p, src + back * (1.0 - a), e_src + emission(p) * (1.0 - a));
+                }
+            }
+        });
+    }
+
+    /// La fila `yf` de una chispa de la pista: la distancia `d` (px) a su
+    /// capsula da `color (cubre(d - w) + 0.45 e^(-d / 2w))` (mas en la
+    /// cabeza que en la cola), que se suma, y su emision.
+    fn draw_spark(&self, s: &SparkSeg, yf: f32, row: &mut [u8], hidden: &dyn Fn(f32) -> bool) {
+        let width = self.game.width;
+        let x0 = (s.lo.0.max(0.0) as usize).min(width);
+        let x1 = ((s.hi.0.max(0.0) as usize) + 1).min(width);
+        let (ax, ay) = s.a;
+        let (bx, by) = (s.b.0 - ax, s.b.1 - ay);
+        let inv_len2 = 1.0 / (bx * bx + by * by).max(1e-4);
+        let (reach, inv_glow) = (8.0 * s.w, 1.0 / (2.0 * s.w));
+        for x in x0..x1 {
+            let xf = x as f32 + 0.5;
+            if hidden(xf) {
+                continue;
+            }
+            let t = (((xf - ax) * bx + (yf - ay) * by) * inv_len2).clamp(0.0, 1.0);
+            let d = len(xf - ax - bx * t, yf - ay - by * t);
+            if d > reach {
+                continue;
+            }
+            let v = (cover(d - s.w) + 0.45 * (fast_exp(-d * inv_glow) - FW_CUT).max(0.0)) * (s.tail + (1.0 - s.tail) * t);
+            let p = &mut row[x * 4..x * 4 + 4];
+            write_emit(p, lienzo::read(p) + s.color * v, emission(p).max(s.emit * v.min(1.0)));
+        }
+    }
+
+    /// La fila `yf` del fuego del turbo: un cono de la boca del escape `A`
+    /// (el punto del `Item`) a la punta `B` (ver `view`), con radio
+    /// `r(t) = r0 + (r1 - r0) t` a lo largo. Para cada pixel `p`, `t` es su
+    /// proyeccion en el eje, `(p - A) . (B - A) / |B - A|^2` recortada de 0 a
+    /// 1, y `q = |p - (A + t (B - A))| / r(t)` su distancia al eje en
+    /// radios:
+    /// `I = nucleo e^(-6 q^2) (1 - t)^2 + orilla e^(-2.5 q^2) (1 - t) (0.55 + 0.45 ruido)`,
+    /// luz que se suma y emite. Si la suma pasa de 1 se divide por su
+    /// maximo (el nucleo queda amarillo y no blanco quemado). El ruido corre
+    /// a lo largo del chorro con el tiempo: la llama tiembla. Cada clase el
+    /// suyo:
+    ///
+    /// - colectivo: blanco con orilla magenta y anillos de choque que
+    ///   cruzan el cono a lo largo del eje (`smoothstep(0.7, 1, fract(4 t -
+    ///   20 tiempo))`, los diamantes de un escape de cohete), del ancho del
+    ///   cono en cada punto;
+    /// - camioneta: amarillo con orilla naranja (y bocanadas negras por las
+    ///   chimeneas);
+    /// - chela: espuma en puntitos que salen por el chorro;
+    /// - tuk-tuk: una brasa chica (lo suyo son las chispas).
+    fn draw_flame(&self, item: &Item, f: &FlameDraw, yf: f32, row: &mut [u8], hidden: &dyn Fn(f32) -> bool, fog: f32) {
+        let game = self.game;
+        let big = f.r0.max(f.r1);
+        if big < 0.5 {
+            return;
+        }
+        let (ax, ay) = (item.x, item.y);
+        let (bx, by) = (f.tip.0 - ax, f.tip.1 - ay);
+        let len2 = bx * bx + by * by;
+        let inv_len2 = if len2 > 1e-4 { 1.0 / len2 } else { 0.0 };
+        let reach = big * 1.6 + 1.0;
+        if yf < ay.min(f.tip.1) - reach || yf > ay.max(f.tip.1) + reach {
+            return;
+        }
+        let x0 = ((ax.min(f.tip.0) - reach).max(0.0) as usize).min(game.width);
+        let x1 = (((ax.max(f.tip.0) + reach).max(0.0) as usize) + 1).min(game.width);
+        let (core, edge) = match f.kind {
+            Kind::Colectivo => (Vec3::new(1.0, 0.9, 0.9), Vec3::new(0.8, 0.2, 1.0)),
+            Kind::Camioneta => (Vec3::new(1.0, 0.85, 0.45), Vec3::new(1.0, 0.4, 0.05)),
+            Kind::Chela => (Vec3::new(1.0, 0.9, 0.7), Vec3::new(1.0, 0.85, 0.55)),
+            Kind::TukTuk => (Vec3::new(1.0, 0.7, 0.3) * 0.8, Vec3::new(1.0, 0.35, 0.05) * 0.6),
+        };
+        let wall = game.wall;
+        let power = f.power * (1.0 - fog);
+        let dy = yf - ay;
+        for x in x0..x1 {
+            let xf = x as f32 + 0.5;
+            if hidden(xf) {
+                continue;
+            }
+            let dx = xf - ax;
+            let t = ((dx * bx + dy * by) * inv_len2).clamp(0.0, 1.0);
+            let (ex, ey) = (dx - bx * t, dy - by * t);
+            let rr = f.r0 + (f.r1 - f.r0) * t;
+            let q2 = (ex * ex + ey * ey) / (rr * rr).max(0.25);
+            if q2 >= 2.56 {
+                continue;
+            }
+            // De que lado del eje y a cuantos radios (para el ruido).
+            let side = (dx * by - dy * bx).signum() * q2.sqrt();
+            let fall = 1.0 - t;
+            let flicker = 0.55 + 0.45 * value_noise(t * 5.0 - wall * 25.0 + f.seed, side * 1.5 + wall * 7.0);
+            let mut light = core * (fast_exp(-6.0 * q2) * fall * fall) + edge * (fast_exp(-2.5 * q2) * fall * flicker);
+            match f.kind {
+                Kind::Colectivo => {
+                    let ring = smoothstep(0.7, 1.0, fract(t * 4.0 - wall * 20.0)) * fast_exp(-3.0 * q2) * fall;
+                    light += Vec3::new(1.0, 0.85, 1.0) * (0.8 * ring);
+                }
+                Kind::Chela => {
+                    // Espuma: puntitos en celdas que corren por el chorro.
+                    let (qx, qy) = (t * 7.0 - wall * 7.0 + f.seed, side * 2.0);
+                    let (cx, cy) = (qx.floor(), qy.floor());
+                    let h = hash_u32((cx as i32 as u32).wrapping_mul(0x9E37_79B9) ^ (cy as i32 as u32).wrapping_mul(0x85EB_CA6B));
+                    let (ox, oy) = (0.3 + 0.4 * ((h >> 8) & 0xFF) as f32 / 255.0, 0.3 + 0.4 * ((h >> 16) & 0xFF) as f32 / 255.0);
+                    let dot = if (h & 0xFF) < 110 { smoothstep(0.3, 0.15, len(qx - cx - ox, qy - cy - oy)) } else { 0.0 };
+                    light = core * (fast_exp(-6.0 * q2) * fall * fall) + edge * (fast_exp(-q2) * dot * fall * 1.4);
+                }
+                _ => {}
+            }
+            let light = light * power;
+            let top = light.max_element();
+            if top < 1e-3 {
+                continue;
+            }
+            let p = &mut row[x * 4..x * 4 + 4];
+            let sum = lienzo::read(p) + light;
+            let peak = sum.max_element();
+            write_emit(p, if peak > 1.0 { sum * (1.0 / peak) } else { sum }, emission(p).max(top.min(1.0)));
+        }
+    }
+
+    /// La fila `yf` de un soplo de humo negro: un disco de radio `R` cuyo
+    /// ruido (el del posproceso, girado por su `rot` y corrido por su
+    /// semilla) le da volutas. `dens = (0.4 + 0.6 ruido) (1 - d^2)` que nace
+    /// en 0.1 s y se va de los 0.5 a los 2.2 s; el color es casi negro,
+    /// alumbrado de arriba por el poste cercano (`(0.5 - 0.5 v)`, `v` de -1
+    /// arriba a 1 abajo) y de abajo por las LEDs de la camioneta (al nacer)
+    /// y por el resplandor naranja de la ciudad. Y la orilla, `d^2`, se
+    /// alumbra mas (el poste y la ciudad la atraviesan: es lo que hace leer
+    /// el humo negro contra el cielo de noche, que tambien es oscuro).
+    /// Encima con `alfa = 0.95 min(1.6 dens, 1)`.
+    fn draw_puff(&self, item: &Item, pd: &PuffDraw, yf: f32, row: &mut [u8], hidden: &dyn Fn(f32) -> bool) {
+        let game = self.game;
+        let radius = pd.radius * item.scale;
+        if radius < 0.5 {
+            return;
+        }
+        let dy = (yf - item.y) / radius;
+        if dy.abs() >= 1.0 {
+            return;
+        }
+        let age = pd.age;
+        // Cerca de la camara (a menos de ~14 m, o con mas de 220 px de
+        // radio) se desvanece: el humo de la propia sale adelante y pasa por
+        // la camara a la altura del ojo, y de tan cerca taparia media
+        // pantalla con cientos de miles de pixeles (ese humo ya lo pinta el
+        // de la pantalla).
+        let opacity = 0.95 * pd.weight * smoothstep(2.2, 0.5, age) * smoothstep(0.0, 0.1, age) * smoothstep(6.0, 14.0, item.depth) * smoothstep(220.0, 140.0, radius);
+        if opacity < 0.004 {
+            return;
+        }
+        let chord = radius * (1.0 - dy * dy).max(0.0).sqrt();
+        let x0 = ((item.x - chord).max(0.0) as usize).min(game.width);
+        let x1 = (((item.x + chord).max(0.0) as usize) + 1).min(game.width);
+        let inv_r = 1.0 / radius;
+        let soot = Vec3::new(0.025, 0.022, 0.02);
+        let lamp = LAMP_COLOR * (0.35 * pd.lamp);
+        let leds = game.tint[Kind::Camioneta.index()] * (0.25 * fast_exp(-2.0 * age));
+        let rim_light = LAMP_COLOR * (0.5 * pd.lamp) + CITY_UNDERLIGHT * 2.0 + Vec3::new(0.05, 0.05, 0.08);
+        for x in x0..x1 {
+            let xf = x as f32 + 0.5;
+            if hidden(xf) {
+                continue;
+            }
+            let u = (xf - item.x) * inv_r;
+            let d2 = u * u + dy * dy;
+            if d2 >= 1.0 {
+                continue;
+            }
+            let (ur, vr) = (u * pd.cos - dy * pd.sin, u * pd.sin + dy * pd.cos);
+            let n = game.post.tex(ur * 0.5 + pd.seed, vr * 0.5 + pd.seed * 0.37 + age * 0.3);
+            let a = opacity * ((0.4 + 0.6 * n) * (1.0 - d2) * 1.6).min(1.0);
+            if a < 0.002 {
+                continue;
+            }
+            let color = soot + lamp * (0.5 - 0.5 * dy) + (leds + CITY_UNDERLIGHT) * (0.5 + 0.5 * dy) + rim_light * (d2 * d2 * (0.6 + 0.4 * n));
+            let p = &mut row[x * 4..x * 4 + 4];
+            write_emit(p, over(lienzo::read(p), color, a), emission(p) * (1.0 - a));
         }
     }
 
@@ -4606,6 +5737,29 @@ struct Strip {
     lit: bool,
     /// El grano de la fila.
     grain: NoiseLine<100>,
+    /// El destello blanco del neon de cada baranda donde roza la nave
+    /// propia.
+    flare: [f32; 2],
+    /// Los anillos antigravedad de lo que flota cerca de la fila, cuantos,
+    /// el radio de sus dos ondas y lo que corre la caustica.
+    rings: [RingRow; 2],
+    n_rings: usize,
+    ripples: [f32; 2],
+    caustic: (f32, f32),
+}
+
+/// El anillo de lo que flota (la chela) en una fila: su centro a lo ancho
+/// (m), `1 / (1.3 hw)`, `ds / (1.3 hl)` de la fila, cuantos pixeles mide una
+/// unidad de la elipse (`hw` por pixeles por metro), lo que le toca a lo
+/// largo (m) y su fuerza.
+#[derive(Clone, Copy, Debug, Default)]
+struct RingRow {
+    x: f32,
+    inv_w: f32,
+    ey: f32,
+    px: f32,
+    ds: f32,
+    gain: f32,
 }
 
 /// Las muestras de la tabla a lo ancho de una fila de pista y su paso mas
@@ -4803,25 +5957,22 @@ fn window_cover(d: f32, half: f32, w: f32) -> f32 {
     ((d + 0.5 * w).min(half) - (d - 0.5 * w).max(-half)).max(0.0) / w
 }
 
-/// El color de lo que emite un sprite: el promedio de su rgb pesado por
-/// cuanto emite cada pixel (las LEDs que marco el horneado) mas el
-/// resplandor sumado (premultiplicado, `max(rgb) - a > 0.15`: suma mas de
-/// lo que tapa), normalizado a maximo 1. Si no emite nada, ambar.
+/// El color de lo que emite un sprite: el promedio de la luz de sus LEDs
+/// (el `glow`, nucleo y halo), normalizado a maximo 1. Si no tiene LEDs,
+/// ambar.
 ///
 /// Cada pixel pesa ademas `0.2 + saturacion` (`(max - min) / max`): las
-/// LEDs blancas o casi blancas (faros, el resplandor recortado) no lavan el
+/// LEDs blancas o casi blancas (faros, el nucleo saturado) no lavan el
 /// tinte, y el charco sale del color de las de color (magenta y ambar en la
 /// Mamaneta) y no de su promedio cafe.
 fn led_tint(sprite: &Sprite) -> Vec3 {
     let mut sum = Vec3::ZERO;
-    for (p, &e) in sprite.pixels.iter().zip(&sprite.emit) {
-        let c = Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32) * (1.0 / 255.0);
-        let a = p[3] as f32 * (1.0 / 255.0);
+    for g in &sprite.glow {
+        let c = Vec3::new(g[0] as f32, g[1] as f32, g[2] as f32) * (1.0 / 255.0);
         let top = c.x.max(c.y).max(c.z);
-        let weight = e as f32 * (1.0 / 255.0) + if top - a > 0.15 { 1.0 } else { 0.0 };
-        if weight > 0.0 && top > 1e-4 {
+        if top > 1e-4 {
             let sat = (top - c.x.min(c.y).min(c.z)) / top;
-            sum += c * (weight * (0.2 + sat));
+            sum += c * (0.2 + sat);
         }
     }
     let top = sum.x.max(sum.y).max(sum.z);
@@ -5347,6 +6498,97 @@ fn draw_map(track: &Track, size: usize) -> Vec<[f32; 4]> {
     image
 }
 
+/// Para medir y fotografiar con los modelos de verdad (desde las pruebas
+/// de `minijuegos`).
+#[cfg(test)]
+impl Carrera {
+    /// Cuanto cuesta cada clase de cosa encima de la pista (las filas en
+    /// paralelo, el minimo de cinco).
+    pub(crate) fn bench_items(&self, rgba: &mut [u8]) {
+        let w = self.width;
+        let name = |k: &ItemKind| match k {
+            ItemKind::Car { .. } => 0,
+            ItemKind::Lamp { .. } => 1,
+            ItemKind::Kite { .. } => 2,
+            ItemKind::Tower { .. } => 3,
+            ItemKind::Arch { .. } => 4,
+            ItemKind::Puff { .. } => 5,
+            ItemKind::Spark { .. } => 6,
+            ItemKind::Flame { .. } => 7,
+        };
+        for (skip, label) in [(99, "todo"), (0, "sin naves"), (1, "sin postes"), (2, "sin barriletes"), (4, "sin arcos"), (5, "sin humo"), (6, "sin chispas"), (7, "sin turbo"), (97, "nada encima")] {
+            let mut view = self.view();
+            view.items.retain(|i| name(&i.kind) != skip && skip != 97);
+            if skip == 0 || skip == 97 {
+                view.solid_items.clear();
+            }
+            let par = (0..5)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    parallel::chunks_mut(rgba, w * 4, 1, |y, row| view.row(y, row));
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .fold(f64::MAX, f64::min);
+            println!("{label:<14} {par:6.2} ms   ({} cosas)", view.items.len());
+        }
+        let t = std::time::Instant::now();
+        for _ in 0..10 {
+            std::hint::black_box(self.view());
+        }
+        println!("view {:6.2} ms", t.elapsed().as_secs_f64() * 100.0);
+        // Cada nave sola y cada clase de cosa sola, en un hilo (sin pista:
+        // el minimo de 5).
+        let view = self.view();
+        let mut row = vec![0u8; w * 4];
+        for item in view.items.iter().filter(|i| name(&i.kind) == 0) {
+            let ItemKind::Car { id } = item.kind else { continue };
+            let cd = view.car_draws[id as usize];
+            let t = std::time::Instant::now();
+            for y in 0..self.height {
+                let yf = y as f32 + 0.5;
+                if yf >= item.top && yf <= item.bottom {
+                    view.draw_item(item, y, yf, &mut row);
+                }
+            }
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            if ms > 0.05 {
+                println!("    nave {id:2} d {:6.1} k {:6.1} lod {:4.2} barrido {:4.2} lejos {:4.2} solida {}  {ms:5.2} ms", item.depth, item.scale, cd.lod, cd.smear, cd.far, cd.solid);
+            }
+        }
+        for (kind, label) in [(0, "naves"), (1, "postes"), (4, "arcos"), (5, "humo"), (6, "chispas"), (7, "turbo")] {
+            let one = (0..5)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    for y in 0..self.height {
+                        let yf = y as f32 + 0.5;
+                        for item in view.items.iter().filter(|i| name(&i.kind) == kind && yf >= i.top && yf <= i.bottom) {
+                            view.draw_item(item, y, yf, &mut row);
+                        }
+                    }
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .fold(f64::MAX, f64::min);
+            println!("  {label:<10} un hilo {one:6.2} ms");
+        }
+    }
+
+    /// Para las fotos: el freno y el turbo de quien juega.
+    pub(crate) fn force(&mut self, brake: f32, boost: bool) {
+        self.cars[0].brake_light = brake;
+        if boost {
+            self.cars[0].boost = 2.0;
+            self.boost_s = 1.0;
+        }
+    }
+
+    /// Para las fotos: el turbo de todas las rivales.
+    pub(crate) fn boost_rivals(&mut self) {
+        for car in self.cars.iter_mut().filter(|c| c.role == Role::Rival) {
+            car.boost = 2.0;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5604,7 +6846,7 @@ mod tests {
         let (s, x) = (g.cars[0].s, g.cars[0].x);
         for k in 0..20 {
             let at = s + 4.0 + k as f32 * 1.5;
-            g.puffs.push(Puff { s: at, x: x + 0.8, y: g.track.height(at) + 2.4, age: 0.1 * k as f32 });
+            g.puffs.push(Puff { s: at, x: x + 0.8, y: g.track.height(at) + 2.4, age: 0.1 * k as f32, vs: 0.0, r0: 0.35, rot: k as f32, seed: k as f32 * 3.1, own: false });
         }
         measure(&mut g, "humo");
         g.smoke_screen = 0.0;
@@ -5713,6 +6955,112 @@ mod tests {
         let reach = (g.cars[0].kind.spec().length + g.cars[1].kind.spec().length) * 0.5;
         assert!(gap >= reach - 1e-3, "{gap} < {reach}");
         assert!(g.cars[0].v <= 20.0);
+    }
+
+    /// Un choque saca chispas en el punto de contacto, una vez (no en cada
+    /// paso mientras se tocan).
+    #[test]
+    fn a_crash_throws_sparks_once() {
+        let mut g = game(Kind::Colectivo);
+        g.phase = Phase::Racing;
+        g.cars.truncate(2);
+        g.cars[1].s = g.cars[0].s + 2.0;
+        g.cars[1].x = g.cars[0].x;
+        g.cars[0].v = 50.0;
+        g.cars[1].v = 20.0;
+        g.collide();
+        assert_eq!(g.sparks.len(), 40);
+        g.cars[1].s = g.cars[0].s + 2.0;
+        g.collide();
+        assert_eq!(g.sparks.len(), 40);
+    }
+
+    /// Las chimeneas y el escape salen de las piezas de metal: arriba
+    /// adelante, una de cada lado y la mas alta, y abajo atras.
+    #[test]
+    fn the_rig_finds_the_stacks_and_the_exhaust() {
+        let mut mesh = box_mesh();
+        for p in [Vec3::new(-0.45, 1.3, -1.8), Vec3::new(-0.45, 1.1, -1.8), Vec3::new(0.45, 1.25, -1.7), Vec3::new(0.0, 0.1, 1.9)] {
+            mesh.positions.push(p);
+            mesh.normals.push(Vec3::Y);
+            mesh.colors.push(Vec3::splat(0.8));
+            mesh.uvs.push(Vec2::new(1.0, 0.3));
+        }
+        let model = Model { mesh: &mesh, finish: Finish::Vehicle, meters: 2.0, name: "prueba" };
+        let rig = rig_of(&model);
+        assert_eq!(rig.stacks.len(), 2, "{:?}", rig.stacks);
+        let left = rig.stacks.iter().find(|p| p.x < 0.0).copied().unwrap_or_default();
+        let right = rig.stacks.iter().find(|p| p.x > 0.0).copied().unwrap_or_default();
+        // En metros: la mas alta de la izquierda, adelante (`z` negativo).
+        assert!((left.y - 2.6).abs() < 1e-3 && (left.x + 0.9).abs() < 1e-3 && left.z < -3.0, "{left:?}");
+        assert!((right.y - 2.5).abs() < 1e-3 && right.z < -3.0, "{right:?}");
+        assert!(rig.exhaust.z > 3.0 && rig.exhaust.y < 0.5, "{:?}", rig.exhaust);
+        // Sin metal (la botella), el escape al centro de atras.
+        let bottle = Model { mesh: &mesh, finish: Finish::Bottle, meters: 1.0, name: "botella" };
+        let rig = rig_of(&bottle);
+        assert!(rig.stacks.is_empty() && rig.exhaust.z > 1.9 && rig.exhaust.x.abs() < 1e-4);
+    }
+
+    /// El tuk-tuk se ladea hacia afuera de la curva (a la izquierda al
+    /// doblar a la derecha) y endereza al soltar; en un tumulo salta (y
+    /// salen chispas que caen y rebotan sin atravesar el asfalto), y el
+    /// salto se apaga.
+    #[test]
+    fn the_tuk_tuk_leans_out_and_bounces_on_bumps() {
+        let mut g = game(Kind::TukTuk);
+        g.start();
+        let gas = Keys { throttle: true, ..Keys::default() };
+        run(&mut g, 3.1, gas);
+        run(&mut g, 3.0, gas);
+        run(&mut g, 1.0, Keys { throttle: true, steer: 1.0, ..Keys::default() });
+        let roll = g.cars[0].roll;
+        assert!(roll < -0.03 && roll > -0.4, "{roll}");
+        run(&mut g, 1.5, gas);
+        assert!(g.cars[0].roll.abs() < 0.02, "{}", g.cars[0].roll);
+        // Justo antes de un tumulo, en su carril y con velocidad.
+        let (i, seg) = g.track.segments.iter().enumerate().find(|(_, s)| s.bumps != 0).map(|(i, s)| (i, *s)).expect("hay tumulos");
+        let lane = (0..4).find(|l| seg.bumps & (1 << l) != 0).unwrap_or(0);
+        g.cars[0].s = i as f32 * SEGMENT - 0.05 + g.track.length() * 1.0;
+        g.cars[0].x = -HALF_ROAD + LANE * (lane as f32 + 0.5);
+        g.cars[0].v = 40.0;
+        g.cars[0].bounce = 0.0;
+        g.cars[0].bounce_v = 0.0;
+        g.sparks.clear();
+        let mut top = 0.0f32;
+        for _ in 0..30 {
+            g.physics();
+            top = top.max(g.cars[0].bounce);
+        }
+        assert!(top > 0.05, "{top}");
+        assert!(g.sparks.len() >= 40, "{}", g.sparks.len());
+        for _ in 0..60 {
+            g.physics();
+            for p in &g.sparks {
+                assert!(p.y.is_finite() && p.y >= g.track.height(p.s) - 1e-3);
+            }
+        }
+        for _ in 0..240 {
+            g.physics();
+        }
+        assert!(g.cars[0].bounce.abs() < 0.01 && g.sparks.is_empty(), "{} {}", g.cars[0].bounce, g.sparks.len());
+    }
+
+    /// El humo sale de las chimeneas solo acelerando, avanza frenandose,
+    /// sube, crece y se va a los 2.2 s.
+    #[test]
+    fn the_smoke_rises_grows_and_fades() {
+        let mut g = game(Kind::Camioneta);
+        g.start();
+        run(&mut g, 3.1, Keys::default());
+        run(&mut g, 1.0, Keys { throttle: true, ..Keys::default() });
+        assert!(!g.puffs.is_empty() && g.puffs.len() <= MAX_PUFFS);
+        let p = g.puffs[0];
+        run(&mut g, 0.5, Keys::default());
+        let q = g.puffs.iter().find(|q| q.seed == p.seed).copied().expect("sigue");
+        assert!(q.y > p.y && q.radius() > p.radius() && q.s > p.s && q.vs < p.vs);
+        // Sin acelerar no sale mas y los que hay se van.
+        run(&mut g, 2.5, Keys { brake: true, ..Keys::default() });
+        assert!(g.puffs.is_empty(), "{}", g.puffs.len());
     }
 
     #[test]
@@ -5983,22 +7331,22 @@ mod tests {
         }
     }
 
-    /// El tinte de un sprite con LEDs: sale del color de sus LEDs
+    /// El tinte de un sprite con LEDs: sale del color de su luz
     /// normalizado, y las blancas no lo lavan.
     #[test]
     fn the_pool_takes_the_color_of_the_leds() {
-        let sprite = |pixels: Vec<[u8; 4]>, emit: Vec<u8>| Sprite { width: pixels.len(), height: 1, pixels, emit, spans: vec![(0, 0)], solid: vec![(0, 0)], anchor: (0.0, 0.0), scale: 1.0 };
+        let sprite = |glow: Vec<[u8; 4]>| Sprite { width: glow.len(), height: 1, pixels: vec![[90, 90, 90, 255]; glow.len()], glow, texels: Vec::new(), spans: vec![(0, 0)], solid: vec![(0, 0)], anchor: (0.0, 0.0), scale: 1.0, levels: Vec::new() };
         // Una LED magenta y laca gris que no emite.
-        let t = led_tint(&sprite(vec![[200, 20, 120, 255], [90, 90, 90, 255]], vec![255, 0]));
+        let t = led_tint(&sprite(vec![[200, 20, 120, 0], [0, 0, 0, 0]]));
         let want = Vec3::new(1.0, 0.1, 0.6);
         assert!((t - want).length() < 1e-3, "{t:?}");
         // Magenta y ambar con dos faros blancos: queda entre las dos de
         // color, no gris.
-        let t = led_tint(&sprite(vec![[255, 0, 160, 255], [255, 150, 20, 255], [250, 250, 250, 255], [250, 250, 250, 255]], vec![255, 255, 255, 255]));
+        let t = led_tint(&sprite(vec![[255, 0, 160, 0], [255, 150, 20, 0], [250, 250, 250, 0], [250, 250, 250, 0]]));
         let sat = (t.x - t.x.min(t.y).min(t.z)) / t.x;
         assert!((t.x - 1.0).abs() < 1e-4 && sat > 0.6, "{t:?}");
         // Sin LEDs, ambar.
-        let t = led_tint(&sprite(vec![[90, 90, 90, 255]], vec![0]));
+        let t = led_tint(&sprite(Vec::new()));
         assert!((t - Vec3::new(1.0, 0.68, 0.16)).length() < 1e-4);
     }
 
@@ -6359,7 +7707,7 @@ mod tests {
         run(&mut g, at, Keys::default());
         let mut rgba = vec![0u8; w * h * 4];
         g.draw(&mut rgba);
-        let name = |k: &ItemKind| match k { ItemKind::Car { .. } => 0, ItemKind::Lamp { .. } => 1, ItemKind::Kite { .. } => 2, ItemKind::Tower { .. } => 3, ItemKind::Arch { .. } => 4, ItemKind::Puff { .. } => 5 };
+        let name = |k: &ItemKind| match k { ItemKind::Car { .. } => 0, ItemKind::Lamp { .. } => 1, ItemKind::Kite { .. } => 2, ItemKind::Tower { .. } => 3, ItemKind::Arch { .. } => 4, ItemKind::Puff { .. } => 5, ItemKind::Spark { .. } => 6, ItemKind::Flame { .. } => 7 };
         for (skip, label) in [(99, "todo"), (0, "sin naves"), (1, "sin postes"), (2, "sin barriletes"), (3, "sin torre"), (4, "sin arcos"), (5, "sin humo"), (98, "sin cohetes"), (97, "nada encima")] {
             let mut view = g.view();
             view.items.retain(|i| name(&i.kind) != skip && skip != 97);
