@@ -393,8 +393,7 @@ gran llamarada.
 Cada planeta va a tener su minijuego ([minijuegos/](src/minijuegos)). Por
 ahora están el de la Luna de Xelajú, **la marimba de la Luna**; los dos de
 la capital, **la carrera del Periférico** (en su anillo) y **los shucos del
-Reformador** (en el suelo); el de Antigua, **la Camioneta Surfers**; y el de
-San Andrés Xecul, **los barriletes**.
+Reformador** (en el suelo); y el de Antigua, **la Camioneta Surfers**.
 
 ## El marco común ([minijuegos/mod.rs](src/minijuegos/mod.rs))
 
@@ -857,8 +856,21 @@ corre en pasos de 10 ms, así a toda velocidad nada se atraviesa.
   salpica lava y ceniza.
 
 **El dibujo**, todo en CPU, por filas en paralelo. La cámara mira de frente
-(a 5.6 m detrás y 3.1 m arriba), así el rayo de cada pixel es `(rx, −ry, 1)`
-y `t` es directamente la profundidad. Cada rayo se prueba contra:
+(a 5.6 m detrás y 3.1 m arriba, y sube y baja un poco con los pasos), así el
+rayo de cada pixel es `(rx, −ry, 1)` y `t` es directamente la profundidad.
+
+**La luz de la tarde.** El sol está bajo, a la derecha y un poco atrás
+(`L = (0.7, 0.66, −0.27)`); cada superficie se pinta con su color por la luz
+del cielo (azulada, la sombra) más la del sol según lo que mira (`n · L`) y
+si le da. Para saber si le da, el rayo desde el punto hacia el sol se prueba
+contra las casas de la derecha: si pasa por el frente de su alero más bajo
+que el techo, está en sombra (con un poco de penumbra), y contra las cajas
+de las naves y carretas cercanas. Así la sombra de las casas corta la calle
+con el perfil de sus techos y las naves tiran su sombra larga. Las paredes
+de la izquierda miran al sol (con la sombra de su propio alero); las de la
+derecha están en sombra, con el rebote cálido de enfrente.
+
+Cada rayo se prueba contra:
 
 - **El suelo** (`t = alto / ry`; toda una fila del suelo está a la misma
   distancia, así que lo que cae en ella se busca una vez por fila): el
@@ -870,6 +882,14 @@ y `t` es directamente la profundidad. Cada rayo se prueba contra:
   losas con su bordillo, las alfombras (orilla, rombos y flores de aserrín, y
   un manchón si se pisaron), la sombra de contacto de lo que hay en la
   calle, el charco de luz del farol más cercano y las sombras de las bombas.
+- **Lo que sale y lo que entra de las fachadas**, como planos paralelos a la
+  pared que el rayo cruza en orden: el frente del alero de teja (a 60 cm de
+  la pared) y, si el rayo pasa por debajo y sube, las vigas de abajo del
+  alero; el tejadillo y la reja volada de cada ventana (barrotes, travesaños
+  y puntas de lanza, a 24 cm); y lo hundido: la ventana (24 cm adentro) y el
+  zaguán (36 cm), con sus jambas de piedra en sombra cuando el rayo pega en
+  el hueco pero no llega al fondo. La banqueta está 15 cm más alta, con el
+  bordillo.
 - **Las fachadas** (planos `x = ±4.4 m`, `t = (±4.4 − x) / rx`), con la altura
   de cada casa: el repello de su color con manchas de humedad que bajan del
   alero, el zócalo de otro color, las pilastras de las esquinas, la cornisa y
@@ -884,6 +904,12 @@ y `t` es directamente la profundidad. Cada rayo se prueba contra:
   atrás, con su techo y su cruz; y por dentro del arco, sus costados y la
   bóveda (el rayo contra el cilindro `x² + (y − 4.2)² = R²`, entre la cara de
   enfrente y la de atrás), en sombra.
+- **Detrás de los techos**, el rayo de cada columna pega en un plano a 42 m
+  (los árboles, algunos jacarandas morados, y cada tanto una iglesia
+  amarilla con su torre, su campanario y su cúpula) y en otro a 110 m (los
+  cerros). Como esos planos son verticales, la distancia de cada columna no
+  depende de la fila: su perfil se saca una vez por columna. Se mueven con
+  paralaje mientras se corre.
 - Sin los modelos de las naves, las camionetas y los tuk-tuks son **cajas**
   con la prueba de las placas: el rayo entra a la caja por la última placa
   que cruza y sale por la primera, y la placa por la que entra dice la cara.
@@ -905,9 +931,19 @@ profundidad.
   Arco), el Fuego a la derecha con el cráter encendido y su penacho de
   ceniza que el viento ladea, y la ceniza que poco a poco tapa todo.
 
-Lo lejano se funde con la neblina (`1 − e^(−t/110)`) y al final va una
-viñeta y una gradación (sombras al índigo, altas cálidas). Encima, cada pixel
-con su profundidad (`figuras.rs`, que ahora comparten con los shucos) van las
+Lo lejano se funde con la neblina (`1 − e^(−t/120)`). Lo suave del cielo (el
+degradado de la tarde, las nubes, el penacho del Fuego y la ceniza) se
+calcula a un cuarto de resolución y se interpola; las siluetas de los
+volcanes van exactas en cada pixel. Lo que emite (los faroles, las ventanas
+encendidas, las LEDs de las naves, la lava) guarda su emisión en el alfa y
+al final pasa por el mismo posproceso de la carrera: el brillo de dos
+escalas, la viñeta, la gradación, el grano y las líneas de velocidad, que
+salen más mientras más rápido se corre. En la banqueta camina gente (la
+señora con su huipil, su corte y la canasta con frutas en la cabeza, el
+turista con su sombrero y su mochila, el de los globos con su racimo de
+colores), con su sombra larga si le da el sol, y en la calle hay palomas
+que picotean y salen volando cuando se acerca el patojo. Encima, cada pixel
+con su profundidad (`figuras.rs`, que comparten con los shucos) van las
 monedas que giran, las bombas que caen con su estela, la lava, el polvo y
 las chispas, Meyer de espaldas y los cucuruchos, de túnica morada y
 capirote, que lo persiguen.
@@ -939,58 +975,6 @@ carril libre; sin saltar la carreta se choca y saltando se pasa; por la
 escalera se sube al techo; una segunda alfombra con los cucuruchos atrás es
 perder; el piloto automático corre más de 500 m en un minuto y junta lenes;
 y cada pantalla se dibuja sin huecos con texto que la fuente carga.
-
-## Barriletes de Xecul ([minijuegos/barriletes.rs](src/minijuegos/barriletes.rs))
-
-**La física**, de lado (x a favor del viento, y arriba), en metros y a 240
-pasos por segundo. El barrilete pesa 350 g y tiene 0.6 m².
-
-- **El viento** sopla a unos 8 m/s y crece con la altura (`W (1 + 0.006 y)`),
-  con su vaivén (una suma de senos) y ráfagas: suben en 1.2 s (el aviso da
-  tiempo de soltar), se quedan y se van, y soplan 35 % más.
-- **El aire sobre el barrilete**: con el viento aparente `w = W − v` y
-  `q = ½ ρ |w|² A`, la sustentación es `q C_L` perpendicular a `w` (hacia
-  arriba) y el arrastre `q C_D` a lo largo de `w`. Para una placa plana con
-  ángulo de ataque `α` (lo que se inclina con ← →):
-  `C_L = 1.2 sen 2α` (lo más a 45°) y `C_D = 0.08 + 1.2 sen² α`. Más el peso y
-  lo que arrastra la cola.
-- **El hilo es una restricción**: si el barrilete queda más lejos de la mano
-  que el largo del hilo, se le regresa al círculo y se le quita la velocidad
-  hacia afuera, `v_r = v · d`. Ese impulso, `m v_r`, entre el paso, es la
-  tensión (suavizada en 80 ms). Con 30 m de hilo y viento parejo queda en
-  unos 25 N; si pasa de 50 N por un cuarto de segundo, revienta. Jalar
-  acorta el hilo a 3 m/s (el barrilete sube contra el viento); soltar lo
-  alarga a 6 m/s (queda flojo: ya no tiene de dónde agarrarse y baja).
-- **La cola** es una cadena de 14 puntos con Verlet: cada uno sigue su
-  inercia, el viento lo empuja y la gravedad lo jala; después se corrigen las
-  distancias entre vecinos en tres pasadas.
-
-**Los cortes**: si un tramo de la cola cruza el hilo de otro barrilete
-(prueba de cruce de segmentos, con el hilo como polilínea combada si está
-flojo), ese hilo revienta y su barrilete se va con el viento; en 9 s ese
-patojo eleva otro. Los otros vuelan con su propia física y buscan su altura;
-a ratos (unos 8 s de cada 30, después de los primeros 10) atacan: buscan la
-altura del nuestro, y si su cola cruza nuestro hilo, nos lo cortan.
-
-**El dibujo**, en CPU por filas: el cielo de la tarde con el sol, las nubes
-(ruido de valor en dos escalas que corre con el viento) y los Cuchumatanes en
-dos capas (el perfil de cada columna se calcula una vez por frame). Encima,
-con las figuras de `figuras.rs` (que ahora tienen polígonos convexos): el
-pueblo, la iglesia de San Andrés Xecul (la fachada amarilla con sus columnas
-de colores y sus angelitos, las torres y la cúpula), los patojos con sus
-latas de hilo, los hilos, las colas con sus moños y los barriletes: un
-hexágono de papel de china con seis gajos, el centro, el fleco de la orilla
-y las cañas. La cámara sigue al barrilete y se aleja cuando sube.
-
-**El sonido**: el viento y el papel que tiembla con el viento aparente, el
-hilo que zumba cuando está tenso, el chasquido cuando revienta, el «zas» y la
-porra cuando cortás uno, y la marimba de la fiesta de fondo (la misma
-marimba procedural).
-
-**Pruebas**: con viento parejo vuela arriba de la mano, a favor del viento y
-con el hilo tenso; sin viento baja; con un ventarrón revienta el hilo; los
-segmentos que se cruzan se encuentran; con el piloto automático aguanta la
-tarde; y cada pantalla se dibuja sin huecos con texto que la fuente carga.
 
 # Cambios de la sexta revisión
 

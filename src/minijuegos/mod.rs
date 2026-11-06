@@ -14,14 +14,12 @@
 //! | La capital | chapina | La carrera del Periferico ([carrera.rs]) |
 //! | La capital (en el suelo) | chapina | Shucos del Reformador ([shucos.rs]) |
 //! | El volcan de Fuego (Antigua) | chapina | Camioneta Surfers ([surfers.rs]) |
-//! | Los Cuchumatanes (San Andres Xecul) | chapina | Barriletes de Xecul ([barriletes.rs]) |
 //!
 //! Cada minijuego cumple `Minigame`: recibe las teclas del frame, llena su
 //! propio audio (un stream aparte con bloques chicos, para que el golpe
 //! suene enseguida), se dibuja sobre la imagen y dice que texto va encima.
 //! Los records se guardan en `minijuegos.txt`, junto al programa.
 
-pub mod barriletes;
 pub mod carrera;
 pub mod ciudad;
 pub mod escenario;
@@ -110,7 +108,6 @@ pub enum Kind {
     Carrera,
     Shucos,
     Surfers,
-    Barriletes,
 }
 
 impl Kind {
@@ -121,7 +118,6 @@ impl Kind {
             Kind::Carrera => "Enter · correr en el Periférico",
             Kind::Shucos => "Enter · vender shucos al pie del Reformador",
             Kind::Surfers => "Enter · correr por la calle del Arco",
-            Kind::Barriletes => "Enter · elevar un barrilete en la plaza",
         }
     }
 }
@@ -145,8 +141,6 @@ pub fn available(app: &App) -> Option<Kind> {
         Some(Kind::Shucos)
     } else if near("Pira", NEAR) {
         Some(Kind::Surfers)
-    } else if near("Argos", NEAR) {
-        Some(Kind::Barriletes)
     } else if near("Cementerio", RING) {
         Some(Kind::Carrera)
     } else {
@@ -164,7 +158,6 @@ pub fn start(kind: Kind, app: &App) -> Box<dyn Minigame> {
         Kind::Carrera => Box::new(race(app, records)),
         Kind::Shucos => Box::new(shucos::Shucos::new(width, height, records)),
         Kind::Surfers => Box::new(surfers::CamionetaSurfers::new(width, height, records)),
-        Kind::Barriletes => Box::new(barriletes::Barriletes::new(width, height, records)),
     }
 }
 
@@ -398,20 +391,6 @@ mod tests {
         }
         app.update(1.0 / 60.0, &FrameInput::default());
         assert_eq!(available(&app), Some(Kind::Surfers));
-    }
-
-    /// En San Andres Xecul (con N) se ofrecen los barriletes.
-    #[test]
-    fn the_kites_are_offered_in_xecul() {
-        let mut app = App::new(64, 36).unwrap();
-        let chapin = PRESETS.iter().find(|p| p.name == "40_chapin").unwrap();
-        app.apply_preset(chapin);
-        let at = app.system.sites.iter().position(|s| s.name == "San Andres Xecul").expect("el lugar de Xecul");
-        for _ in 0..=at {
-            app.visit_next_site();
-        }
-        app.update(1.0 / 60.0, &FrameInput::default());
-        assert_eq!(available(&app), Some(Kind::Barriletes));
     }
 
     /// La carrera con las naves de verdad: cuanto cuesta cada cosa a 1280 x
