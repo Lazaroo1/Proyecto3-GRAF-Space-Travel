@@ -27,7 +27,8 @@ use std::f32::consts::{PI, TAU};
 
 use super::carrera::value_noise;
 use super::figuras::{Canvas, paint};
-use super::hornear::Sprite;
+use super::flota::{self, Fleet};
+use super::hornear::{Lut, Pick, Sprite};
 use super::lienzo;
 use super::personaje::{self, RUN_FRAMES};
 use std::sync::Arc;
@@ -47,8 +48,14 @@ const CAM_UP: f32 = 3.1;
 const GRAVITY: f32 = 26.0;
 const JUMP: f32 = 8.6;
 const ROLL: f32 = 0.62;
-/// Lo alto del techo de una camioneta (y su parrilla).
-const ROOF: f32 = 3.0;
+/// Lo alto del techo de una camioneta (sobre la parrilla se corre) y lo
+/// largo de una camioneta y de un tuk-tuk.
+const ROOF: f32 = flota::BUS_HEIGHT - 0.1;
+const BUS_LEN: f32 = 8.0;
+const TUK_LEN: f32 = 2.6;
+/// Lo hondo del Arco y donde arranca su boveda.
+const ARCH_DEPTH: f32 = 3.0;
+const ARCH_SPRING: f32 = 4.2;
 /// Lo largo de cada casa de la calle.
 const HOUSE: f32 = 9.0;
 /// Cada cuanto pasa el Arco.
@@ -101,7 +108,7 @@ impl Obstacle {
         let last = 7 - self.lanes.leading_zeros() as usize;
         let (x0, x1) = (lane_x(first.min(2)), lane_x(last.min(2)));
         let (half, y0, y1) = match self.thing {
-            Thing::Parked | Thing::Bus => (1.25, 0.0, ROOF),
+            Thing::Parked | Thing::Bus => (1.3, 0.0, ROOF),
             Thing::Cart => (0.8, 0.0, 1.1),
             Thing::TukTuk => (0.78, 0.0, 1.95),
             Thing::Banner => return (Vec3::new(-WALL, 1.05, self.z), Vec3::new(WALL, 1.65, self.z + 0.12)),
@@ -233,6 +240,26 @@ impl Camera {
     }
 }
 
+/// Lo del suelo de una fila (ver `CamionetaSurfers::ground_row`).
+struct GroundRow<'a> {
+    carpets: Vec<&'a Obstacle>,
+    shadows: Vec<(f32, f32)>,
+    lamp: f32,
+}
+
+/// Una nave de la flota en la pantalla: su sprite y su mip, donde pisa, su
+/// escala, su profundidad (la de su cara de enfrente), con que permutacion
+/// de colores se pinta y su neblina.
+struct Ride<'a> {
+    sprite: &'a Sprite,
+    pick: Pick,
+    at: (f32, f32),
+    scale: f32,
+    depth: f32,
+    paint: u8,
+    fog: f32,
+}
+
 /// Una caja para los rayos, con su caja en la pantalla.
 #[derive(Clone, Copy, Debug)]
 struct BoxHit {
@@ -272,6 +299,9 @@ pub struct CamionetaSurfers {
     /// Meyer horneado (los cuadros de la carrera y el del salto), si esta
     /// el modelo; si no, se dibuja un patojo con figuras.
     meyer: Option<Arc<Vec<Sprite>>>,
+    /// Las naves chapinas horneadas (camionetas y tuk-tuks), si estan los
+    /// modelos; si no, cajas pintadas.
+    fleet: Option<Arc<Fleet>>,
     auto_wait: f32,
     message: Option<(&'static str, f32)>,
     // El sonido.
@@ -312,6 +342,7 @@ impl CamionetaSurfers {
             done: false,
             autopilot: false,
             meyer: None,
+            fleet: None,
             auto_wait: 0.0,
             message: None,
             pending: Vec::new(),
@@ -327,6 +358,9 @@ impl CamionetaSurfers {
         // metro de donde corre.
         let elevation = ((CAM_UP - 0.9) / CAM_BACK).atan();
         game.meyer = personaje::meyer(elevation, game.focal / CAM_BACK);
+        // Las naves, a un decimo de la escala de la camara (de cerca se
+        // agrandan poco; de lejos van los mips).
+        game.fleet = flota::fleet((game.focal / 10.0).round());
         game.reset();
         game
     }
@@ -418,7 +452,7 @@ impl CamionetaSurfers {
                         let parked = self.random() < 0.6;
                         let at = z0 + 2.0 + self.random() * 8.0;
                         let (thing, v) = if parked { (Thing::Parked, 0.0) } else { (Thing::Bus, 7.0) };
-                        push(&mut self.obstacles, thing, 1 << lane, at, 11.0, v, k);
+                        push(&mut self.obstacles, thing, 1 << lane, at, BUS_LEN, v, k);
                         if parked && self.random() < 0.7 {
                             self.coin_line(lane_x(lane), ROOF + 0.9, at + 1.5, 6, 1.4);
                         }
@@ -471,7 +505,7 @@ impl CamionetaSurfers {
                 // Tuk-tuks parados.
                 for (k, lane) in (0..3).filter(|&l| l != free).enumerate() {
                     if self.random() < 0.7 + 0.3 * difficulty {
-                        push(&mut self.obstacles, Thing::TukTuk, 1 << lane, z0 + 6.0 + 9.0 * k as f32, 2.6, 0.0, 5 + k as u32);
+                        push(&mut self.obstacles, Thing::TukTuk, 1 << lane, z0 + 6.0 + 9.0 * k as f32, TUK_LEN, 0.0, 5 + k as u32);
                     }
                 }
                 self.coin_line(lane_x(free), 0.9, z0 + 3.0, 8, 2.2);
@@ -861,80 +895,167 @@ impl CamionetaSurfers {
         3.6 + 1.3 * ((h >> 8) as f32 / 16_777_216.0)
     }
 
-    /// Una fachada colonial: el color de la casa, el zocalo, la puerta de
-    /// madera, las ventanas con reja, el farol y el alero de teja.
+    /// Una fachada colonial de Antigua: el repello de su color con manchas
+    /// de humedad, el zocalo de otro color, las pilastras en las esquinas, la
+    /// cornisa y el alero de teja (con su sombra), el zaguan de madera con
+    /// arco y marco de piedra, las ventanas con marco, reja y macetas en el
+    /// alfeizar, y el farol de hierro con su luz en la pared. Devuelve el
+    /// color y cuanto emite.
     fn facade(side: i32, z: f32, y: f32, top: f32) -> (Vec3, f32) {
         let k = (z / HOUSE).floor() as i32;
         let u = z - k as f32 * HOUSE;
         let h = hash_u32((k as u32).wrapping_mul(0x9E37_79B9) ^ (side as u32).wrapping_mul(0x85EB_CA6B));
         let palette = [
-            Vec3::new(0.9, 0.68, 0.26),
-            Vec3::new(0.72, 0.24, 0.17),
-            Vec3::new(0.28, 0.46, 0.66),
-            Vec3::new(0.88, 0.85, 0.76),
-            Vec3::new(0.46, 0.62, 0.36),
-            Vec3::new(0.92, 0.56, 0.36),
+            Vec3::new(0.88, 0.62, 0.22),
+            Vec3::new(0.7, 0.26, 0.17),
+            Vec3::new(0.24, 0.38, 0.64),
+            Vec3::new(0.9, 0.87, 0.78),
+            Vec3::new(0.44, 0.58, 0.36),
+            Vec3::new(0.86, 0.5, 0.44),
+            Vec3::new(0.8, 0.56, 0.16),
+            Vec3::new(0.46, 0.62, 0.78),
         ];
         let base = palette[(h % palette.len() as u32) as usize];
-        let plaster = 0.9 + 0.1 * value_noise(z * 1.7, y * 1.7);
-        let mut c = base * plaster;
+        let trim = [Vec3::new(0.94, 0.9, 0.8), Vec3::new(0.6, 0.18, 0.12), Vec3::new(0.9, 0.78, 0.4)][((h >> 5) % 3) as usize];
+        let plinth = [Vec3::new(0.55, 0.16, 0.12), Vec3::new(0.32, 0.3, 0.3), Vec3::new(0.62, 0.42, 0.16), Vec3::new(0.2, 0.3, 0.5)][((h >> 9) % 4) as usize];
+        // El repello: grano y manchas de humedad que bajan del alero.
+        let grain = 0.92 + 0.08 * value_noise(z * 2.3, y * 2.3);
+        let damp = smoothstep(0.35, 0.8, value_noise(z * 1.2 + 7.0, y * 0.35)) * smoothstep(top - 2.5, top - 0.6, y) * 0.22;
+        let mut c = base * (grain - damp);
         let mut glow = 0.0;
+        // El alero de teja: canales curvos en hileras; abajo, su sombra.
         if y > top - 0.42 {
-            // El alero de teja con sus canales.
-            let tile = (z * 5.0).fract();
-            c = Vec3::new(0.5, 0.2, 0.11) * (0.75 + 0.25 * (TAU * tile).sin().abs());
-            if y < top - 0.36 {
-                c = Vec3::new(0.25, 0.1, 0.06);
+            let along = z * 4.0;
+            let tile = along - along.floor();
+            let crest = (PI * tile).sin();
+            let row = ((top - y) / 0.14).floor() as i32;
+            let tint = 0.82 + 0.18 * ((hash_u32((along.floor() as i32 as u32) ^ (row as u32).wrapping_mul(977)) >> 24) as f32 / 255.0);
+            c = Vec3::new(0.56, 0.24, 0.13) * (0.55 + 0.45 * crest) * tint;
+            if y < top - 0.34 {
+                c = Vec3::new(0.18, 0.08, 0.05);
             }
-            return (c, glow);
+            return (c, 0.0);
         }
-        if y < 0.55 {
-            c = base * 0.62;
+        // La sombra del alero y la cornisa.
+        let under = smoothstep(top - 1.0, top - 0.42, y);
+        if (top - 0.66..top - 0.48).contains(&y) {
+            c = trim * (0.9 + 0.1 * ((y - (top - 0.66)) / 0.18));
+        } else if (top - 0.72..top - 0.66).contains(&y) {
+            c = trim * 0.55;
         }
-        // La puerta, con sus tableros.
-        if (3.6..5.4).contains(&u) && y < 2.5 {
-            let (pu, pv) = ((u - 3.6) / 1.8, y / 2.5);
-            c = Vec3::new(0.32, 0.17, 0.08);
-            let panel = ((pu * 2.0).fract() - 0.5).abs() < 0.38 && ((pv * 3.0).fract() - 0.5).abs() < 0.38;
-            if panel {
-                c = c * 1.25;
+        // Las pilastras de las esquinas.
+        let edge = u.min(HOUSE - u);
+        if edge < 0.32 && y < top - 0.66 {
+            c = trim * (0.88 + 0.06 * value_noise(z * 4.0, y * 2.0));
+            if edge > 0.27 {
+                c = c * 0.7;
             }
-            if (pu - 0.5).abs() < 0.015 {
-                c = c * 0.5;
+        }
+        // El zocalo, con su filo.
+        if y < 0.7 && edge >= 0.32 {
+            c = plinth * (0.9 + 0.1 * value_noise(z * 3.0, y * 5.0));
+            if y > 0.64 {
+                c = trim * 0.85;
             }
         }
-        // Las ventanas con reja.
-        for w0 in [1.0f32, 6.6] {
-            if u > w0 - 0.08 && u < w0 + 1.48 && y > 0.92 && y < 2.38 {
-                c = Vec3::new(0.35, 0.18, 0.08);
-                if u > w0 && u < w0 + 1.4 && y > 1.0 && y < 2.3 {
-                    c = Vec3::new(0.05, 0.04, 0.05);
-                    if h % 3 == 0 {
-                        c = Vec3::new(0.85, 0.55, 0.25) * 0.6;
-                        glow = 0.3;
+        // El zaguan: puerta de tablones con clavos, arco de medio punto y
+        // marco de piedra.
+        let door = (u - 4.5).abs();
+        let arch_top = 2.25 + (1.0 - (door / 1.05).powi(2)).max(0.0).sqrt() * 0.62;
+        if door < 1.25 && y < arch_top + 0.18 && y > 0.0 {
+            if door < 1.05 && y < arch_top {
+                let plank = ((u - 3.45) / 0.26).fract();
+                c = Vec3::new(0.34, 0.18, 0.08) * (0.82 + 0.18 * (plank * PI).sin()) * (0.9 + 0.1 * value_noise(z * 9.0, y * 0.8));
+                if ((y - 0.5) / 0.55).fract() < 0.06 && door > 0.1 {
+                    c = Vec3::new(0.2, 0.1, 0.04);
+                }
+                let stud = (((u - 3.45) / 0.26 + 0.5).fract() - 0.5).abs() < 0.12 && (((y - 0.25) / 0.55).fract() - 0.5).abs() < 0.07;
+                if stud {
+                    c = Vec3::new(0.7, 0.6, 0.38);
+                }
+                if door < 0.02 {
+                    c = Vec3::new(0.08, 0.04, 0.02);
+                }
+            } else {
+                c = Vec3::new(0.85, 0.82, 0.74) * (0.9 + 0.1 * value_noise(z * 6.0, y * 6.0));
+            }
+        }
+        // Las ventanas: marco de piedra, adentro oscuro (o con luz), la reja
+        // con su remate y las macetas en el alfeizar.
+        for (n, w0) in [1.0f32, 6.4].into_iter().enumerate() {
+            let (wu, wv) = (u - w0, y - 1.05);
+            if (-0.14..1.74).contains(&wu) && (-0.22..1.62).contains(&wv) {
+                let inside = (0.0..1.6).contains(&wu) && (0.0..1.45).contains(&wv);
+                if !inside {
+                    c = Vec3::new(0.86, 0.83, 0.75) * (0.92 + 0.08 * value_noise(z * 5.0, y * 5.0));
+                    if wv < 0.0 {
+                        c = c * 0.8;
                     }
-                    let bar = ((u - w0) / 0.14).fract();
-                    if bar < 0.18 || ((y - 1.0) / 0.43).fract() < 0.08 {
-                        c = Vec3::new(0.06, 0.06, 0.07);
+                } else {
+                    // Encendida (la luz de adentro) o con las contraventanas
+                    // de madera cerradas, de tablillas, verdes o cafes.
+                    let lit = hash_u32(h ^ (n as u32 + 1).wrapping_mul(0x51ED)) % 3 == 0;
+                    if lit {
+                        c = Vec3::new(1.0, 0.68, 0.32) * (0.55 + 0.25 * wv / 1.45);
+                        glow = 0.5;
+                    } else {
+                        let wood = if (h >> 13) % 2 == 0 { Vec3::new(0.2, 0.36, 0.26) } else { Vec3::new(0.36, 0.2, 0.1) };
+                        let slat = 0.8 + 0.2 * ((wv / 0.09).fract() * PI).sin();
+                        c = wood * slat * if (wu - 0.8).abs() < 0.02 { 0.4 } else { 1.0 };
+                    }
+                    // La reja: barrotes, dos travesanos y las puntas de
+                    // lanza arriba.
+                    let bar = (wu / 0.16).fract() < 0.16;
+                    let cross = (wv / 0.48).fract() < 0.06 && wv < 1.3;
+                    let tip = wv > 1.3 && ((wu / 0.16).fract() - 0.08).abs() < 0.12 * (1.45 - wv) / 0.15;
+                    if bar && wv < 1.3 || cross || tip {
+                        c = Vec3::new(0.05, 0.05, 0.06);
                         glow = 0.0;
                     }
                 }
             }
+            // Las macetas con flores sobre el alfeizar.
+            if (0.1..1.5).contains(&wu) && (-0.18..0.16).contains(&wv) && hash_u32(h ^ n as u32) % 2 == 0 {
+                let pot = ((wu - 0.1) / 0.35).floor();
+                let pu = (wu - 0.1) / 0.35 - pot - 0.5;
+                if wv < 0.0 && pu.abs() < 0.32 {
+                    c = Vec3::new(0.62, 0.28, 0.14);
+                } else if wv >= 0.0 && (pu * 1.2).hypot(wv - 0.06) < 0.22 {
+                    let flower = [Vec3::new(0.95, 0.2, 0.4), Vec3::new(0.95, 0.75, 0.15), Vec3::new(0.85, 0.3, 0.9)][(hash_u32(h ^ pot as u32 * 31) % 3) as usize];
+                    let leaf = value_noise(wu * 30.0, y * 30.0) > 0.0;
+                    c = if leaf { Vec3::new(0.18, 0.45, 0.16) } else { flower };
+                }
+            }
         }
-        // El farol de hierro con su luz calida en la pared.
-        let (lu, ly) = (u - 4.5, y - 3.0);
-        let d2 = lu * lu + ly * ly;
-        c = c + Vec3::new(1.0, 0.65, 0.3) * (0.35 * (-d2 / 0.8).exp());
-        if lu.abs() < 0.14 && ly.abs() < 0.22 {
-            c = Vec3::new(1.0, 0.85, 0.55);
-            glow = 1.0;
+        // El farol de hierro (un cuerpo oscuro con su vidrio calido) y su luz
+        // en la pared.
+        let (lu, ly) = (u - 4.5, y - 3.15);
+        let d2 = lu * lu + ly * ly * 1.4;
+        c = c + Vec3::new(1.0, 0.62, 0.28) * (0.42 * (-d2 / 1.1).exp());
+        if lu.abs() < 0.2 && (-0.3..0.3).contains(&ly) {
+            let glass = lu.abs() < 0.13 && (-0.2..0.18).contains(&ly);
+            c = if glass { Vec3::new(1.0, 0.82, 0.5) } else { Vec3::new(0.06, 0.06, 0.07) };
+            glow = if glass { 1.0 } else { 0.0 };
+        } else if lu.abs() < 0.04 && (0.3..0.55).contains(&ly) {
+            c = Vec3::new(0.06, 0.06, 0.07);
         }
-        (c, glow)
+        // Sombra al pie y bajo el alero.
+        let ao = (0.72 + 0.28 * smoothstep(0.0, 0.5, y)) * (1.0 - 0.35 * under);
+        (c * ao, glow)
     }
 
-    /// El empedrado: piedras redondeadas en hileras corridas, con su mezcla
-    /// oscura; de lejos (un pixel ya mide varias piedras) se promedia.
+    /// El empedrado: piedras redondeadas en hileras corridas, cada una con
+    /// su tono, su relieve (la orilla se inclina: brilla del lado que da a
+    /// la luz y se oscurece del otro) y algunas brillosas; la mezcla oscura
+    /// entre ellas; al centro, la canaleta de losas. De lejos (un pixel ya
+    /// mide varias piedras) se promedia.
     fn cobble(x: f32, z: f32, foot: f32) -> Vec3 {
+        if x.abs() < 0.28 {
+            // La canaleta: losas largas, un poco hundidas y humedas.
+            let seam = ((z / 0.9).fract() < 0.03) as u8 as f32;
+            let side = smoothstep(0.2, 0.28, x.abs());
+            return Vec3::new(0.4, 0.37, 0.33) * (0.85 + 0.15 * value_noise(z * 2.0, x * 8.0)) * (1.0 - 0.35 * seam) * (1.0 - 0.3 * side);
+        }
         let (cw, ch) = (0.34, 0.26);
         let row = (z / ch).floor();
         let shift = if (row as i32).rem_euclid(2) == 0 { 0.0 } else { 0.5 };
@@ -945,13 +1066,153 @@ impl CamionetaSurfers {
         let (fu, fv) = (qu - qu.floor() - 0.5, qv - qv.floor() - 0.5);
         let jitter = ((h >> 4) & 0xFF) as f32 / 255.0 * 0.1;
         let d = lienzo::round_box(fu * cw, fv * ch, cw * (0.4 - jitter * 0.3), ch * (0.38 - jitter * 0.2), 0.07);
-        let stone = Vec3::new(0.42, 0.37, 0.32) * (0.72 + 0.4 * ((h >> 12) & 0xFF) as f32 / 255.0);
-        let mortar = Vec3::new(0.13, 0.11, 0.1);
-        let edge = smoothstep(0.01 + foot, -0.01, d);
-        let top = 1.0 + 0.25 * smoothstep(0.0, -0.06, d) * (-fv * 2.0 + 0.5).clamp(0.0, 1.0);
-        let near = mortar.lerp(stone * top, edge);
-        let average = Vec3::new(0.3, 0.27, 0.23);
-        near.lerp(average, smoothstep(0.04, 0.16, foot))
+        let tone = 0.68 + 0.42 * ((h >> 12) & 0xFF) as f32 / 255.0;
+        let hue = [Vec3::new(0.42, 0.37, 0.32), Vec3::new(0.36, 0.35, 0.34), Vec3::new(0.45, 0.38, 0.3)][(h % 3) as usize];
+        // El relieve: cerca de la orilla, la normal se inclina hacia afuera;
+        // la luz viene de adelante y un poco de la izquierda.
+        let slope = smoothstep(-0.08, 0.0, d);
+        let (nx, nz) = (fu * cw, fv * ch);
+        let len = nx.hypot(nz).max(1e-4);
+        let facing = (-0.35 * nx + 0.94 * nz) / len;
+        let relief = 1.0 + 0.5 * slope * facing - 0.15 * slope;
+        let shiny = if (h >> 20) % 5 == 0 { 0.12 * smoothstep(-0.02, -0.07, d) } else { 0.0 };
+        let stone = hue * tone * relief + Vec3::new(0.9, 0.6, 0.4) * shiny;
+        let mortar = Vec3::new(0.11, 0.095, 0.085);
+        let fill = smoothstep(0.01 + foot, -0.01, d);
+        let near = mortar.lerp(stone, fill);
+        near.lerp(Vec3::new(0.29, 0.26, 0.23), smoothstep(0.04, 0.16, foot))
+    }
+
+    /// La banqueta: losas grandes con sus juntas y el bordillo de piedra
+    /// (claro arriba, oscuro de lado).
+    fn sidewalk(x: f32, z: f32) -> Vec3 {
+        let a = x.abs();
+        if a < STREET + 0.16 {
+            let top = smoothstep(STREET + 0.02, STREET + 0.08, a);
+            return Vec3::new(0.38, 0.35, 0.32).lerp(Vec3::new(0.68, 0.64, 0.58), top);
+        }
+        let k = (z / 0.9).floor();
+        let h = hash_u32(k as i32 as u32 ^ if x < 0.0 { 0x51DE } else { 0x0 });
+        let joint = ((z / 0.9).fract() < 0.035) as u8 as f32;
+        Vec3::new(0.52, 0.48, 0.43) * (0.9 + 0.12 * ((h >> 24) as f32 / 255.0)) * (1.0 - 0.35 * joint) * (0.95 + 0.05 * value_noise(x * 6.0, z * 6.0))
+    }
+
+    /// El Arco de Santa Catalina, con su grueso: el muro amarillo de
+    /// enfrente con la arcada, las molduras blancas, la hilera de ventanitas
+    /// del pasillo de arriba y la torre del reloj; por dentro del arco, sus
+    /// costados y la boveda (un cilindro `x^2 + (y - 4.2)^2 = R^2`), en
+    /// sombra. Devuelve la profundidad y el color del primero que pega.
+    fn arch(&self, cam: &Camera, rx: f32, ry: f32, best: f32) -> Option<(f32, Vec3, f32)> {
+        let first = ((cam.pos.z - ARCH_DEPTH) / ARCH_EVERY).ceil();
+        let mut hit: Option<(f32, Vec3, f32)> = None;
+        let yellow = Vec3::new(0.95, 0.72, 0.22);
+        let white = Vec3::new(0.95, 0.92, 0.84);
+        let radius = STREET;
+        for k in [first, first + 1.0] {
+            let az = k * ARCH_EVERY;
+            let limit = hit.map_or(best, |h| h.0);
+            let t0 = az - cam.pos.z;
+            if t0 > limit {
+                continue;
+            }
+            let at = |t: f32| (cam.pos.x + rx * t, cam.pos.y - ry * t);
+            // Enfrente: el muro, menos la arcada.
+            if t0 > 0.05 {
+                let (ax, ay) = at(t0);
+                let opening = ax.abs() < radius && (ay < ARCH_SPRING || ax.hypot(ay - ARCH_SPRING) < radius);
+                if ax.abs() < WALL + 0.7 && (0.0..8.4).contains(&ay) && !opening {
+                    let rim = ax.hypot(ay - ARCH_SPRING) - radius;
+                    let mut c = yellow * (0.92 + 0.08 * value_noise(ax * 2.0, ay * 2.0));
+                    if (ay > ARCH_SPRING && rim < 0.38) || (ay <= ARCH_SPRING && ax.abs() - radius < 0.38) {
+                        c = white * if rim < 0.06 && ay > ARCH_SPRING { 0.7 } else { 1.0 };
+                    }
+                    // Pilastras blancas, cornisas y el zocalo.
+                    let pil = (ax.abs() - (radius + 0.75)).abs() < 0.22 || (ax.abs() - (WALL + 0.4)).abs() < 0.22;
+                    if pil && ay < 7.7 {
+                        c = white * 0.95;
+                    }
+                    if (4.95..5.2).contains(&ay) || (7.65..7.95).contains(&ay) {
+                        c = white * if (ay - 4.95) < 0.05 || (ay - 7.65) < 0.05 { 0.7 } else { 1.0 };
+                    }
+                    if ay < 0.55 {
+                        c = Vec3::new(0.62, 0.45, 0.2);
+                    }
+                    if ay > 7.95 {
+                        c = white * 0.9;
+                    }
+                    // Las ventanitas en arco del pasillo de arriba.
+                    let cell = (ax + 0.55) / 1.1;
+                    let cu = cell - cell.floor() - 0.5;
+                    let win = cu.abs() < 0.2 && (5.55..6.6).contains(&ay) || ((cu * 1.1).hypot(ay - 6.6) < 0.22 && ay >= 6.6);
+                    if win && ax.abs() < WALL && ax.hypot(ay - ARCH_SPRING) > radius + 0.4 {
+                        c = Vec3::new(0.95, 0.7, 0.35) * 0.55;
+                        return Some((t0, c, 0.5));
+                    }
+                    hit = Some((t0, c, 0.0));
+                    continue;
+                }
+                // La torre del reloj, un poco atras, arriba del muro.
+                let tz = t0 + 0.8;
+                let (tx, ty) = at(tz);
+                let tower = tx.abs() < 1.8 && (8.4..11.0).contains(&ty);
+                let roof = (11.0..12.6).contains(&ty) && tx.abs() < 1.9 * (12.6 - ty) / 1.6;
+                let spire = tx.abs() < 0.06 && (12.6..13.4).contains(&ty) || (ty - 13.2).abs() < 0.05 && tx.abs() < 0.22;
+                if tz < limit && (tower || roof || spire) {
+                    let mut c = yellow * 0.97;
+                    if roof {
+                        c = Vec3::new(0.86, 0.84, 0.78) * (0.8 + 0.2 * ((12.6 - ty) / 1.6));
+                    }
+                    if spire {
+                        c = Vec3::new(0.15, 0.13, 0.12);
+                    }
+                    if tower && (tx.abs() > 1.55 || (10.75..11.0).contains(&ty)) {
+                        c = white;
+                    }
+                    let dial = tx.hypot(ty - 9.75);
+                    if tower && dial < 0.72 {
+                        c = if dial > 0.64 { Vec3::new(0.15, 0.12, 0.1) } else { white };
+                        let hand = (self.wall * 0.2).sin_cos();
+                        let (hx, hy) = (tx, ty - 9.75);
+                        if (hx * hand.1 - hy * hand.0).abs() < 0.035 && (hx * hand.0 + hy * hand.1) > -0.05 || (hx.abs() < 0.035 && hy > 0.0 && hy < 0.42) {
+                            c = Vec3::new(0.08, 0.07, 0.07);
+                        }
+                    }
+                    hit = Some((tz, c, 0.0));
+                    continue;
+                }
+            }
+            // Por dentro: los costados (hasta donde arranca la boveda) y la
+            // boveda, entre la cara de enfrente y la de atras.
+            let inside = |t: f32| {
+                let z = cam.pos.z + t;
+                z >= az && z <= az + ARCH_DEPTH && t > 0.05 && t < limit
+            };
+            if rx.abs() > 1e-5 {
+                let side = rx.signum();
+                let t = (side * radius - cam.pos.x) / rx;
+                let (_, wy) = at(t);
+                if inside(t) && (0.0..ARCH_SPRING).contains(&wy) {
+                    let band = ((cam.pos.z + t - az) / 0.75).fract() < 0.05;
+                    let c = yellow * if band { 0.38 } else { 0.5 };
+                    hit = Some((t, c, 0.0));
+                    continue;
+                }
+            }
+            let (ox, oy) = (cam.pos.x, cam.pos.y - ARCH_SPRING);
+            let (a, b, cc) = (rx * rx + ry * ry, 2.0 * (ox * rx - oy * ry), ox * ox + oy * oy - radius * radius);
+            let disc = b * b - 4.0 * a * cc;
+            if disc > 0.0 {
+                let t = (-b + disc.sqrt()) / (2.0 * a);
+                let (vx, vy) = at(t);
+                if inside(t) && vy >= ARCH_SPRING {
+                    // La luz baja por la boveda: mas clara a los lados.
+                    let shade = 0.32 + 0.22 * (vx.abs() / radius);
+                    let rib = ((cam.pos.z + t - az) / 0.75).fract() < 0.05;
+                    hit = Some((t, yellow * if rib { shade * 0.7 } else { shade }, 0.0));
+                }
+            }
+        }
+        hit
     }
 
     /// La alfombra de aserrin: orilla de colores, rombos y flores; pisada,
@@ -1171,6 +1432,47 @@ fn blit(sprite: &Sprite, at: (f32, f32), scale: f32, depth: f32, light: f32, yf:
     }
 }
 
+/// Pega en la fila `yf` una nave de la flota: su color (con sus colores
+/// permutados), la luz de sus LEDs encima, su neblina y detras de lo que
+/// este mas cerca.
+#[allow(clippy::too_many_arguments)]
+fn ride(v: &Ride, lut: &Lut, light: f32, haze: Vec3, yf: f32, row: &mut [u8], depths: &[f32], width: usize) {
+    let s = v.sprite;
+    if v.scale <= 0.0 {
+        return;
+    }
+    let inv = 1.0 / v.scale;
+    let sy = s.anchor.1 + (yf - v.at.1) * inv;
+    if sy < 0.0 || sy >= s.height as f32 {
+        return;
+    }
+    let x0 = ((v.at.0 - s.anchor.0 * v.scale).floor().max(0.0) as usize).min(width);
+    let x1 = ((v.at.0 + (s.width as f32 - s.anchor.0) * v.scale).ceil().max(0.0) as usize).min(width);
+    let swap = |c: [f32; 3]| match v.paint {
+        1 => [c[1], c[2], c[0]],
+        2 => [c[2], c[0], c[1]],
+        _ => c,
+    };
+    for x in x0..x1 {
+        if depths.get(x).is_some_and(|&z| z < v.depth) {
+            continue;
+        }
+        let sx = s.anchor.0 + (x as f32 + 0.5 - v.at.0) * inv;
+        let t = s.sample_pick(&v.pick, sx, sy, lut);
+        let a = t.body[3];
+        if a <= 0.002 && t.light[0] + t.light[1] + t.light[2] <= 0.003 {
+            continue;
+        }
+        let body = swap([t.body[0], t.body[1], t.body[2]]);
+        let glow = swap(t.light);
+        let src = Vec3::new(body[0], body[1], body[2]) * light + Vec3::new(glow[0], glow[1], glow[2]) * 0.9;
+        let src = src * (1.0 - v.fog) + haze * (a * v.fog);
+        let p = &mut row[x * 4..x * 4 + 4];
+        let c = lienzo::read(p) * (1.0 - a) + src;
+        lienzo::write(p, c);
+    }
+}
+
 /// Prueba un rayo (origen `o`, direccion `(rx, -ry, 1)`) contra una caja:
 /// la profundidad donde entra y por que cara (0 de frente, 1 arriba, 2 de
 /// lado), o nada.
@@ -1217,7 +1519,9 @@ impl CamionetaSurfers {
         let ry = (yf - cam.horizon) / cam.focal;
         let haze = self.sky(0.5 * width as f32, cam.horizon - 2.0, ash);
         let row_boxes: Vec<&BoxHit> = boxes.iter().filter(|b| yf >= b.y0 && yf <= b.y1).collect();
-        let arch_k = ((cam.pos.z + 2.0) / ARCH_EVERY).ceil();
+        // Lo del suelo que cae en esta fila (toda la fila del suelo esta a
+        // la misma distancia): las alfombras, las sombras y el farol.
+        let ground = self.ground_row(cam, ry);
         let lava_light = Vec3::new(1.0, 0.4, 0.15) * (0.08 * self.eruption());
         let light = 1.0 - 0.45 * ash;
         for x in 0..width {
@@ -1232,20 +1536,25 @@ impl CamionetaSurfers {
                 if gx.abs() <= WALL {
                     best = t;
                     let foot = t / cam.focal;
-                    let mut c = if gx.abs() < STREET {
-                        Self::cobble(gx, gz, foot)
-                    } else if gx.abs() < STREET + 0.12 {
-                        Vec3::new(0.62, 0.58, 0.52)
-                    } else {
-                        let slab = ((gz / 0.7).fract() < 0.04) as u8 as f32;
-                        Vec3::new(0.5, 0.46, 0.42) * (1.0 - 0.3 * slab)
-                    };
-                    for o in self.obstacles.iter().filter(|o| o.thing == Thing::Carpet) {
+                    let mut c = if gx.abs() < STREET { Self::cobble(gx, gz, foot) } else { Self::sidewalk(gx, gz) };
+                    for o in &ground.carpets {
                         let (min, max) = o.bounds();
-                        if gx > min.x && gx < max.x && gz > o.z && gz < o.z + o.len {
+                        if gx > min.x && gx < max.x {
                             c = Self::carpet(o, gx, gz, min.x, max.x);
                         }
                     }
+                    // La sombra de contacto de lo que hay en la calle.
+                    for &(cx, hw) in &ground.shadows {
+                        let e = (gx - cx).abs() - hw;
+                        c = c * (1.0 - 0.55 * smoothstep(0.45, -0.15, e));
+                    }
+                    // El charco de luz del farol mas cercano, de cada lado.
+                    for side in [-1.0f32, 1.0] {
+                        let dx = gx - side * WALL;
+                        c = c + Vec3::new(1.0, 0.6, 0.28) * (0.22 * ground.lamp * (-dx * dx / 5.0).exp());
+                    }
+                    // La sombra de la banqueta junto al bordillo.
+                    c = c * (1.0 - 0.25 * smoothstep(STREET - 0.25, STREET, gx.abs()) * (gx.abs() < STREET) as u8 as f32);
                     // Las sombras de las bombas que van a caer.
                     for b in self.bombs.iter().filter(|b| !b.done) {
                         let near = ((gx - b.x).powi(2) + (gz - b.z).powi(2)).sqrt();
@@ -1283,45 +1592,10 @@ impl CamionetaSurfers {
                     }
                 }
             }
-            // El Arco de Santa Catalina: un muro amarillo de lado a lado con
-            // su arco, la hilera de ventanitas, el reloj y la cupula.
-            for k in [arch_k, arch_k + 1.0] {
-                let az = k * ARCH_EVERY;
-                let t = az - cam.pos.z;
-                if t <= 0.0 || t >= best {
-                    continue;
-                }
-                let (ax, ay) = (cam.pos.x + rx * t, cam.pos.y - ry * t);
-                let opening = ax.abs() < STREET && (ay < 4.2 || ax.hypot(ay - 4.2) < STREET);
-                let wall = ax.abs() < WALL + 0.6 && ay >= 0.0 && ay < 8.2 && !opening;
-                let cupola = ax.abs() < 1.1 && (8.2..10.4).contains(&ay) || ax.abs() < (0.9 - (ay - 10.4) * 0.6) && (10.4..11.8).contains(&ay);
-                if wall || cupola {
-                    best = t;
-                    let yellow = Vec3::new(0.93, 0.72, 0.26);
-                    let mut c = yellow;
-                    let rim = ax.hypot(ay - 4.2) - STREET;
-                    if ax.abs() < STREET + 0.35 && ay > 4.2 && rim < 0.35 {
-                        c = Vec3::new(0.95, 0.92, 0.85);
-                    }
-                    if (7.6..7.85).contains(&ay) || (5.15..5.3).contains(&ay) {
-                        c = Vec3::new(0.95, 0.92, 0.85);
-                    }
-                    if (5.6..6.6).contains(&ay) && ((ax / 1.1).fract().abs() - 0.5).abs() < 0.18 && ax.abs() > 0.8 {
-                        c = Vec3::new(0.12, 0.08, 0.06);
-                    }
-                    if ax.hypot(ay - 6.5) < 0.62 {
-                        c = Vec3::new(0.95, 0.94, 0.9);
-                        let hand = (self.wall * 0.2).sin_cos();
-                        let (hx, hy) = (ax, ay - 6.5);
-                        if (hx * hand.1 - hy * hand.0).abs() < 0.03 && (hx * hand.0 + hy * hand.1) > -0.05 || (hx.abs() < 0.03 && hy > 0.0 && hy < 0.38) {
-                            c = Vec3::new(0.08, 0.07, 0.07);
-                        }
-                    }
-                    if cupola {
-                        c = if ay > 10.4 { Vec3::new(0.85, 0.82, 0.75) } else { yellow * 0.95 };
-                    }
-                    color = Some((c * 0.95, 0.0));
-                }
+            // El Arco de Santa Catalina.
+            if let Some((t, c, glow)) = self.arch(cam, rx, ry, best) {
+                best = t;
+                color = Some((c, glow));
             }
             // Lo que hay en la calle.
             for b in &row_boxes {
@@ -1362,7 +1636,7 @@ impl CamionetaSurfers {
             let c = match color {
                 Some((c, glow)) => {
                     let fog = 1.0 - (-best / 110.0).exp();
-                    let lit = c * light + lava_light + c * glow * 0.6;
+                    let lit = c * (light + glow * 0.8) + lava_light;
                     lit.lerp(haze, fog)
                 }
                 None => {
@@ -1373,6 +1647,39 @@ impl CamionetaSurfers {
             depth[x] = best;
             lienzo::write(px, c);
         }
+    }
+
+    /// Lo del suelo de la fila que mira `ry` abajo del horizonte: a que
+    /// profundidad cae, las alfombras que la cruzan, las sombras de contacto
+    /// (centro y medio ancho de cada cosa en la calle) y cuanta luz del
+    /// farol mas cercano le llega.
+    fn ground_row(&self, cam: &Camera, ry: f32) -> GroundRow<'_> {
+        let mut g = GroundRow { carpets: Vec::new(), shadows: Vec::new(), lamp: 0.0 };
+        if ry <= 1e-4 {
+            return g;
+        }
+        let gz = cam.pos.z + cam.pos.y / ry;
+        for o in &self.obstacles {
+            if o.thing == Thing::Carpet {
+                if gz > o.z && gz < o.z + o.len {
+                    g.carpets.push(o);
+                }
+                continue;
+            }
+            if o.thing == Thing::Banner {
+                continue;
+            }
+            let (min, max) = o.bounds();
+            let e = (gz - (min.z + max.z) * 0.5).abs() - (max.z - min.z) * 0.5;
+            if e < 0.4 {
+                let k = smoothstep(0.4, -0.2, e);
+                g.shadows.push(((min.x + max.x) * 0.5, (max.x - min.x) * 0.5 * (0.6 + 0.4 * k)));
+            }
+        }
+        let lamp = (gz - 4.5) / HOUSE;
+        let d = (lamp - lamp.round()) * HOUSE;
+        g.lamp = (-d * d / 6.0).exp();
+        g
     }
 
     /// Las figuras de este frame: lenes, bombas que caen, chispas y humo, el
@@ -1393,6 +1700,16 @@ impl CamionetaSurfers {
         }
         for (i, p) in self.particles.iter().enumerate() {
             items.push((p.p.z - cam.pos.z, 2, i));
+        }
+        for (i, o) in self.obstacles.iter().enumerate() {
+            let near = o.z - cam.pos.z;
+            if near > 0.3 && near < AHEAD + 20.0 {
+                match o.thing {
+                    Thing::Cart => items.push((near, 3, i)),
+                    Thing::Banner => items.push((near, 4, i)),
+                    _ => {}
+                }
+            }
         }
         items.sort_by(|a, b| b.0.total_cmp(&a.0));
         for (_, kind, i) in items {
@@ -1420,6 +1737,8 @@ impl CamionetaSurfers {
                     c.disc(x, y, 0.42 * k, Vec3::new(1.0, 0.5, 0.1)).glow(0.6 * k, 0.9);
                     c.disc(x, y, 0.25 * k, Vec3::new(1.0, 0.9, 0.6));
                 }
+                3 => self.cart(&mut c, cam, &self.obstacles[i]),
+                4 => self.banner(&mut c, cam, &self.obstacles[i]),
                 _ => {
                     let p = self.particles[i];
                     let Some((x, y, k, d)) = cam.project(p.p) else { continue };
@@ -1525,6 +1844,91 @@ impl CamionetaSurfers {
         c.rect(x, head + m(0.05), m(0.09), m(0.03), m(0.02), Vec3::new(0.7, 0.08, 0.1));
         let _ = s;
         (c, self.chasers(Canvas::default(), cam))
+    }
+
+    /// La carreta de helados: el cajon blanco con sus franjas y su helado
+    /// pintado, las llantas, la tapa de lamina, la sombrilla de gajos de
+    /// colores y las campanitas.
+    fn cart(&self, c: &mut Canvas, cam: &Camera, o: &Obstacle) {
+        let (min, max) = o.bounds();
+        let x = (min.x + max.x) * 0.5;
+        let z = o.z;
+        let Some((sx, ground, k, d)) = cam.project(Vec3::new(x, 0.0, z)) else { return };
+        c.depth = d;
+        let m = |v: f32| v * k;
+        let at = |dx: f32, dy: f32| (sx + m(dx), ground - m(dy));
+        for side in [-1.0f32, 1.0] {
+            let (wx, wy) = at(side * 0.58, 0.28);
+            c.disc(wx, wy, m(0.28), Vec3::new(0.08, 0.08, 0.09));
+            c.disc(wx, wy, m(0.1), Vec3::new(0.7, 0.7, 0.72));
+        }
+        let (bx, by) = at(0.0, 0.72);
+        c.rect(bx, by, m(0.76), m(0.37), m(0.08), Vec3::new(0.95, 0.93, 0.88));
+        let (sx1, sy1) = at(0.0, 0.62);
+        c.rect(sx1, sy1, m(0.76), m(0.06), m(0.02), Vec3::new(0.95, 0.5, 0.65));
+        let (sx2, sy2) = at(0.0, 0.5);
+        c.rect(sx2, sy2, m(0.76), m(0.04), m(0.02), Vec3::new(0.35, 0.65, 0.95));
+        let (cx, cy) = at(0.0, 0.84);
+        c.poly(&[(cx - m(0.1), cy - m(0.06)), (cx + m(0.1), cy - m(0.06)), (cx, cy + m(0.2))], Vec3::new(0.85, 0.6, 0.3));
+        c.disc(cx - m(0.05), cy - m(0.1), m(0.09), Vec3::new(0.95, 0.55, 0.7));
+        c.disc(cx + m(0.05), cy - m(0.12), m(0.08), Vec3::new(0.6, 0.9, 0.7));
+        let (lx, ly) = at(0.0, 1.12);
+        c.rect(lx, ly, m(0.8), m(0.05), m(0.03), Vec3::new(0.75, 0.77, 0.8));
+        // La sombrilla.
+        let (px0, py0) = at(0.48, 1.12);
+        let (px1, py1) = at(0.48, 2.15);
+        c.line(px0, py0, px1, py1, m(0.025), Vec3::new(0.6, 0.6, 0.62));
+        let colors = [Vec3::new(0.92, 0.2, 0.25), Vec3::new(0.97, 0.95, 0.9), Vec3::new(0.15, 0.55, 0.85), Vec3::new(0.97, 0.8, 0.2)];
+        let apex = at(0.48, 2.42);
+        let n = 8;
+        for i in 0..n {
+            let (a0, a1) = (i as f32 / n as f32, (i + 1) as f32 / n as f32);
+            let rim = |a: f32| at(0.48 + (a * 2.0 - 1.0) * 0.95, 2.05 + 0.12 * (1.0 - (a * 2.0 - 1.0).powi(2)));
+            c.poly(&[apex, rim(a0), rim(a1)], colors[i % colors.len()] * (0.85 + 0.15 * (1.0 - (a0 * 2.0 - 1.0).abs())));
+        }
+        for j in 0..5 {
+            let (bx, by) = at(0.48 - 0.76 + 0.38 * j as f32, 2.02);
+            c.disc(bx, by, m(0.035), Vec3::new(0.95, 0.78, 0.3));
+        }
+    }
+
+    /// El lazo de papel picado de pared a pared: el hilo combado y los
+    /// papelitos de colores colgando, con sus recortes, meciendose.
+    fn banner(&self, c: &mut Canvas, cam: &Camera, o: &Obstacle) {
+        let z = o.z;
+        let Some((_, _, _, d)) = cam.project(Vec3::new(0.0, 1.8, z)) else { return };
+        c.depth = d;
+        let colors = [Vec3::new(0.92, 0.15, 0.4), Vec3::new(0.98, 0.78, 0.1), Vec3::new(0.15, 0.7, 0.4), Vec3::new(0.2, 0.5, 0.95), Vec3::new(0.7, 0.3, 0.9), Vec3::new(1.0, 0.5, 0.15)];
+        let sag = |x: f32| 1.9 - 0.18 * (1.0 - (x / WALL).powi(2));
+        let n = 16;
+        let mut prev = cam.project(Vec3::new(-WALL, sag(-WALL), z));
+        for i in 1..=n {
+            let x = -WALL + 2.0 * WALL * i as f32 / n as f32;
+            let next = cam.project(Vec3::new(x, sag(x), z));
+            if let (Some(a), Some(b)) = (prev, next) {
+                c.line(a.0, a.1, b.0, b.1, (0.012 * a.2).max(0.6), Vec3::new(0.85, 0.82, 0.75));
+            }
+            prev = next;
+        }
+        let mut x = -WALL + 0.3;
+        let mut i = 0;
+        while x < WALL - 0.2 {
+            let sway = 0.04 * (self.wall * 3.0 + i as f32 * 1.3).sin();
+            let top = sag(x) - 0.02;
+            if let Some((fx, fy, k, _)) = cam.project(Vec3::new(x + sway, top, z)) {
+                let (hw, hh) = (0.17 * k, 0.21 * k);
+                let col = colors[(i + (o.seed as usize)) % colors.len()];
+                c.rect(fx, fy + hh, hw, hh, 0.01 * k, col);
+                // Los recortes: tres agujeritos y la orilla en piquitos.
+                for j in 0..3 {
+                    let (hx, hy) = (fx + (j as f32 - 1.0) * 0.09 * k, fy + hh * (0.8 + 0.25 * (j % 2) as f32));
+                    c.disc(hx, hy, 0.025 * k, col * 0.35).alpha(0.8);
+                }
+                c.rect(fx, fy + 2.0 * hh, hw * 0.9, 0.012 * k, 0.006 * k, col * 0.6);
+            }
+            x += 0.44;
+            i += 1;
+        }
     }
 
     /// Los cucuruchos que persiguen: tunica morada, cordon blanco y el
@@ -1674,7 +2078,10 @@ impl Minigame for CamionetaSurfers {
         // Las cajas de lo que hay en la calle y donde caen en la pantalla.
         let mut boxes = Vec::new();
         for (index, o) in self.obstacles.iter().enumerate() {
-            if !o.solid() {
+            // Con la flota, las camionetas y los tuk-tuks son sprites; las
+            // carretas y el papel picado van siempre como figuras.
+            let boxed = matches!(o.thing, Thing::Parked | Thing::Bus | Thing::TukTuk) && self.fleet.is_none();
+            if !boxed {
                 continue;
             }
             let (min, max) = o.bounds();
@@ -1707,22 +2114,91 @@ impl Minigame for CamionetaSurfers {
             _ => None,
         };
         let light = 1.0 - 0.45 * ash;
+        // La flota: cada camioneta o tuk-tuk con el sprite del angulo con que
+        // la ve la camara, su mip y sus colores; las que ya quedaron atras
+        // del patojo se pintan despues de el.
+        let mut rides: Vec<(Ride, bool)> = Vec::new();
+        if let Some(fleet) = &self.fleet {
+            for o in &self.obstacles {
+                let (set, len) = match o.thing {
+                    Thing::Parked => (&fleet.bus_back, fleet.bus.z),
+                    Thing::Bus => (&fleet.bus_front, fleet.bus.z),
+                    Thing::TukTuk => (&fleet.tuk_back, fleet.tuk.z),
+                    _ => continue,
+                };
+                let (min, max) = o.bounds();
+                let x = (min.x + max.x) * 0.5;
+                let center = o.z + o.len * 0.5;
+                let Some((sx, sy, k, d)) = cam.project(Vec3::new(x, 0.0, center)) else { continue };
+                if d > AHEAD + 30.0 || o.z + o.len < cam.pos.z + 0.5 {
+                    continue;
+                }
+                let view = -((x - cam.pos.x) / d).atan();
+                let Some(sprite) = set.get(Fleet::yaw_index(view)) else { continue };
+                let scale = k / sprite.scale;
+                let lod = ((1.0 / scale).log2() - 0.5).max(0.0);
+                let near = (d - len * 0.5).max(0.3);
+                let paint = if o.thing == Thing::TukTuk { 0 } else { (o.seed % 3) as u8 };
+                let ride = Ride { sprite, pick: sprite.pick(lod), at: (sx, sy), scale, depth: near, paint, fog: 1.0 - (-d / 110.0).exp() };
+                let behind = o.z + o.len > r.z;
+                rides.push((ride, behind));
+            }
+        }
+        rides.sort_by(|a, b| b.0.depth.total_cmp(&a.0.depth));
+        let (back_rides, front_rides): (Vec<Ride>, Vec<Ride>) = {
+            let (b, f): (Vec<_>, Vec<_>) = rides.into_iter().partition(|r| r.1);
+            (b.into_iter().map(|r| r.0).collect(), f.into_iter().map(|r| r.0).collect())
+        };
+        // Las LEDs de las camionetas: la persecucion de feria y la
+        // respiracion (como en la carrera).
+        let wall = self.wall;
+        let lut: Lut = std::array::from_fn(|b| {
+            let f = (b & 63) as f32;
+            match b >> 6 {
+                0 => 1.0,
+                1 => 0.5 + 0.5 * smoothstep(0.55, 1.0, 0.5 + 0.5 * (TAU * (f / 64.0 * 4.0 - wall * 1.6)).sin()),
+                2 => 0.7 + 0.3 * (wall * 2.1 + f * 0.1).sin(),
+                _ => 0.6,
+            }
+        });
+        let haze = self.sky(0.5 * width as f32, cam.horizon - 2.0, ash);
         let dim = if self.screen == Screen::Running { 1.0 } else { 0.55 };
+        let (w, h) = (width as f32, self.height as f32);
         let this = &*self;
         parallel::chunks_mut(rgba, width * 4, 1, |y, row| {
+            let yf = y as f32 + 0.5;
             let mut depth = vec![f32::MAX; width];
             this.row(y, row, &mut depth, &cam, &boxes, ash);
-            paint(&figures.shapes, y as f32 + 0.5, row, width, Some(&depth));
-            if let Some((sprite, at, scale, d)) = runner {
-                blit(sprite, at, scale, d, light, y as f32 + 0.5, row, &depth, width);
-            }
-            paint(&front.shapes, y as f32 + 0.5, row, width, Some(&depth));
-            if dim < 1.0 {
-                for p in row.chunks_exact_mut(4) {
-                    for k in 0..3 {
-                        p[k] = (p[k] as f32 * dim) as u8;
-                    }
+            // Lo de atras (lenes, bombas, carretas, papel picado) y las naves,
+            // de lejos a cerca.
+            let mut vi = 0;
+            for (si, shape) in figures.shapes.iter().enumerate() {
+                while vi < back_rides.len() && back_rides[vi].depth >= shape.depth {
+                    ride(&back_rides[vi], &lut, light, haze, yf, row, &depth, width);
+                    vi += 1;
                 }
+                paint(&figures.shapes[si..si + 1], yf, row, width, Some(&depth));
+            }
+            for v in &back_rides[vi..] {
+                ride(v, &lut, light, haze, yf, row, &depth, width);
+            }
+            if let Some((sprite, at, scale, d)) = runner {
+                blit(sprite, at, scale, d, light, yf, row, &depth, width);
+            }
+            for v in &front_rides {
+                ride(v, &lut, light, haze, yf, row, &depth, width);
+            }
+            paint(&front.shapes, yf, row, width, Some(&depth));
+            // El acabado: vineta y un poco de gradacion (sombras al indigo,
+            // altas calidas).
+            let vy = (yf / h - 0.5) * 1.1;
+            for (x, p) in row.chunks_exact_mut(4).enumerate() {
+                let vx = (x as f32 + 0.5) / w - 0.5;
+                let v = 1.0 - 0.38 * smoothstep(0.35, 0.85, vx.hypot(vy));
+                let c = lienzo::read(p);
+                let l = c.luminance();
+                let graded = c + Vec3::new(-0.01, -0.005, 0.025) * (1.0 - l) + Vec3::new(0.03, 0.012, -0.02) * l;
+                lienzo::write(p, graded * (v * dim));
             }
         });
     }

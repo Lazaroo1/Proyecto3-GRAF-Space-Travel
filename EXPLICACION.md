@@ -860,31 +860,53 @@ corre en pasos de 10 ms, así a toda velocidad nada se atraviesa.
 (a 5.6 m detrás y 3.1 m arriba), así el rayo de cada pixel es `(rx, −ry, 1)`
 y `t` es directamente la profundidad. Cada rayo se prueba contra:
 
-- **El suelo** (`t = alto / ry`): el empedrado son piedras redondeadas en
-  hileras corridas (una caja redondeada por celda, con su tono al azar) y
-  de lejos, cuando un pixel ya mide varias piedras, se promedia; las
-  banquetas, las alfombras (orilla, rombos y flores de aserrín, y un manchón
-  si se pisaron) y las sombras de las bombas.
+- **El suelo** (`t = alto / ry`; toda una fila del suelo está a la misma
+  distancia, así que lo que cae en ella se busca una vez por fila): el
+  empedrado son piedras redondeadas en hileras corridas, cada una con su
+  tono, su relieve (cerca de la orilla la normal se inclina hacia afuera y
+  la piedra brilla del lado que da a la luz) y algunas brillosas, con la
+  mezcla oscura entre ellas y la canaleta de losas al centro; de lejos,
+  cuando un pixel ya mide varias piedras, se promedia. Las banquetas de
+  losas con su bordillo, las alfombras (orilla, rombos y flores de aserrín, y
+  un manchón si se pisaron), la sombra de contacto de lo que hay en la
+  calle, el charco de luz del farol más cercano y las sombras de las bombas.
 - **Las fachadas** (planos `x = ±4.4 m`, `t = (±4.4 − x) / rx`), con la altura
-  de cada casa: el color de la casa, el zócalo, la puerta de tableros, las
-  ventanas con reja (algunas encendidas), el farol con su luz en la pared y
-  el alero de teja.
-- **El Arco de Santa Catalina**, cada 420 m: un muro amarillo con su arco,
-  las molduras blancas, la hilera de ventanitas, el reloj y la cúpula.
-- **Las cajas** de lo que hay en la calle, con la prueba de las placas: el
-  rayo entra a la caja por la última placa que cruza y sale por la primera;
-  la placa por la que entra dice la cara (la de atrás, el techo o el lado).
-  Cada cara se pinta según qué es: la camioneta parada de espaldas con su
-  ventana, sus calaveras y la escalera; la que viene con su parabrisas, el
-  letrero, los focos y la parrilla del radiador; el techo con la parrilla y
-  los bultos; los lados con ventanas y llantas; el tuk-tuk, la carreta con su
-  helado pintado y el papel picado (con sus recortes, por donde se ve lo de
-  atrás). Solo se prueban las cajas que caen en la fila.
+  de cada casa: el repello de su color con manchas de humedad que bajan del
+  alero, el zócalo de otro color, las pilastras de las esquinas, la cornisa y
+  el alero de teja en hileras con su sombra, el zaguán de tablones con
+  clavos, arco de medio punto y marco de piedra, las ventanas con marco,
+  reja con puntas de lanza y la luz de adentro o las contraventanas de
+  tablillas cerradas, las macetas con flores en el alféizar y el farol de
+  hierro con su luz en la pared; con sombra al pie.
+- **El Arco de Santa Catalina**, cada 420 m, con su grueso (3 m): el muro
+  amarillo de enfrente con su arcada, pilastras y cornisas blancas y la
+  hilera de ventanitas en arco del pasillo de arriba; la torre del reloj
+  atrás, con su techo y su cruz; y por dentro del arco, sus costados y la
+  bóveda (el rayo contra el cilindro `x² + (y − 4.2)² = R²`, entre la cara de
+  enfrente y la de atrás), en sombra.
+- Sin los modelos de las naves, las camionetas y los tuk-tuks son **cajas**
+  con la prueba de las placas: el rayo entra a la caja por la última placa
+  que cruza y sale por la primera, y la placa por la que entra dice la cara.
+
+**Las naves** ([minijuegos/flota.rs](src/minijuegos/flota.rs)) son los
+mismos modelos de Blender con que se vuela: La Mamaneta (paradas de
+espaldas y viniendo de frente) y el Tuk-Tuk Elena, horneados una vez desde
+siete rumbos (de −30° a 30°); cada una usa el del ángulo con que la ve la
+cámara, `−atan(dx / dz)`, con su mip, y se pega con alfa premultiplicado y
+las LEDs encima (la persecución de feria y la respiración de la carrera).
+Las tres pinturas de las camionetas salen al pegarlas, permutando los
+canales del color: un solo horneado da tres. Se pintan de lejos a cerca
+entre los lenes y las bombas, y las que ya quedaron atrás del patojo,
+después de él. Las carretas de helados (cajón con franjas y helado pintado,
+llantas, sombrilla de gajos y campanitas) y el lazo de papel picado (el hilo
+combado y los papelitos con sus recortes, meciéndose) son figuras con su
+profundidad.
 - **El cielo** del atardecer: el Volcán de Agua al fondo (justo detrás del
   Arco), el Fuego a la derecha con el cráter encendido y su penacho de
   ceniza que el viento ladea, y la ceniza que poco a poco tapa todo.
 
-Lo lejano se funde con la neblina (`1 − e^(−t/110)`). Encima, cada pixel
+Lo lejano se funde con la neblina (`1 − e^(−t/110)`) y al final va una
+viñeta y una gradación (sombras al índigo, altas cálidas). Encima, cada pixel
 con su profundidad (`figuras.rs`, que ahora comparten con los shucos) van las
 monedas que giran, las bombas que caen con su estela, la lava, el polvo y
 las chispas, Meyer de espaldas y los cucuruchos, de túnica morada y
