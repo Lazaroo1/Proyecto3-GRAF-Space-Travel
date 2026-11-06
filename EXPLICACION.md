@@ -391,8 +391,9 @@ gran llamarada.
 # Los minijuegos
 
 Cada planeta va a tener su minijuego ([minijuegos/](src/minijuegos)). Por
-ahora están el de la Luna de Xelajú, **la marimba de la Luna**, y el de la
-capital, **la carrera del Periférico**.
+ahora están el de la Luna de Xelajú, **la marimba de la Luna**, y los dos de
+la capital: **la carrera del Periférico** (en su anillo) y **los shucos del
+Reformador** (en el suelo).
 
 ## El marco común ([minijuegos/mod.rs](src/minijuegos/mod.rs))
 
@@ -758,6 +759,73 @@ las curvas.
   emite.
 - Las chimeneas y el escape salen de la malla; el tuk-tuk se ladea hacia
   afuera; un choque suelta chispas una sola vez; el humo sube, crece y se va.
+
+## Shucos del Reformador ([minijuegos/shucos.rs](src/minijuegos/shucos.rs))
+
+**El juego.** Una noche de 150 s (de las 19:00 a las 03:00) en una carretilla
+al pie de la torre. Hay cuatro lugares en el mostrador y los clientes llegan
+cada 7 s, o cada 3.4 s en las horas pico: la salida de la U (21:00-22:00, casi
+todos estudiantes) y la del estadio (22:30-23:30, aficionados). Después de la
+una salen los bolos. Cada cliente trae su pedido y su paciencia (32 s, menos
+el agente de la PMT y más el bolo); la barrita del globito se vacía y, si
+llega a cero, se va enojado.
+
+- **El shuco** se arma por partes. **1** pone el pan en la tabla. Cada carne
+  tiene su lugar en la plancha: su tecla la pone a cocinar y, la segunda
+  vez, la pasa al pan. Cada carne tiene su tiempo para quedar lista y para
+  quemarse (la salchicha 3.5 y 9.5 s, el chorizo 5.5 y 12 s); la barrita bajo
+  la carne lo dice. Lo de encima suma una porción por tecla.
+- **El pedido** se revisa al entregarlo: las carnes exactas, ni crudas ni
+  quemadas, lo que se pidió (y «bastante» son dos porciones), nada de lo que
+  dijo que no, y nada de más si no lo pidió «con todo». Si algo falla te lo
+  devuelve diciendo qué («¡Te dije sin cebolla!», «¡El chorizo está
+  crudo!») y el shuco se queda en la tabla para arreglarlo.
+- **La plata**: el pan cuesta Q1 y cada carne Q3; el shuco se paga por sus
+  carnes (el mixto con descuento) más hasta Q5 de propina, según cuánta
+  paciencia le quedaba. Lo ganado va a los ahorros (`minijuegos.txt`), con los
+  que se compran mejoras: la plancha de hierro (cocina 35 % más rápido), el
+  toldo (la gente aguanta 25 % más) y el ayudante (pone el pan solo).
+
+**El dibujo.** Todo en CPU, con figuras de distancia con signo: cajas
+redondeadas, discos, segmentos (cápsulas) y arcos. La cobertura de cada pixel
+sale de la distancia al borde (`lienzo::cover`), así los bordes quedan
+suaves sin muestrear de más, y algunas figuras llevan resplandor
+(`exp(−d / alcance)` afuera). El fondo se hornea una vez al abrir (5 ms): el
+cielo, los edificios con ventanas al azar, la Torre del Reformador (dos
+patas de celosía que suben juntándose con la curva `x = 0.11 w (1 − t)^1.6`,
+sus cruces, plataformas, el arco y el faro rojo), la 7a Avenida con el paso
+de cebra, los postes de sodio, el toldo de faja y el mostrador de acero
+cepillado con la canasta, la plancha, la tabla, los tazones y los botes.
+Cada frame se copia el fondo y, por filas en paralelo, se pintan encima los
+clientes (arriba del mostrador), las carnes y el shuco (abajo) y el vapor,
+el humo y las monedas (en todas). Un frame cuesta de 1 a 2.5 ms.
+
+- **Los clientes** son figuras armadas: el cuerpo, los brazos con las manos
+  en el mostrador, el pelo como un disco detrás de la cabeza (se ve su
+  orilla) y la cara con ojos y boca (un arco: sonrisa abajo, enojo arriba).
+  Cada uno con lo suyo: la mochila y los lentes del estudiante, la gorra y
+  el chaleco del agente, el chongo, los aretes y el delantal de la señora, la
+  camisola roja, la bufanda y la gorra al revés del aficionado, y la nariz
+  roja, el pelo alborotado, la botella y el bamboleo del bolo.
+- **Las carnes** cambian de color con la cocción (de cruda a dorada hasta
+  estar lista y de ahí a negra), se les marcan las rayas de la parrilla y
+  chisporrotean. Lo que se quema echa humo.
+- **El shuco** se dibuja por capas como uno de verdad: el pan abierto, las
+  carnes, el guacamol, el repollo en tiritas, la cebolla en cuadritos y las
+  salsas en zigzag, una línea por porción.
+
+**El sonido**: la plancha chirría (ruido con chasquidos sueltos, más fuerte
+con más carnes y con lo quemado), el tráfico de la avenida suena lejos y de
+vez en cuando pita una camioneta; hay campanita cuando llega alguien,
+moneda al cobrar, zumbido cuando te lo devuelven, y la marimba (el mismo
+instrumento de la marimba de la Luna) toca un arpegio con cada entrega buena.
+
+**Pruebas**: los pedidos aceptan lo bien hecho y rechazan con su queja lo
+crudo, lo quemado, la cebolla prohibida, el guacamol que no es bastante y lo
+que no se pidió; las carnes se cocinan y se queman; una noche entera con el
+piloto automático vende al menos 14 sin devoluciones y gana plata; las
+mejoras cuestan ahorros; y cada pantalla se dibuja sin huecos con texto que
+la fuente carga.
 
 # Cambios de la sexta revisión
 

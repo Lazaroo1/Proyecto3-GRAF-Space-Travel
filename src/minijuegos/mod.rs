@@ -12,6 +12,7 @@
 //! | --- | --- | --- |
 //! | Luna de Xelaju | chapina | La marimba de la Luna ([marimba.rs]) |
 //! | La capital | chapina | La carrera del Periferico ([carrera.rs]) |
+//! | La capital (en el suelo) | chapina | Shucos del Reformador ([shucos.rs]) |
 //!
 //! Cada minijuego cumple `Minigame`: recibe las teclas del frame, llena su
 //! propio audio (un stream aparte con bloques chicos, para que el golpe
@@ -25,6 +26,7 @@ pub mod hornear;
 pub mod lienzo;
 pub mod marimba;
 pub mod posproceso;
+pub mod shucos;
 
 use std::path::PathBuf;
 
@@ -51,6 +53,32 @@ pub struct Keys {
     pub brake: bool,
     pub boost: bool,
     pub horn: bool,
+    /// Las letras y los numeros apretados en este frame (un bit por tecla,
+    /// ver `typed`).
+    pub typed: u64,
+}
+
+impl Keys {
+    /// Si se apreto la letra o el numero `c` en este frame.
+    pub fn typed(&self, c: char) -> bool {
+        key_bit(c).is_some_and(|b| self.typed & (1 << b) != 0)
+    }
+
+    /// Marca `c` como apretada (el piloto automatico y las pruebas).
+    pub fn press(&mut self, c: char) {
+        if let Some(b) = key_bit(c) {
+            self.typed |= 1 << b;
+        }
+    }
+}
+
+/// El bit de una letra (0 a 25) o un numero (26 a 35).
+fn key_bit(c: char) -> Option<u32> {
+    match c.to_ascii_lowercase() {
+        l @ 'a'..='z' => Some(l as u32 - 'a' as u32),
+        d @ '0'..='9' => Some(26 + d as u32 - '0' as u32),
+        _ => None,
+    }
 }
 
 /// Un minijuego abierto.
@@ -73,6 +101,7 @@ pub trait Minigame {
 pub enum Kind {
     Marimba,
     Carrera,
+    Shucos,
 }
 
 impl Kind {
@@ -81,6 +110,7 @@ impl Kind {
         match self {
             Kind::Marimba => "Enter · tocar la marimba de la Luna",
             Kind::Carrera => "Enter · correr en el Periférico",
+            Kind::Shucos => "Enter · vender shucos al pie del Reformador",
         }
     }
 }
@@ -100,6 +130,8 @@ pub fn available(app: &App) -> Option<Kind> {
     let near = |name: &str, height: f64| app.system.find(name).is_some_and(|i| app.flight.nearest == i && app.flight.altitude < height);
     if near("Xela", NEAR) {
         Some(Kind::Marimba)
+    } else if near("Cementerio", NEAR) {
+        Some(Kind::Shucos)
     } else if near("Cementerio", RING) {
         Some(Kind::Carrera)
     } else {
@@ -115,6 +147,7 @@ pub fn start(kind: Kind, app: &App) -> Box<dyn Minigame> {
     match kind {
         Kind::Marimba => Box::new(marimba::MarimbaTiles::new(app.renderer.rgba(), width, height, records)),
         Kind::Carrera => Box::new(race(app, records)),
+        Kind::Shucos => Box::new(shucos::Shucos::new(width, height, records)),
     }
 }
 
@@ -315,6 +348,25 @@ mod tests {
         app.toggle_version();
         app.update(1.0 / 60.0, &FrameInput::default());
         assert_eq!(available(&app), None, "en OCASO la luna no existe");
+    }
+
+    /// En El Reformador (en el suelo de la capital) se ofrecen los shucos; de
+    /// lejos, la carrera.
+    #[test]
+    fn the_shucos_are_offered_at_the_reformador_and_the_race_from_afar() {
+        let mut app = App::new(64, 36).unwrap();
+        let chapin = PRESETS.iter().find(|p| p.name == "40_chapin").unwrap();
+        app.apply_preset(chapin);
+        let at = app.system.sites.iter().position(|s| s.name == "El Reformador").expect("el lugar del Reformador");
+        for _ in 0..=at {
+            app.visit_next_site();
+        }
+        app.update(1.0 / 60.0, &FrameInput::default());
+        assert_eq!(available(&app), Some(Kind::Shucos));
+        let capital = PRESETS.iter().find(|p| p.name == "51_capital").unwrap();
+        app.apply_preset(capital);
+        app.update(1.0 / 60.0, &FrameInput::default());
+        assert_eq!(available(&app), Some(Kind::Carrera));
     }
 
     /// La carrera con las naves de verdad: cuanto cuesta cada cosa a 1280 x
