@@ -26,6 +26,7 @@ pub mod carrera;
 pub mod ciudad;
 pub mod escenario;
 pub mod figuras;
+pub mod flota;
 pub mod hornear;
 pub mod lienzo;
 pub mod marimba;
