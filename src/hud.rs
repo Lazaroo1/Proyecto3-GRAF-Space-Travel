@@ -176,6 +176,7 @@ fn pretty(name: &str) -> &str {
         "San Andres Xecul" => "San Andrés Xecul",
         "Jagermeister" => "Jägermeister",
         "Gargantua" => "Gargantúa",
+        "El Periferico" => "El Periférico",
         other => other,
     }
 }

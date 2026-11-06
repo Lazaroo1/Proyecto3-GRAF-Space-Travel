@@ -48,7 +48,7 @@ enum Mode {
     RaceCapture(PathBuf),
     /// Fotos de los shucos del Reformador, sin ventana.
     ShucosCapture(PathBuf),
-    /// Fotos de la Camioneta Surfers, sin ventana.
+    /// Fotos de Talega Surfers, sin ventana.
     SurfersCapture(PathBuf),
 }
 
@@ -78,13 +78,13 @@ uso: ocaso [opciones]
   --marimba             arranca en la Luna de Xelaju con la marimba abierta
   --carrera             arranca en la capital con la carrera del Periferico abierta
   --shucos              arranca en El Reformador con la carretilla de shucos abierta
-  --surfers             arranca en Antigua con la Camioneta Surfers abierta
+  --surfers             arranca en Antigua con Talega Surfers abierta
   --nave N              la nave de la version chapina (1-6 botellas, 7 tuk-tuk,
                         8 camioneta, 9 colectivo)
   --captura-marimba DIR guarda fotos del minijuego de la marimba sin ventana
   --captura-carrera DIR guarda fotos de la carrera del Periferico sin ventana
   --captura-shucos DIR  guarda fotos de los shucos del Reformador sin ventana
-  --captura-surfers DIR guarda fotos de la Camioneta Surfers sin ventana
+  --captura-surfers DIR guarda fotos de Talega Surfers sin ventana
   --bench FRAMES        mide cada vista fija FRAMES veces sin abrir ventana
   --wire                empieza con el wireframe encendido (F3)
   --lod                 empieza con los colores de LOD encendidos (F4)
@@ -711,17 +711,17 @@ fn run_shucos_capture(options: &Options, dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Fotos de la Camioneta Surfers: el menu, la corrida con el piloto
+/// Fotos de Talega Surfers: el menu, la corrida con el piloto
 /// automatico (al salir, con las camionetas, con la ceniza y las bombas) y
 /// el final. Solo lo que dibuja la CPU.
 fn run_surfers_capture(options: &Options, dir: &Path) -> Result<(), String> {
     use minijuegos::Minigame;
-    use minijuegos::surfers::CamionetaSurfers;
+    use minijuegos::surfers::TalegaSurfers;
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let (w, h) = (options.width, options.height);
-    let mut game = CamionetaSurfers::new(w, h, minijuegos::Records::in_memory());
+    let mut game = TalegaSurfers::new(w, h, minijuegos::Records::in_memory());
     let mut frame = vec![0u8; w * h * 4];
-    let mut save = |game: &mut CamionetaSurfers, name: &str| -> Result<(), String> {
+    let mut save = |game: &mut TalegaSurfers, name: &str| -> Result<(), String> {
         let mut times: Vec<f64> = (0..9)
             .map(|_| {
                 let start = std::time::Instant::now();

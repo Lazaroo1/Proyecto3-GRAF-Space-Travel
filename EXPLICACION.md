@@ -393,7 +393,7 @@ gran llamarada.
 Cada planeta va a tener su minijuego ([minijuegos/](src/minijuegos)). Por
 ahora están el de la Luna de Xelajú, **la marimba de la Luna**; los dos de
 la capital, **la carrera del Periférico** (en su anillo) y **los shucos del
-Reformador** (en el suelo); y el de Antigua, **la Camioneta Surfers**.
+Reformador** (en el suelo); y el de Antigua, **Talega Surfers**.
 
 ## El marco común ([minijuegos/mod.rs](src/minijuegos/mod.rs))
 
@@ -769,7 +769,7 @@ todos estudiantes) y la del estadio (22:30-23:30, aficionados). Después de la
 una salen los bolos. Cada cliente trae su pedido y su paciencia (32 s, menos
 el agente de la PMT y más el bolo); la barrita del globito se vacía y, si
 llega a cero, se va enojado. **Don Meyer**, el personaje de Blender de la
-Camioneta Surfers, llega cada noche en el primer turno libre después de las
+Talega Surfers, llega cada noche en el primer turno libre después de las
 20:15 (y a veces vuelve, nunca dos a la vez) a pedir su mixto de longaniza
 y chorizo «con todo y bastante guacamol», o uno de salchicha «sin cebolla y
 doble mostaza».
@@ -891,7 +891,7 @@ avenida tiene tráfico y pasan camionetas; las elipses miden bien y los
 gradientes de cada forma apuntan hacia afuera; y una figura con volumen es
 más clara del lado de la luz y guarda su emisión.
 
-## Camioneta Surfers ([minijuegos/surfers.rs](src/minijuegos/surfers.rs))
+## Talega Surfers ([minijuegos/surfers.rs](src/minijuegos/surfers.rs))
 
 **El juego.** Un corredor sin fin por la calle del Arco, en tres carriles de
 2.2 m. La velocidad sube de 12 a 24 m/s (`v = 12 + 0.11 t`). El patojo salta
@@ -905,10 +905,20 @@ corre en pasos de 10 ms, así a toda velocidad nada se atraviesa.
   helados, tuk-tuks parados, o un respiro con lenes en zigzag. Las alfombras
   que no caen en carriles seguidos se parten en dos (la caja va del primer
   carril al último).
-- **Las camionetas paradas** se suben por la escalera de atrás: si se llega
-  a la cola desde atrás y en su carril, el patojo sube en 0.25 s y corre en
-  la parrilla (a 3 m) hasta que se acaba la camioneta. Las que vienen de
-  frente (a 7 m/s) también tienen techo, pero desde el suelo no perdonan.
+- **Las camionetas van en fila, derechas en su carril**: las paradas, de 2
+  a 4 pegadas (0.5 m entre una y otra), y casi siempre con una **rampa de
+  tablones** adelante (5 m que suben del suelo al techo, a 3.2 m). En la
+  rampa, el suelo del patojo es `h = 3.2 (z − z0) / 5` y lo sigue al correr;
+  el techo de cada camioneta se extiende sobre el hueco con la que sigue, así
+  se corre de corrido por toda la fila. Sin rampa, una parada choca (y
+  meterse de lado a media rampa, también). Las que vienen de frente (a
+  7 m/s) van de dos en dos y también tienen techo. Cada carril recuerda hasta
+  dónde llega su fila, y lo que se genera después ahí empieza más adelante:
+  no se encima nada. Al agacharse, Meyer se pone en cuclillas (otro cuadro
+  horneado: las rodillas dobladas y el cuerpo inclinado hacia adelante).
+- **El piloto automático** (las fotos y las pruebas) sabe que una fila se
+  sube por su rampa si todavía la tiene adelante, que por los techos se sigue
+  y que no hay que meterse de lado a media rampa: corre más de 3 km.
 - **Choques**: cajas contra la caja del patojo (1.7 m de alto, 0.8 rodando).
   La carreta (1.1 m) se pasa saltando; el lazo (de 1.05 a 1.65 m), rodando.
 - **Las alfombras**: pisarla en el suelo suelta a los cucuruchos por 7 s;
@@ -920,8 +930,27 @@ corre en pasos de 10 ms, así a toda velocidad nada se atraviesa.
   salpica lava y ceniza.
 
 **El dibujo**, todo en CPU, por filas en paralelo. La cámara mira de frente
-(a 5.6 m detrás y 3.1 m arriba, y sube y baja un poco con los pasos), así el
-rayo de cada pixel es `(rx, −ry, 1)` y `t` es directamente la profundidad.
+(a 6 m detrás y 4.2 m arriba, para que se vean los techos; sube cuando se va
+por ellos y un poco con los pasos), así el rayo de cada pixel es `(rx, −ry, 1)`
+y `t` es directamente la profundidad.
+
+**Las camionetas** son La Mamaneta horneada derecha (de espaldas o de frente)
+desde cuatro alturas de vista, de casi de lado a casi desde arriba
+(0.14, 0.32, 0.55 y 0.85 rad); cada una usa la más cercana a
+`atan((alto de la cámara − 1.6) / distancia)`, así de cerca y desde los
+techos se ve su techo. **La rampa** es de figuras proyectadas: su sombra en el
+empedrado (cada punto alto cae `h / L.y` corrido contra el sol), los
+caballetes, los largueros pintados de turquesa con su grueso, doce tablones
+con rendijas, veta y clavos (cada uno de su tono), la placa del pie con
+franjas amarillas y negras y el canto de metal de arriba, con la luz del cielo
+y la del sol según hacia dónde mira cada cara.
+
+**La bienvenida**: Meyer horneado de frente y saludando, del 80 % del alto de
+la pantalla, con una luz cálida detrás, encima de la calle oscurecida. **H**
+toca el claxon de don Meyer: `assets/sonidos/claxon_meyer.wav` si está (un
+lector de WAV propio, de 8, 16, 24 o 32 bits o flotante, que mezcla a mono y
+remuestrea, [sonido.rs](src/minijuegos/sonido.rs)), y si no, una corneta
+sintetizada.
 
 **La luz de la tarde.** El sol está bajo, a la derecha y un poco atrás
 (`L = (0.7, 0.66, −0.27)`); cada superficie se pinta con su color por la luz
