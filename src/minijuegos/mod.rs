@@ -20,6 +20,7 @@
 
 pub mod carrera;
 pub mod ciudad;
+pub mod escenario;
 pub mod hornear;
 pub mod lienzo;
 pub mod marimba;

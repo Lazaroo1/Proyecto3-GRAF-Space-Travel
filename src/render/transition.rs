@@ -23,11 +23,11 @@ const BAND: f32 = 0.26;
 /// Cuadros de motivos alrededor de la franja.
 const CELLS: f32 = 20.0;
 /// Cuanto de la franja ocupa cada orilla de picos.
-const EDGE: f32 = 0.17;
+pub(crate) const EDGE: f32 = 0.17;
 
-const HUIPIL_RED: Vec3 = Vec3::new(0.6, 0.04, 0.07);
-const YELLOW: Vec3 = Vec3::new(0.98, 0.76, 0.1);
-const GREEN: Vec3 = Vec3::new(0.05, 0.55, 0.25);
+pub(crate) const HUIPIL_RED: Vec3 = Vec3::new(0.6, 0.04, 0.07);
+pub(crate) const YELLOW: Vec3 = Vec3::new(0.98, 0.76, 0.1);
+pub(crate) const GREEN: Vec3 = Vec3::new(0.05, 0.55, 0.25);
 const QUETZAL: Vec3 = Vec3::new(0.1, 0.75, 0.35);
 const BREAST: Vec3 = Vec3::new(0.95, 0.15, 0.1);
 const BLUE: Vec3 = Vec3::new(0.12, 0.32, 0.8);
@@ -86,7 +86,7 @@ pub fn blend(rgba: &mut [u8], from: &[u8], width: usize, height: usize, progress
 }
 
 /// La faja: `along` da la vuelta (0 a 1) y `v` cruza la franja (0 a 1).
-fn sash(along: f32, v: f32, soft: f32) -> Vec3 {
+pub(crate) fn sash(along: f32, v: f32, soft: f32) -> Vec3 {
     if v < EDGE || v > 1.0 - EDGE {
         // Las orillas: picos que se alternan amarillo y verde sobre rojo.
         let t = if v < EDGE { v / EDGE } else { (1.0 - v) / EDGE };
@@ -116,7 +116,7 @@ fn sash(along: f32, v: f32, soft: f32) -> Vec3 {
 /// Uno de los motivos de la faja en las coordenadas de su cuadro (`x` y `y`
 /// de -0.5 a 0.5, `y` hacia arriba) sobre `c`: 0 el quetzal, 1 el volcan, 2
 /// la mazorca, 3 el barrilete y 4 la greca. `soft` es lo que mide un pixel.
-/// Tambien los usan las vallas de la carrera del Periferico.
+/// Tambien los usan los barriletes de la carrera del Periferico.
 pub(crate) fn motif(index: usize, c: &mut Vec3, x: f32, y: f32, soft: f32) {
     match index % 5 {
         0 => quetzal(c, x, y, soft),
