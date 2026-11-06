@@ -678,10 +678,18 @@ fn run_shucos_capture(options: &Options, dir: &Path) -> Result<(), String> {
     game.set_autopilot(true);
     let dt = 1.0 / 60.0;
     let mut elapsed = 0.0;
-    for (at, name) in [(7.0, "shucos_2_abriendo"), (46.0, "shucos_3_salida_de_la_u"), (76.0, "shucos_4_salida_del_estadio"), (128.0, "shucos_5_bolos")] {
-        while elapsed < at {
+    for (at, name) in [(7.0, "shucos_2_abriendo"), (0.0, "shucos_3_don_meyer"), (46.0, "shucos_4_salida_de_la_u"), (76.0, "shucos_5_salida_del_estadio"), (128.0, "shucos_6_bolos")] {
+        // Don Meyer: hasta que este esperando (llega a eso de las 8 y cuarto).
+        let wait_meyer = at == 0.0;
+        while (wait_meyer && !game.meyer_waiting() && elapsed < 90.0) || (!wait_meyer && elapsed < at) {
             game.update(dt, &minijuegos::Keys::default());
             elapsed += dt;
+        }
+        if wait_meyer {
+            for _ in 0..30 {
+                game.update(dt, &minijuegos::Keys::default());
+                elapsed += dt;
+            }
         }
         save(&mut game, name)?;
     }
@@ -689,7 +697,7 @@ fn run_shucos_capture(options: &Options, dir: &Path) -> Result<(), String> {
         game.update(dt, &minijuegos::Keys::default());
         elapsed += dt;
     }
-    save(&mut game, "shucos_6_resultados")?;
+    save(&mut game, "shucos_7_resultados")?;
     let (sold, returned, angry, money) = game.tally();
     println!("vendidos {sold}, devueltos {returned}, enojados {angry}, ganancia Q{money}");
     Ok(())
