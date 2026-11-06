@@ -2543,6 +2543,11 @@ impl Shucos {
 }
 
 impl Minigame for Shucos {
+    fn demo_start(&mut self) {
+        self.open();
+        self.set_autopilot(true);
+    }
+
     fn update(&mut self, dt: f64, keys: &Keys) {
         let dt = (dt as f32).min(0.1);
         self.wall += dt;

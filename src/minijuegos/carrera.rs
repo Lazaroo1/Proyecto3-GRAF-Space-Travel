@@ -1650,6 +1650,11 @@ fn ordinal(n: usize) -> String {
 }
 
 impl Minigame for Carrera {
+    fn demo_start(&mut self) {
+        self.set_autopilot(true);
+        self.start();
+    }
+
     fn update(&mut self, dt: f64, keys: &Keys) {
         let dt = (dt as f32).min(0.1);
         self.wall += dt;

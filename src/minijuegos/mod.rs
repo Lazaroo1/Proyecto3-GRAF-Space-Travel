@@ -101,6 +101,13 @@ pub trait Minigame {
     fn overlay(&self) -> Overlay;
     /// Si quien juega ya salio (Esc en el menu).
     fn done(&self) -> bool;
+    /// Para el video de muestra: empieza a jugarse solo, con su piloto.
+    fn demo_start(&mut self) {}
+    /// Las teclas del piloto en este frame (los que tienen piloto propio no
+    /// las necesitan).
+    fn demo_input(&mut self, _dt: f64) -> Keys {
+        Keys::default()
+    }
 }
 
 /// Los minijuegos que hay.

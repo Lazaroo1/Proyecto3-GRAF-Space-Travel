@@ -14,6 +14,7 @@ mod marimba;
 #[allow(dead_code)]
 mod math;
 mod minijuegos;
+mod muestra;
 mod parallel;
 mod player;
 mod render;
@@ -69,6 +70,8 @@ struct Options {
     ship: Option<usize>,
     /// Empezar (o grabar el recorrido) en la version chapina.
     chapina: bool,
+    /// Grabar el video de muestra (la ventana manejada por un guion).
+    reel: Option<PathBuf>,
 }
 
 const USAGE: &str = "\
@@ -78,6 +81,8 @@ uso: ocaso [opciones]
   --vista NOMBRE       inicia o captura solo la vista elegida
   --recorrido MP4      graba vuelo, acercamiento, vuelta y alejamiento (ffmpeg)
   --chapina             empieza (o graba el recorrido) en la version chapina
+  --muestra MP4         graba la ventana con un guion: cada lugar con N en las
+                        dos versiones y los minijuegos jugandose solos (ffmpeg)
   --marimba             arranca en la Luna de Xelaju con la marimba abierta
   --carrera             arranca en la capital con la carrera del Periferico abierta
   --shucos              arranca en El Reformador con la carretilla de shucos abierta
@@ -108,6 +113,7 @@ fn parse_args() -> Result<Options, String> {
         surfers: false,
         ship: None,
         chapina: false,
+        reel: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -126,6 +132,9 @@ fn parse_args() -> Result<Options, String> {
                 options.mode = Mode::Capture(PathBuf::from(dir));
             }
             "--chapina" => options.chapina = true,
+            "--muestra" => {
+                options.reel = Some(PathBuf::from(args.next().ok_or("--muestra espera un archivo .mp4")?));
+            }
             "--recorrido" => {
                 options.mode = Mode::Tour(PathBuf::from(
                     args.next().ok_or("--recorrido espera un archivo .mp4")?,
@@ -232,8 +241,14 @@ fn new_app(options: &Options) -> Result<App, String> {
 
 fn run_window(options: &Options) -> Result<(), String> {
     let mut app = new_app(options)?;
-    // En la ventana, la resolucion dinamica (F8 la apaga).
-    app.dynamic.enabled = true;
+    // El video de muestra: la ventana la maneja un guion, a tiempo fijo.
+    let mut reel = match &options.reel {
+        Some(path) => Some(muestra::Reel::new(path, options.width, options.height)?),
+        None => None,
+    };
+    // En la ventana, la resolucion dinamica (F8 la apaga); en el video,
+    // siempre completa.
+    app.dynamic.enabled = reel.is_none();
     if options.marimba {
         app.apply_preset(xela_preset());
     } else if options.race {
@@ -282,7 +297,8 @@ fn run_window(options: &Options) -> Result<(), String> {
 
     // Sonido: raylib solo reproduce lo que el sintetizador genera. Si no hay
     // dispositivo de audio, el juego sigue sin sonido.
-    let audio_device = RaylibAudio::init_audio_device().ok();
+    // El video genera su sonido aparte: sin dispositivo, no suena dos veces.
+    let audio_device = if reel.is_none() { RaylibAudio::init_audio_device().ok() } else { None };
     let mut stream = audio_device.as_ref().map(|device| {
         device.set_audio_stream_buffer_size_default(AUDIO_BLOCK as i32);
         let stream = device.new_audio_stream(audio::SAMPLE_RATE, 32, 1);
@@ -322,13 +338,69 @@ fn run_window(options: &Options) -> Result<(), String> {
     let mut block = vec![0.0f32; AUDIO_BLOCK];
 
     while !rl.window_should_close() {
-        let dt = rl.get_frame_time();
+        let dt = if reel.is_some() { muestra::DT } else { rl.get_frame_time() };
+        if let Some(r) = reel.as_mut() {
+            let Some(action) = r.advance() else { break };
+            use muestra::Action;
+            match action {
+                Action::Wait => {}
+                Action::Next(site) => {
+                    if !app.visit_site(site) {
+                        println!("muestra: no hay un lugar \"{site}\"");
+                    }
+                    app.settings.cruise = true;
+                }
+                Action::Flare => app.press_flare(),
+                Action::View(name) => match PRESETS.iter().find(|p| p.name == name) {
+                    Some(preset) => {
+                        app.apply_preset(preset);
+                        app.settings.cruise = false;
+                    }
+                    None => println!("muestra: no hay una vista \"{name}\""),
+                },
+                Action::Version => {
+                    app.toggle_version();
+                    hud.intro_over = true;
+                }
+                Action::Open(kind) => {
+                    if minijuegos::available(&app) != Some(kind) {
+                        println!("muestra: aqui no se ofrece {kind:?}");
+                    }
+                    opening = Some(kind);
+                    hud.prompt = None;
+                    if kind == minijuegos::Kind::Carrera {
+                        hud.banner = Some(("Horneando las naves…", hud.age - 0.3));
+                        hud.banner_where = None;
+                    }
+                }
+                Action::Play => {
+                    if let Some(game) = minigame.as_mut() {
+                        game.demo_start();
+                    }
+                }
+                Action::Close => {
+                    minigame = None;
+                    skip_mouse = true;
+                }
+            }
+            if let Some(text) = app.banner.take() {
+                hud.banner = Some((text, hud.age));
+                hud.banner_where = app.banner_where.take();
+            }
+        }
         // Un minijuego abierto: el mundo se queda quieto y el juego tiene la
         // pantalla, el teclado y su propio audio.
         if let Some(game) = minigame.as_mut() {
             hud.age += dt;
-            game.update(dt as f64, &read_game_keys(&rl));
+            let keys = if reel.is_some() { game.demo_input(dt as f64) } else { read_game_keys(&rl) };
+            game.update(dt as f64, &keys);
             match game_stream.as_mut() {
+                _ if reel.is_some() => {
+                    let r = reel.as_mut().unwrap();
+                    let mut samples = vec![0.0f32; r.samples()];
+                    game.audio(&mut samples);
+                    r.push_audio(&samples);
+                }
                 Some(stream) => {
                     while stream.is_processed() {
                         game.audio(&mut game_block);
@@ -356,6 +428,9 @@ fn run_window(options: &Options) -> Result<(), String> {
             d.clear_background(Color::BLACK);
             d.draw_texture(&texture, 0, 0, Color::WHITE);
             hud::minigame(&mut d, &fonts, &overlay);
+            if let Some(r) = reel.as_mut() {
+                r.grab()?;
+            }
             drop(d);
             if done {
                 minigame = None;
@@ -473,7 +548,7 @@ fn run_window(options: &Options) -> Result<(), String> {
                 }
             }
         }
-        player.update(rl.get_frame_time());
+        player.update(dt);
         app.marimba_on = player.marimba();
         if rl.is_key_pressed(KeyboardKey::KEY_F3) {
             app.debug.wireframe = !app.debug.wireframe;
@@ -576,12 +651,17 @@ fn run_window(options: &Options) -> Result<(), String> {
         // La foto, siempre a resolucion completa.
         app.dynamic.force_full |= photo;
 
-        let input = read_input(&rl, captured && !skip_mouse);
+        let input = if reel.is_some() { FrameInput::default() } else { read_input(&rl, captured && !skip_mouse) };
         skip_mouse = false;
         hud.age += dt;
         app.update(dt as f64, &input);
         app.render();
-        if let Some(stream) = stream.as_mut() {
+        if let Some(r) = reel.as_mut() {
+            synth.set(app.audio_params());
+            let mut samples = vec![0.0f32; r.samples()];
+            synth.fill(&mut samples);
+            r.push_audio(&samples);
+        } else if let Some(stream) = stream.as_mut() {
             synth.set(app.audio_params());
             while stream.is_processed() {
                 synth.fill(&mut block);
@@ -601,6 +681,12 @@ fn run_window(options: &Options) -> Result<(), String> {
         d.draw_texture(&texture, 0, 0, Color::WHITE);
         let view = chapin.then(|| player.view());
         hud::draw(&mut d, &app, fps, &hud, &tweaks, &fonts, view.as_ref());
+        if let Some(r) = reel.as_mut() {
+            r.grab()?;
+        }
+    }
+    if let Some(r) = reel {
+        r.finish()?;
     }
     Ok(())
 }
