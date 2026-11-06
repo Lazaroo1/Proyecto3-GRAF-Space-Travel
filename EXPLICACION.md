@@ -553,9 +553,9 @@ meta a cuadros, los charcos de luz de los postes y la neblina de lejos.
 Dibujar los 28 000 triángulos de cada nave en cada frame costaría lo que
 el 3D. En vez de eso, al abrir la carrera un rasterizador propio dibuja
 cada modelo una vez desde 15 rumbos (de −70° a 70°, cada 10°), y la propia
-desde otros 17 (de −10° a 10°, cada 1.25°) tal como la ve la cámara, a su
-tamaño en pantalla. Son 77 sprites en una sola pasada paralela, en alrededor
-de un segundo.
+desde otros 27 (de −19.5° a 19.5°, cada 1.5°) tal como la ve la cámara, a su
+tamaño en pantalla. Con las dos latas del tráfico son 117 sprites en una sola
+pasada paralela, en uno a dos segundos.
 
 - La proyección es ortográfica, con buffer de profundidad y funciones de
   borde baricéntricas.
@@ -578,7 +578,9 @@ de un segundo.
   centellean.
 
 En la pista, cada nave usa el sprite del ángulo con que la ve la cámara:
-el rumbo de la pista donde está menos el ángulo del rayo, `θ − atan(x / z)`.
+el rumbo de la pista donde está menos el ángulo del rayo, `θ − atan(x / z)`,
+más el volante (en la propia, exagerado: `0.22` rad a fondo). Así en las
+curvas se le ve el costado.
 Se toma el sprite más cercano (mezclar dos vecinos dejaba la nave doble) y se
 corre a lo ancho para que su cola caiga donde caería la del rumbo de verdad:
 la cola sigue el giro sin saltos. Se escala con `f / z` y se pega con alfa
@@ -591,9 +593,9 @@ postes, humo, otras naves) no se pinta.
 **Las naves con vida.**
 
 - **Peso**: cada nave tiene un resorte de ladeo y uno de rebote por clase.
-  La curva y el volante la ladean; un túmulo y la cresta de una loma la
-  hacen saltar. El tuk-tuk gira sobre la rueda de afuera y levanta la de
-  adentro. La chela flota: sube y baja y se mece sola.
+  El ladeo es apenas (inclinar el sprite entero se veía como si la nave se
+  fuera de lado); un túmulo y la cresta de una loma la hacen saltar. El
+  tuk-tuk gira sobre la rueda de afuera. La chela flota: sube y baja.
 - **La chela** es de vidrio ámbar: contraluz en la silueta, cielo reflejado
   con Fresnel y cerveza con burbujas adentro. Debajo lleva un anillo
   antigravedad cian y una cáustica ámbar en la pista.
@@ -708,7 +710,9 @@ aberración cromática separa los canales en la orilla.
 - Gasta el turbo en las rectas.
 - Tiene un poco de liga: hasta 6 % más rápida si va lejos detrás de quien
   juega y 5 % menos si va muy adelante.
-- **El tráfico** son 16 naves lentas de las cuatro clases. Cambian de carril
+- **El tráfico** son 18 naves lentas de las cuatro clases, y una de cada
+  tres es una lata gigante (la Four Loko y la Jägermeister de las naves
+  botella) que flota como la chela. Cambian de carril
   de vez en cuando y, si les pitan (H), se hacen a un lado.
 - **El humo negro**: las camionetas que aceleran sueltan soplos de sus
   chimeneas que crecen, suben y se apagan. Si la cámara pasa por uno denso,

@@ -145,8 +145,20 @@ pub fn race(app: &App, records: Records) -> carrera::Carrera {
         vehicle(Class::Camioneta, 7),
         vehicle(Class::Colectivo, 8),
     ];
+    // Las latas que hacen trafico: la Four Loko y la Jager de las naves
+    // botella, puestas como la chela.
+    let cans: Vec<(crate::scene::Mesh, usize)> = ["Four Loko", "Jagermeister"]
+        .iter()
+        .filter_map(|name| ships.iter().position(|s| s.name == *name))
+        .map(|i| {
+            let mut mesh = app.system.meshes[ships[i].lods[0]].clone();
+            mesh.deform(|p| crate::math::Vec3::new(p.x, p.y * cos - p.z * sin, p.y * sin + p.z * cos));
+            (mesh, i)
+        })
+        .collect();
+    let can_models: Vec<Model> = cans.iter().map(|(mesh, i)| Model { mesh, finish: Finish::Bottle, meters: meters(Class::Chela, *i), name: ships[*i].name }).collect();
     let sky = |dir: crate::math::Vec3| app.system.sky.sample(dir);
-    carrera::Carrera::new(models, player, &sky, app.renderer.width(), app.renderer.height(), records)
+    carrera::Carrera::new(models, &can_models, player, &sky, app.renderer.width(), app.renderer.height(), records)
 }
 
 /// Donde se guardan los records: junto al programa si se corre desde la

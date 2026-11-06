@@ -154,14 +154,17 @@ const MAX_SPARK_SEGS: usize = 600;
 /// Rumbo de los angulos horneados: de -70 a 70 grados, cada 10.
 const YAWS: usize = 15;
 const YAW_STEP: f32 = 10.0 * PI / 180.0;
-/// Los de la nave propia: de -10 a 10, cada 1.25 (se toma el mas cercano;
-/// mezclar dos vecinos la dejaba doble, ver `view`).
-const PLAYER_YAWS: usize = 17;
-const PLAYER_YAW_STEP: f32 = 1.25 * PI / 180.0;
+/// Los de la nave propia: de -19.5 a 19.5, cada 1.5 (se toma el mas
+/// cercano; mezclar dos vecinos la dejaba doble, ver `view`). Le alcanza
+/// para verse de lado en las curvas cerradas.
+const PLAYER_YAWS: usize = 27;
+const PLAYER_YAW_STEP: f32 = 1.5 * PI / 180.0;
 /// Las chispas de la pista: cuantas a la vez como mucho.
 const MAX_TRACK_SPARKS: usize = 600;
 /// El humo de las chimeneas: cuantos soplos a la vez y cuanto vive cada uno.
 const MAX_PUFFS: usize = 80;
+/// Cuantas naves de trafico (una de cada tres, lata si hay).
+const TRAFFIC: u32 = 18;
 const PUFF_LIFE: f32 = 2.2;
 const RATE: f32 = SAMPLE_RATE as f32;
 
@@ -243,15 +246,17 @@ impl Kind {
 
     /// Como se ladea en las curvas: cuanto (rad a fondo y a toda
     /// velocidad) y el resorte, `(K, C)` de `roll'' = K (meta - roll) - C
-    /// roll'`. El tuk-tuk es alto y angosto: se ladea mucho y rapido, con
+    /// roll'`. Apenas: ladear el sprite entero se veia como si la nave se
+    /// fuera de lado (sobre todo la camioneta); el giro se ve con el rumbo.
+    /// El tuk-tuk es alto y angosto: se ladea mas y rapido, con
     /// `zeta = C / (2 sqrt K) ~ 0.47` (se pasa y rebota); la camioneta, lenta
     /// y blanda (`omega = 5`, `zeta = 0.3`: se mece); el resto, firme.
     fn roll_spring(self) -> (f32, f32, f32) {
         match self {
-            Kind::TukTuk => (0.22, 90.0, 9.0),
-            Kind::Camioneta => (0.07, 25.0, 3.0),
-            Kind::Colectivo => (0.05, 60.0, 7.0),
-            Kind::Chela => (0.12, 60.0, 7.0),
+            Kind::TukTuk => (0.05, 90.0, 9.0),
+            Kind::Camioneta => (0.012, 25.0, 3.0),
+            Kind::Colectivo => (0.012, 60.0, 7.0),
+            Kind::Chela => (0.03, 60.0, 7.0),
         }
     }
 
@@ -513,6 +518,10 @@ struct Car {
     bounce_v: f32,
     /// Lo que se junta para la siguiente chispa de su turbo (el tuk-tuk).
     spark_due: f32,
+    /// Si en vez de su clase se dibuja como una de las latas (su indice en
+    /// las que se pasaron a `Carrera::new`): maneja como la chela (flota)
+    /// pero se ve como lata.
+    can: Option<u8>,
 }
 
 impl Car {
@@ -542,6 +551,7 @@ impl Car {
             bounce: 0.0,
             bounce_v: 0.0,
             spark_due: 0.0,
+            can: None,
         }
     }
 
@@ -827,7 +837,7 @@ pub struct Carrera {
 impl Carrera {
     /// Abre la carrera: `models` son las cuatro clases en el orden de
     /// `Kind::ALL`; `sky` da el color del cielo en cada direccion.
-    pub fn new(models: [Model; 4], player: Kind, sky: &(dyn Fn(Vec3) -> Vec3 + Sync), width: usize, height: usize, records: Records) -> Self {
+    pub fn new(models: [Model; 4], cans: &[Model], player: Kind, sky: &(dyn Fn(Vec3) -> Vec3 + Sync), width: usize, height: usize, records: Records) -> Self {
         let s = height as f32 / 720.0;
         let focal = FOCAL * height as f32;
         // Los angulos de las otras: vistas de lejos, desde poco arriba.
@@ -848,12 +858,24 @@ impl Carrera {
             let yaw = (k as f32 - (PLAYER_YAWS / 2) as f32) * PLAYER_YAW_STEP;
             jobs.push(hornear::Job { mesh: model.mesh, finish: model.finish, yaw, elevation, meters: model.meters, pixels_per_meter: focal / back });
         }
+        // Las latas del trafico, vistas como las rivales.
+        for m in cans {
+            for &yaw in &yaws {
+                jobs.push(hornear::Job { mesh: m.mesh, finish: m.finish, yaw, elevation: RIVAL_ELEVATION, meters: m.meters, pixels_per_meter: 46.0 * s });
+            }
+        }
         let mut baked = hornear::bake_all(&jobs);
+        let mut can_sprites = baked.split_off(models.len() * YAWS + PLAYER_YAWS);
         let player_set = baked.split_off(models.len() * YAWS);
         let mut sets: Vec<Vec<Sprite>> = Vec::new();
         while !baked.is_empty() {
             let rest = baked.split_off(YAWS);
             sets.push(std::mem::replace(&mut baked, rest));
+        }
+        // Despues de las cuatro clases, las latas.
+        while !can_sprites.is_empty() {
+            let rest = can_sprites.split_off(YAWS);
+            sets.push(std::mem::replace(&mut can_sprites, rest));
         }
         let tint = std::array::from_fn(|k| if Kind::ALL[k] == Kind::Chela { Vec3::new(1.0, 0.7, 0.3) } else { led_tint(&sets[k][YAWS / 2]) });
         let rigs = std::array::from_fn(|k| rig_of(&models[k]));
@@ -935,12 +957,17 @@ impl Carrera {
             car.skill = [0.97, 0.95, 0.99][k];
             cars.push(car);
         }
-        for k in 0..16u32 {
+        // El trafico: 18 naves, y una de cada tres es una de las latas (la
+        // Four Loko y la Jager, alternando) que flota como la chela.
+        let cans = self.sets.len().saturating_sub(Kind::ALL.len());
+        for k in 0..TRAFFIC {
             let h = hash_u32(0x7EAF ^ k.wrapping_mul(0x9E37));
-            let kind = Kind::ALL[(h % 4) as usize];
+            let can = (cans > 0 && k % 3 == 2).then(|| ((k / 3) as usize % cans) as u8);
+            let kind = if can.is_some() { Kind::Chela } else { Kind::ALL[(h % 4) as usize] };
             let lane = ((h >> 4) % 4) as f32;
-            let s = 120.0 + k as f32 * (length - 160.0) / 16.0;
+            let s = 120.0 + k as f32 * (length - 160.0) / TRAFFIC as f32;
             let mut car = Car::new(kind, Role::Traffic, "", s, -HALF_ROAD + LANE * (lane + 0.5));
+            car.can = can;
             car.v = 16.0 + 10.0 * ((h >> 8) & 0xFF) as f32 / 255.0;
             car.skill = car.v;
             car.lane_timer = 4.0 + ((h >> 16) & 0xFF) as f32 / 20.0;
@@ -2435,9 +2462,9 @@ impl Carrera {
             let wx = x + car.x - cam.x;
             let sx = cx + wx * cam.focal / d;
             // La chela flota y se mece: `0.6 + 0.12 sin(2.2 t + i)` de alto y
-            // `0.08 sin(1.3 t + i)` de ladeo.
+            // `0.025 sin(1.3 t + i)` de ladeo.
             let phase = i as f32;
-            let (hover, wobble) = if car.kind == Kind::Chela { (0.6 + 0.12 * (wall * 2.2 + phase).sin(), 0.08 * (wall * 1.3 + phase).sin()) } else { (spec.hover, 0.0) };
+            let (hover, wobble) = if car.kind == Kind::Chela { (0.6 + 0.12 * (wall * 2.2 + phase).sin(), 0.025 * (wall * 1.3 + phase).sin()) } else { (spec.hover, 0.0) };
             let sy = cam.horizon - (y + hover - cam.y) * cam.focal / d;
             let player = i == 0;
             // La apertura de la camara (`focal / (1 + fov)`) encoge todo; a
@@ -2451,11 +2478,16 @@ impl Carrera {
             // como la botella con dos cuellos.) La propia tiene un sprite
             // cada 1.25 grados, asi el salto de uno al siguiente es chico; las
             // demas, cada 10, pero se ven de lejos.
+            // La propia gira como las demas, con el rumbo de la pista donde
+            // va menos el angulo del rayo (en las curvas se le ve el
+            // costado), mas el volante exagerado, `0.22` rad a fondo (con solo
+            // el volante, `0.17`, se veia recta en las curvas).
             let (set, kf, count) = if player {
-                (usize::MAX, car.steer * 0.17 / PLAYER_YAW_STEP + (PLAYER_YAWS / 2) as f32, PLAYER_YAWS)
+                let yaw = theta + car.steer * 0.22 - (wx / d).atan();
+                (usize::MAX, yaw / PLAYER_YAW_STEP + (PLAYER_YAWS / 2) as f32, PLAYER_YAWS)
             } else {
                 let yaw = theta + car.steer * 0.12 - (wx / d).atan();
-                (car.kind.index(), yaw / YAW_STEP + (YAWS / 2) as f32, YAWS)
+                (car.can.map_or(car.kind.index(), |c| Kind::ALL.len() + c as usize), yaw / YAW_STEP + (YAWS / 2) as f32, YAWS)
             };
             let kf = if kf.is_finite() { kf.clamp(0.0, (count - 1) as f32) } else { (count / 2) as f32 };
             let sprites: &[Sprite] = if player { &self.player_set } else { self.sets.get(set).map_or(&[], |v| v.as_slice()) };
@@ -2469,7 +2501,8 @@ impl Carrera {
             // giro sin saltos y solo lo de adelante salta, poquito.
             let step = if player { PLAYER_YAW_STEP } else { YAW_STEP };
             let mid = (count / 2) as f32;
-            let tail = |k: f32| -0.5 * spec.length * ((k - mid) * step).sin() * sprite.scale;
+            let length = spec.length;
+            let tail = |k: f32| -0.5 * length * ((k - mid) * step).sin() * sprite.scale;
             let ax = sprite.anchor.0 - (tail(kf) - tail(k0 as f32));
             // El mip: `log2(1 / escala)` (cuantos pixeles del sprite caen en
             // uno de la pantalla) menos 1: un nivel mas fino que lo justo,
@@ -2512,7 +2545,7 @@ impl Carrera {
                 set,
                 k: k0,
                 ax,
-                length: spec.length,
+                length,
                 spill: self.arch_spill(car.s),
                 smear,
                 sin,
@@ -6617,7 +6650,7 @@ mod tests {
         let names = ["Gallo", "Tuk-Tuk Elena", "La Mamaneta", "Colectivo Q.5"];
         let models = std::array::from_fn(|k| Model { mesh: &mesh, finish: Finish::Vehicle, meters: Kind::ALL[k].spec().length / 4.0, name: names[k] });
         let sky = |d: Vec3| Vec3::new(0.02, 0.03, 0.06) * (1.0 + d.y.max(0.0));
-        Carrera::new(models, player, &sky, 320, 180, Records::in_memory())
+        Carrera::new(models, &[], player, &sky, 320, 180, Records::in_memory())
     }
 
     fn run(game: &mut Carrera, seconds: f32, keys: Keys) {
@@ -6750,7 +6783,7 @@ mod tests {
         let models = std::array::from_fn(|k| Model { mesh: &mesh, finish: Finish::Vehicle, meters: Kind::ALL[k].spec().length / 4.0, name: names[k] });
         let sky = |d: Vec3| Vec3::new(0.02, 0.03, 0.06) * (1.0 + d.y.max(0.0));
         let (w, h) = (1280, 720);
-        let mut g = Carrera::new(models, Kind::Camioneta, &sky, w, h, Records::in_memory());
+        let mut g = Carrera::new(models, &[], Kind::Camioneta, &sky, w, h, Records::in_memory());
         g.set_autopilot(true);
         g.start();
         let mut rgba = vec![0u8; w * h * 4];
@@ -6812,7 +6845,7 @@ mod tests {
         let models = std::array::from_fn(|k| Model { mesh: &mesh, finish: Finish::Vehicle, meters: Kind::ALL[k].spec().length / 4.0, name: names[k] });
         let sky = |d: Vec3| Vec3::new(0.02, 0.03, 0.06) * (1.0 + d.y.max(0.0));
         let (w, h) = (1280, 720);
-        let mut g = Carrera::new(models, Kind::Colectivo, &sky, w, h, Records::in_memory());
+        let mut g = Carrera::new(models, &[], Kind::Colectivo, &sky, w, h, Records::in_memory());
         g.set_autopilot(true);
         g.start();
         run(&mut g, 16.0, Keys::default());
@@ -7014,9 +7047,9 @@ mod tests {
         run(&mut g, 3.0, gas);
         run(&mut g, 1.0, Keys { throttle: true, steer: 1.0, ..Keys::default() });
         let roll = g.cars[0].roll;
-        assert!(roll < -0.03 && roll > -0.4, "{roll}");
+        assert!(roll < -0.01 && roll > -0.1, "{roll}");
         run(&mut g, 1.5, gas);
-        assert!(g.cars[0].roll.abs() < 0.02, "{}", g.cars[0].roll);
+        assert!(g.cars[0].roll.abs() < 0.01, "{}", g.cars[0].roll);
         // Justo antes de un tumulo, en su carril y con velocidad.
         let (i, seg) = g.track.segments.iter().enumerate().find(|(_, s)| s.bumps != 0).map(|(i, s)| (i, *s)).expect("hay tumulos");
         let lane = (0..4).find(|l| seg.bumps & (1 << l) != 0).unwrap_or(0);
@@ -7578,7 +7611,7 @@ mod tests {
         let models = std::array::from_fn(|k| Model { mesh: &mesh, finish: Finish::Vehicle, meters: Kind::ALL[k].spec().length / 4.0, name: names[k] });
         let sky = |d: Vec3| Vec3::new(0.02, 0.03, 0.06) * (1.0 + d.y.max(0.0));
         let (w, h) = (1280, 720);
-        let mut g = Carrera::new(models, Kind::Chela, &sky, w, h, Records::in_memory());
+        let mut g = Carrera::new(models, &[], Kind::Chela, &sky, w, h, Records::in_memory());
         let check = |view: &View, item: &Item| {
             for y in 0..h {
                 let yf = y as f32 + 0.5;
@@ -7629,7 +7662,7 @@ mod tests {
         let models = std::array::from_fn(|k| Model { mesh: &mesh, finish: Finish::Vehicle, meters: Kind::ALL[k].spec().length / 4.0, name: names[k] });
         let sky = |d: Vec3| Vec3::new(0.0008, 0.001, 0.0025) * (1.0 + d.y.max(0.0));
         let (w, h) = (1280, 720);
-        let mut g = Carrera::new(models, Kind::Chela, &sky, w, h, Records::in_memory());
+        let mut g = Carrera::new(models, &[], Kind::Chela, &sky, w, h, Records::in_memory());
         g.set_autopilot(true);
         g.start();
         let mut rgba = vec![0u8; w * h * 4];
@@ -7701,7 +7734,7 @@ mod tests {
             _ => Kind::Chela,
         };
         let at: f32 = std::env::var("OCASO_T").ok().and_then(|v| v.parse().ok()).unwrap_or(5.0);
-        let mut g = Carrera::new(models, kind, &sky, w, h, Records::in_memory());
+        let mut g = Carrera::new(models, &[], kind, &sky, w, h, Records::in_memory());
         g.set_autopilot(true);
         g.start();
         run(&mut g, at, Keys::default());
