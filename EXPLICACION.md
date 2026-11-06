@@ -558,7 +558,12 @@ tamaño en pantalla. Con las dos latas del tráfico son 117 sprites en una sola
 pasada paralela, en uno a dos segundos.
 
 - La proyección es ortográfica, con buffer de profundidad y funciones de
-  borde baricéntricas.
+  borde baricéntricas. La propia, que se ve de cerca, lleva además
+  perspectiva: la cola queda igual y lo que está `dz` metros más adelante
+  se achica `E / (E + dz)` hacia el centro, con `E` 1.5 veces la distancia
+  de la cámara a la cola (como un lente largo). Sin eso una nave larga se
+  veía del mismo ancho adelante que atrás, y el ojo la leía agrandada de
+  adelante.
 - Lleva 2×2 muestras por pixel (la fracción cubierta es el alfa).
 - El sombreado es diferido: solo la muestra más cercana se sombrea, una vez.
 - La luz es de noche: luna fría, postes naranjas desde abajo y un cielo que

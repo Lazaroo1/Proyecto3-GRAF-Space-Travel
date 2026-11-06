@@ -366,8 +366,11 @@ const MARGIN: usize = 16;
 const MIP_MIN: usize = 8;
 
 /// Un sprite por hornear: la malla, como se sombrea, el giro y la altura
-/// de la vista (radianes), cuanto mide una unidad del modelo en metros y
-/// los pixeles por metro.
+/// de la vista (radianes), cuanto mide una unidad del modelo en metros,
+/// los pixeles por metro y la perspectiva: a cuantos metros de la cola esta
+/// la camara (`eye`; 0 es de lejos, ortografica) y cuantos metros arriba
+/// del centro de la nave queda el punto de fuga en la imagen (`rise`, el
+/// horizonte).
 #[derive(Clone, Copy)]
 pub struct Job<'a> {
     pub mesh: &'a Mesh,
@@ -376,6 +379,8 @@ pub struct Job<'a> {
     pub elevation: f32,
     pub meters: f32,
     pub pixels_per_meter: f32,
+    pub eye: f32,
+    pub rise: f32,
 }
 
 /// Hornea todos los sprites de `jobs` en una sola pasada en paralelo (cada
@@ -385,7 +390,7 @@ pub fn bake_all(jobs: &[Job]) -> Vec<Sprite> {
     let mut sprites: Vec<Option<Sprite>> = vec![None; jobs.len()];
     parallel::chunks_mut(&mut sprites, 1, 1, |i, slot| {
         let j = jobs[i];
-        slot[0] = Some(bake_one(j.mesh, j.finish, j.yaw, j.elevation, j.meters, j.pixels_per_meter));
+        slot[0] = Some(bake_one(j.mesh, j.finish, j.yaw, j.elevation, j.meters, j.pixels_per_meter, j.eye, j.rise));
     });
     sprites.into_iter().map(|s| s.expect("sprite horneado")).collect()
 }
@@ -396,7 +401,7 @@ pub fn bake_all(jobs: &[Job]) -> Vec<Sprite> {
 /// cuanto mide una unidad del modelo. Los angulos se hornean en paralelo.
 #[cfg(test)]
 pub fn bake(mesh: &Mesh, finish: Finish, yaws: &[f32], elevation: f32, meters: f32, pixels_per_meter: f32) -> Vec<Sprite> {
-    let jobs: Vec<Job> = yaws.iter().map(|&yaw| Job { mesh, finish, yaw, elevation, meters, pixels_per_meter }).collect();
+    let jobs: Vec<Job> = yaws.iter().map(|&yaw| Job { mesh, finish, yaw, elevation, meters, pixels_per_meter, eye: 0.0, rise: 0.0 }).collect();
     bake_all(&jobs)
 }
 
@@ -409,7 +414,7 @@ struct Inside {
     cell: f32,
 }
 
-fn bake_one(mesh: &Mesh, finish: Finish, yaw: f32, elevation: f32, meters: f32, ppm: f32) -> Sprite {
+fn bake_one(mesh: &Mesh, finish: Finish, yaw: f32, elevation: f32, meters: f32, ppm: f32, eye: f32, rise: f32) -> Sprite {
     // Giro de la nave (alrededor de y) y despues la camara que mira desde
     // arriba (alrededor de x).
     let (sy, cy) = yaw.sin_cos();
@@ -424,7 +429,25 @@ fn bake_one(mesh: &Mesh, finish: Finish, yaw: f32, elevation: f32, meters: f32, 
         Vec3::new(x, y2, z2)
     };
     let k = meters * ppm * SUPER as f32;
-    let projected: Vec<Vec3> = mesh.positions.iter().map(|&p| rotate(p)).collect();
+    // La perspectiva (la propia, de cerca): la cola (lo mas cerca de la
+    // camara) queda como esta y lo que esta `dz` metros mas adelante se
+    // achica `eye / (eye + dz)` hacia el punto de fuga, `rise` metros arriba
+    // del centro (el horizonte). Sin esto una nave larga vista de cerca se
+    // veia del mismo ancho adelante que atras, y el ojo la leia agrandada de
+    // adelante. La profundidad (`z`) no cambia: solo ordena.
+    let (blo, bhi) = mesh.positions.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), &p| (lo.min(p), hi.max(p)));
+    let center = rotate((blo + bhi) * 0.5);
+    let tail = mesh.positions.iter().map(|&p| rotate(p).z).fold(f32::MIN, f32::max);
+    let vanish = (center.x, center.y + rise / meters.max(1e-6));
+    let project = |p: Vec3| {
+        let q = rotate(p);
+        if eye <= 0.0 {
+            return q;
+        }
+        let f = eye / (eye + (tail - q.z).max(0.0) * meters);
+        Vec3::new(vanish.0 + (q.x - vanish.0) * f, vanish.1 + (q.y - vanish.1) * f, q.z)
+    };
+    let projected: Vec<Vec3> = mesh.positions.iter().map(|&p| project(p)).collect();
     let (lo, hi) = projected.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), &p| (lo.min(p), hi.max(p)));
     // Las medidas del modelo sin girar: el largo para la fase de las LEDs y
     // el alto para la cerveza de la botella.
@@ -437,6 +460,8 @@ fn bake_one(mesh: &Mesh, finish: Finish, yaw: f32, elevation: f32, meters: f32, 
     let height_s = (((hi.y - lo.y) * k + 2.0 * margin).ceil().max(0.0) as usize).div_ceil(SUPER) * SUPER;
     let to_image = |p: Vec3| ((p.x - lo.x) * k + margin, (hi.y - p.y) * k + margin);
     // El suelo bajo el centro: el punto mas bajo del modelo, en x = 0.
+    // (Sin perspectiva: el ancla es donde la nave se para en la pista, y
+    // la cola, que no cambia, queda donde estaba.)
     let ground = rotate(Vec3::new(0.0, mesh_bottom(mesh), 0.0));
     let anchor_s = to_image(ground);
     // Cada vertice en la imagen: x, y en muestras y profundidad (mayor es
