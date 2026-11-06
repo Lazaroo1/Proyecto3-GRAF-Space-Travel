@@ -44,12 +44,18 @@ pub struct Sprite {
     pub pixels: Vec<[u8; 4]>,
     /// Cuanto emite cada pixel (de 0 a 255): solo las piezas con clase LED
     /// del `.mtl`, no la laca ni el vidrio claros. Es lo que el posproceso
-    /// hace florecer.
+    /// hace florecer. Vacio si el sprite no guarda emision (los
+    /// barriletes: quien los pega la saca de su color).
     pub emit: Vec<u8>,
     /// Por fila, el tramo de columnas `[desde, hasta)` que tiene algo (la
     /// imagen lleva margen para el resplandor y, de lado, la nave no llena
     /// su caja): quien la pega no muestrea lo que esta vacio.
     pub spans: Vec<(u16, u16)>,
+    /// Por fila `y0`, el tramo mas largo `[desde, hasta)` de columnas `x0`
+    /// donde los cuatro pixeles que lee el bilineal (`x0`, `x0 + 1` en las
+    /// filas `y0` y `y0 + 1`) son opacos: ahi la nave tapa todo lo de
+    /// atras y quien la pega no necesita pintar el fondo.
+    pub solid: Vec<(u16, u16)>,
     /// Donde toca el suelo el centro de la nave, en pixeles del sprite.
     pub anchor: (f32, f32),
     /// Pixeles por metro.
@@ -111,6 +117,19 @@ impl Sprite {
         if hi <= lo { (0.0, 0.0) } else { (lo as f32 - 0.5, hi as f32 + 0.5) }
     }
 
+    /// El tramo de `x` (en pixeles del sprite) donde `sample(x, y)` es
+    /// opaco del todo (ver `solid`): con `x0 = floor(x - 0.5)` en
+    /// `[desde, hasta)`, `x` va de `desde + 0.5` a `hasta + 0.5`. Vacio si
+    /// la fila no tiene un tramo opaco.
+    pub fn solid_span(&self, y: f32) -> (f32, f32) {
+        let y0 = (y - 0.5).floor();
+        if !(y0 >= 0.0) || y0 as usize >= self.solid.len() {
+            return (0.0, 0.0);
+        }
+        let (a, b) = self.solid[y0 as usize];
+        if b <= a { (0.0, 0.0) } else { (a as f32 + 0.5, b as f32 + 0.5) }
+    }
+
     /// Cuanto emite el pixel que cae en `(x, y)` (vecino mas cercano, de 0
     /// a 1): el brillo del posproceso lo difumina igual.
     #[inline]
@@ -122,7 +141,8 @@ impl Sprite {
         if xi >= self.width || yi >= self.height {
             return 0.0;
         }
-        self.emit[yi * self.width + xi] as f32 * (1.0 / 255.0)
+        // (Un sprite sin emision guardada, como los barriletes, no emite.)
+        self.emit.get(yi * self.width + xi).map_or(0.0, |&v| v as f32 * (1.0 / 255.0))
     }
 }
 
@@ -342,12 +362,33 @@ fn bake_one(mesh: &Mesh, finish: Finish, yaw: f32, elevation: f32, meters: f32, 
             }
         })
         .collect();
+    let opaque = |x: usize, y: usize| pixels[y * width + x][3] == 255;
+    let solid = (0..height)
+        .map(|y| {
+            let (mut best, mut start) = ((0u16, 0u16), None);
+            for x in 0..=width.saturating_sub(1) {
+                let full = x + 1 < width && y + 1 < height && opaque(x, y) && opaque(x + 1, y) && opaque(x, y + 1) && opaque(x + 1, y + 1);
+                match (full, start) {
+                    (true, None) => start = Some(x),
+                    (false, Some(a)) => {
+                        if x - a > (best.1 - best.0) as usize {
+                            best = (a.min(u16::MAX as usize) as u16, x.min(u16::MAX as usize) as u16);
+                        }
+                        start = None;
+                    }
+                    _ => {}
+                }
+            }
+            best
+        })
+        .collect();
     Sprite {
         width,
         height,
         pixels,
         emit,
         spans,
+        solid,
         anchor: (anchor_s.0 / SUPER as f32, anchor_s.1 / SUPER as f32),
         scale: ppm,
     }
@@ -424,30 +465,43 @@ fn shade(finish: Finish, class: f32, value: f32, albedo: Vec3, n: Vec3) -> (Vec3
     }
 }
 
-/// Promedio corrido de `2 * radius + 1` pixeles por filas y por columnas.
-fn box_blur(image: &[Vec3], width: usize, height: usize, radius: usize) -> Vec<Vec3> {
+/// Promedio corrido de `2 * radius + 1` pixeles por filas y por columnas
+/// (el borde se repite). Con una suma que corre: al pasar al pixel
+/// siguiente entra uno y sale otro, asi cuesta lo mismo con cualquier
+/// radio (los barriletes de 512 lo usan con radio 10).
+pub(crate) fn box_blur(image: &[Vec3], width: usize, height: usize, radius: usize) -> Vec<Vec3> {
+    if width == 0 || height == 0 || image.len() < width * height {
+        return image.to_vec();
+    }
     let r = radius as isize;
     let scale = 1.0 / (2 * radius + 1) as f32;
     let mut rows = vec![Vec3::ZERO; image.len()];
     for y in 0..height {
+        let line = &image[y * width..(y + 1) * width];
+        let at = |i: isize| line[i.clamp(0, width as isize - 1) as usize];
+        let mut sum = Vec3::ZERO;
+        for k in -r..=r {
+            sum = sum + at(k);
+        }
         for x in 0..width as isize {
-            let mut sum = Vec3::ZERO;
-            for k in -r..=r {
-                let xi = (x + k).clamp(0, width as isize - 1) as usize;
-                sum = sum + image[y * width + xi];
-            }
             rows[y * width + x as usize] = sum * scale;
+            sum = sum + at(x + r + 1) - at(x - r);
         }
     }
     let mut out = vec![Vec3::ZERO; image.len()];
+    let row = |y: isize| y.clamp(0, height as isize - 1) as usize * width;
+    let mut sums = vec![Vec3::ZERO; width];
+    for k in -r..=r {
+        let base = row(k);
+        for (s, &v) in sums.iter_mut().zip(&rows[base..base + width]) {
+            *s = *s + v;
+        }
+    }
     for y in 0..height as isize {
+        let (enter, leave) = (row(y + r + 1), row(y - r));
         for x in 0..width {
-            let mut sum = Vec3::ZERO;
-            for k in -r..=r {
-                let yi = (y + k).clamp(0, height as isize - 1) as usize;
-                sum = sum + rows[yi * width + x];
-            }
-            out[y as usize * width + x] = sum * scale;
+            out[y as usize * width + x] = sums[x] * scale;
+            sums[x] = sums[x] + rows[enter + x] - rows[leave + x];
         }
     }
     out
@@ -502,5 +556,28 @@ mod tests {
         // El suelo bajo el centro: abajo al centro.
         assert!((back.anchor.0 - back.width as f32 / 2.0).abs() < 1.5);
         assert!((back.anchor.1 - (back.height as f32 - 6.0)).abs() < 1.5);
+    }
+
+    /// La caja con suma que corre da lo mismo que sumar la ventana entera
+    /// en cada pixel (con el borde repetido).
+    #[test]
+    fn the_running_box_blur_matches_the_plain_sum() {
+        let (w, h, r) = (13usize, 9usize, 3isize);
+        let image: Vec<Vec3> = (0..w * h).map(|i| Vec3::new((i * 7 % 11) as f32, (i * 3 % 5) as f32, (i % 2) as f32)).collect();
+        let fast = box_blur(&image, w, h, r as usize);
+        let at = |x: isize, y: isize| image[y.clamp(0, h as isize - 1) as usize * w + x.clamp(0, w as isize - 1) as usize];
+        let n = ((2 * r + 1) * (2 * r + 1)) as f32;
+        for y in 0..h as isize {
+            for x in 0..w as isize {
+                let mut sum = Vec3::ZERO;
+                for dy in -r..=r {
+                    for dx in -r..=r {
+                        sum = sum + at(x + dx, y + dy);
+                    }
+                }
+                let want = sum * (1.0 / n);
+                assert!((fast[y as usize * w + x as usize] - want).length() < 1e-4, "({x}, {y})");
+            }
+        }
     }
 }

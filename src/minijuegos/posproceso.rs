@@ -30,6 +30,12 @@
 //!   del azul en la orilla. Y el humo, cuando se pasa por el de la
 //!   camioneta. Al final de cada fila va el gancho del HUD, sobre la imagen
 //!   ya graduada y sin vineta.
+//! - **Estelas para el reflejo**: con la extraccion del nivel 0 (lo que
+//!   emite, a un cuarto) se arma una estela que baja por columna,
+//!   `S = 0.1 L + 0.9 S` de arriba hacia abajo (una cola de ~10 texeles,
+//!   unos 40 px), suavizada `[1, 2, 1] / 4` a lo ancho y vuelta a pantalla
+//!   con una raiz. La pista mojada la lee en el frame siguiente: cada luz
+//!   deja una cortina de su color que baja hacia la camara.
 //! - **Por canal**: cada fila se pasa a tres arreglos (`r`, `g`, `b`) y se
 //!   trabaja por pasadas sin ramas, que el compilador vectoriza con AVX2.
 
@@ -39,7 +45,7 @@ use std::f32::consts::TAU;
 use super::lienzo;
 use crate::math::{Vec3, hash_u32, smoothstep};
 use crate::parallel;
-use crate::render::bloom::Bloom;
+use crate::render::bloom::{Bloom, MipLevel};
 
 /// Lado de la textura de ruido (potencia de dos: el wrap es un `&`).
 const NOISE: usize = 256;
@@ -133,6 +139,10 @@ pub struct Posproceso {
     gt: Vec<f32>,
     nx: Vec<f32>,
     nx2: Vec<f32>,
+    /// La estela del reflejo (ver arriba), del tamano del nivel 0 y ya en
+    /// espacio de pantalla. Se arma en `prepare` y la lee el frame
+    /// siguiente.
+    streak: MipLevel,
 }
 
 /// Las sumas de la extraccion de cada fila de la pantalla: por cada bloque
@@ -262,7 +272,15 @@ impl Posproceso {
             gt,
             nx,
             nx2,
+            streak: MipLevel { width: bw, height: bh, pixels: vec![Vec3::ZERO; bw * bh] },
         }
+    }
+
+    /// La estela del reflejo del frame anterior (bilineal con
+    /// `MipLevel::sample`, en coordenadas de pantalla de 0 a 1).
+    #[inline]
+    pub fn streak(&self) -> &MipLevel {
+        &self.streak
     }
 
     /// El ruido en `(u, v)` medido en cuadros de la textura (se repite cada
@@ -306,6 +324,7 @@ impl Posproceso {
         self.frame = self.frame.wrapping_add(1);
         self.extract(&sums);
         self.sums = sums.cells;
+        self.build_streak();
         self.bloom.process();
         let result = self.bloom.result();
         let (gw, gh) = (self.gw, self.gh);
@@ -382,6 +401,41 @@ impl Posproceso {
             }
             for o in out.iter_mut() {
                 *o *= norm;
+            }
+        });
+    }
+
+    /// La estela del reflejo a partir del nivel 0 (que la piramide no
+    /// toca): por columna, de arriba hacia abajo, `S = 0.1 L + 0.9 S`, un
+    /// filtro de un polo con cola de ~10 texeles. Se lleva una fila de
+    /// acumuladores y se recorren las filas en orden (cada fila es un ciclo
+    /// sin lecturas cruzadas, que se vectoriza). Despues, por filas en
+    /// paralelo, `[1, 2, 1] / 4` a lo ancho y la raiz (de luz a pantalla).
+    fn build_streak(&mut self) {
+        let base = self.bloom.base_mut();
+        let (w, h) = (base.width, base.height);
+        let streak = &mut self.streak;
+        if streak.width != w || streak.height != h {
+            *streak = MipLevel { width: w, height: h, pixels: vec![Vec3::ZERO; w * h] };
+        }
+        if w == 0 || h == 0 {
+            return;
+        }
+        let mut acc = vec![Vec3::ZERO; w];
+        for (src, dst) in base.pixels.chunks_exact(w).zip(streak.pixels.chunks_exact_mut(w)) {
+            for ((a, &l), d) in acc.iter_mut().zip(src).zip(dst.iter_mut()) {
+                *a = l * 0.1 + *a * 0.9;
+                *d = *a;
+            }
+        }
+        parallel::chunks_mut(&mut streak.pixels, w, w * 16, |_, row| {
+            let mut prev = row[0];
+            for x in 0..row.len() {
+                let here = row[x];
+                let next = row[(x + 1).min(row.len() - 1)];
+                let v = (prev + here * 2.0 + next) * 0.25;
+                prev = here;
+                row[x] = Vec3::new(v.x.max(0.0).sqrt(), v.y.max(0.0).sqrt(), v.z.max(0.0).sqrt());
             }
         });
     }
@@ -822,6 +876,29 @@ mod tests {
         // A 8 px de cada foco: al lado del que emite hay mas luz.
         assert!(at(52, 48) > at(108, 48) + 0.03, "{} {}", at(52, 48), at(108, 48));
         assert!(at(1, 1) < at(w / 2, 20));
+    }
+
+    /// La estela baja desde lo que emite: abajo de un foco hay luz que se
+    /// apaga al alejarse, arriba no hay nada, y siempre es finita.
+    #[test]
+    fn the_streak_falls_below_what_emits() {
+        let (w, h) = (160, 96);
+        let mut post = Posproceso::new(w, h);
+        let mut rgba = vec![0u8; w * h * 4];
+        for (i, p) in rgba.chunks_exact_mut(4).enumerate() {
+            let (x, y) = (i % w, i / w);
+            lienzo::write(p, Vec3::splat(0.1));
+            if (x as i32 - 80).abs() < 4 && (y as i32 - 30).abs() < 4 {
+                lienzo::write_emit(p, Vec3::new(1.0, 0.3, 0.6), 1.0);
+            }
+        }
+        post.prepare_frame(&mut rgba, &Params::default());
+        let st = post.streak();
+        assert!(st.pixels.iter().all(|v| v.x.is_finite() && v.x >= 0.0));
+        let at = |y: f32| st.sample(80.0 / w as f32, y / h as f32).x;
+        assert!(at(10.0) < 1e-4, "{}", at(10.0));
+        assert!(at(44.0) > 0.05, "{}", at(44.0));
+        assert!(at(44.0) > at(70.0) && at(70.0) > at(94.0));
     }
 
     /// Cuanto cuesta cada mitad a 1280 x 720

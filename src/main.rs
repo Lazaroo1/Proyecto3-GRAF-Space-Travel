@@ -686,10 +686,32 @@ fn run_race_capture(options: &Options, dir: &Path) -> Result<(), String> {
     race.start();
     let dt = 1.0 / 60.0;
     let mut elapsed = 0.0;
-    for (at, name) in [(1.6, "carrera_2_semaforo"), (7.0, "carrera_3_arranque"), (16.0, "carrera_4_curva"), (27.0, "carrera_5_loma"), (44.0, "carrera_6_tumulos"), (70.0, "carrera_7_segunda_vuelta"), (260.0, "carrera_8_meta")] {
+    for (at, name) in [(1.6, "carrera_2_semaforo"), (7.0, "carrera_3_arranque"), (16.0, "carrera_4_curva"), (27.0, "carrera_5_loma"), (30.0, "carrera_6_tumulos"), (70.0, "carrera_7_segunda_vuelta"), (260.0, "carrera_8_meta")] {
         while elapsed < at {
             race.update(dt, &minijuegos::Keys::default());
             elapsed += dt;
+        }
+        // La de los tumulos: cuando la nave va a unos 30 m del proximo
+        // (cada nave llega a otra hora), hasta 20 s despues.
+        if name == "carrera_6_tumulos" {
+            while elapsed < at + 20.0 && !race.bump_ahead().is_some_and(|d| (25.0..=35.0).contains(&d)) {
+                race.update(dt, &minijuegos::Keys::default());
+                elapsed += dt;
+            }
+        }
+        // La de la loma, adentro de un tunel de arcos, y la de la meta, en
+        // el festival de barriletes (hasta 20 y 60 s despues).
+        if name == "carrera_5_loma" {
+            while elapsed < at + 20.0 && !race.in_tunnel() {
+                race.update(dt, &minijuegos::Keys::default());
+                elapsed += dt;
+            }
+        }
+        if name == "carrera_8_meta" {
+            while elapsed < at + 60.0 && !race.in_festival() {
+                race.update(dt, &minijuegos::Keys::default());
+                elapsed += dt;
+            }
         }
         save(&mut race, name)?;
     }

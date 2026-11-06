@@ -15,6 +15,17 @@
 //!   pista muestra (la distancia interpolada en `1 / z`, correcta en
 //!   perspectiva), y con eso se pinta por pixel en paralelo: asfalto,
 //!   rayas, tumulos, la meta y la luz de los postes.
+//! - **Asfalto mojado**: cada fila sabe cuantos metros de pista abarca
+//!   (mas lo que se corre en el frame) y todo lo pintado a lo largo (rayas,
+//!   juntas cian, tachas, tumulos, el bordillo celeste y blanco) se filtra
+//!   en caja sobre eso: de lejos se promedia en vez de saltar de fila en
+//!   fila, y con velocidad se estira (las tachas se vuelven trazadoras).
+//!   Lo que cambia en metros a lo ancho (la luz de los postes con su cono,
+//!   el charco de luz de cada nave con su sombra de contacto y sus
+//!   calaveras, lo mojado, el neon) va en una tabla por fila que cada
+//!   pixel interpola. Lo mojado refleja tres cosas: la estela de todo lo
+//!   que emitio en el frame anterior (cortinas de color que bajan hacia la
+//!   camara), una raya ambar bajo cada poste y el cielo con Fresnel.
 //! - **Las naves son sprites horneados** al abrir el juego (`hornear`) con
 //!   los modelos de Blender: 15 angulos para verlas desde cualquier lado y 9
 //!   de cerca para la propia, que se ladea al girar. Se eligen por el angulo
@@ -46,6 +57,14 @@
 //!   al sodio, curva S y grano. Con la velocidad la camara se abre (un
 //!   resorte en la distancia focal) y salen lineas hacia la orilla; con el
 //!   turbo, mas lineas y aberracion cromatica. El mapa va encima de todo.
+//! - **La escenografia chapina**: la meta pasa bajo la Torre del Reformador
+//!   (celosia de hierro con sus focos LED, que es tambien el semaforo: se
+//!   llena de rojo por tercios y se pone verde), tuneles de arcos de
+//!   foquitos de feria que tinen el asfalto, barriletes gigantes de Sumpango
+//!   a contraluz (horneados en `escenario`, con flecos y colas en vivo) y
+//!   cohetes que suben de la capital y revientan en el cielo. Cada cosa
+//!   encima de la pista sabe de que fila a que fila cae y las demas filas
+//!   ni la miran.
 //! - **La fisica** es de arcade a 120 pasos por segundo: aceleracion que se
 //!   apaga cerca de la velocidad maxima, la curva empuja hacia afuera con
 //!   `v^2 kappa`, el volante con el manejo de cada nave, choques entre
@@ -59,6 +78,7 @@ use std::f32::consts::{PI, TAU};
 use std::sync::OnceLock;
 
 use super::ciudad::{self, Ciudad, unit};
+use super::escenario::{self, KITE_EXTENT, PAPEL};
 use super::hornear::{self, Finish, Sprite};
 use super::lienzo::{self, cover, emission, halo, over, write_emit};
 use super::posproceso::{self, Posproceso};
@@ -88,9 +108,41 @@ const CENTRIFUGAL: f32 = 0.2;
 const GRIP: f32 = 2.8;
 /// Paso de la fisica.
 const STEP: f32 = 1.0 / 120.0;
-/// Un poste de luz cada tanto, de un lado y del otro.
+/// Un poste de luz cada tanto, de un lado y del otro, contados en cada
+/// vuelta (ver `lamp`): ninguno a menos de `LAMP_CLEAR` m de la meta, donde
+/// estan las patas de la torre.
 const LAMP_EVERY: f32 = 48.0;
-const BILLBOARD_EVERY: f32 = 230.0;
+const LAMP_CLEAR: f32 = 12.0;
+/// Los arcos de foquitos: uno cada 16 m contados en cada vuelta (corridos
+/// 8 m para no caer encima de un poste: la vuelta no mide un multiplo de 16)
+/// en estos tramos, `[desde, hasta)` en metros de la vuelta: antes de la
+/// meta, la primera loma, la recta de los primeros tumulos y la cresta de
+/// la segunda loma. A menos de 24 m de la meta no hay: sus focos de colores
+/// se revolverian con el semaforo de la torre.
+const ARCH_EVERY: f32 = 16.0;
+const ARCH_OFFSET: f32 = 8.0;
+const ARCH_ZONES: [(f32, f32); 5] = [(2296.0, 2352.0), (24.0, 120.0), (320.0, 488.0), (632.0, 736.0), (1040.0, 1184.0)];
+/// Los colores de los foquitos de feria: rosa, celeste, amarillo, verde y
+/// rojo.
+const ARCH_PAL: [Vec3; 5] = [Vec3::new(1.0, 0.2, 0.6), Vec3::new(0.15, 0.85, 1.0), Vec3::new(1.0, 0.8, 0.2), Vec3::new(0.2, 1.0, 0.4), Vec3::new(1.0, 0.15, 0.1)];
+/// La semielipse de cada arco (m): medio ancho, alto y cuantos focos.
+const ARCH_A: f32 = RAIL + 0.3;
+const ARCH_B: f32 = 10.5;
+const ARCH_BULBS: usize = 41;
+/// Los barriletes: uno de 12 m cada 200 m (alternando lado) y el festival,
+/// uno cada 48 m alternando lado antes de la meta.
+const KITE_EVERY: f32 = 200.0;
+const FESTIVAL: (f32, f32) = (1752.0, 2296.0);
+const FESTIVAL_EVERY: f32 = 48.0;
+/// Lo alto de la Torre del Reformador (hasta la punta del faro).
+const TOWER_TOP: f32 = 66.0;
+/// Hasta cuantos cohetes en el aire, cuanto vive cada uno despues de
+/// reventar (s), cuanto tarda en subir y cuantas chispas tiene.
+const MAX_BURSTS: usize = 8;
+const BURST_LIFE: f32 = 3.5;
+const RISE: f32 = 0.9;
+const SPARKS: u32 = 70;
+const MAX_SPARK_SEGS: usize = 600;
 /// Rumbo de los angulos horneados: de -70 a 70 grados, cada 10.
 const YAWS: usize = 15;
 const YAW_STEP: f32 = 10.0 * PI / 180.0;
@@ -419,6 +471,8 @@ struct Car {
     /// ultimo golpe.
     smoke: f32,
     bumped: f32,
+    /// Las calaveras (0 a 1): suben a 12/s al frenar y bajan a 5/s.
+    brake_light: f32,
 }
 
 impl Car {
@@ -441,6 +495,7 @@ impl Car {
             best_lap: None,
             smoke: 0.0,
             bumped: 10.0,
+            brake_light: 0.0,
         }
     }
 
@@ -485,6 +540,92 @@ enum Sound {
     Horn,
     Beep(f32, f32),
     Whoosh,
+    /// El pum de un cohete: llega `.0` segundos despues (lo que tarda en
+    /// subir mas lo que tarda el sonido) y la palmera truena dos veces.
+    Pum(f32, bool),
+}
+
+/// Un cohete: hacia donde revienta (rumbo de mundo y elevacion, rad),
+/// cuando salio (reloj de pared; revienta `RISE` despues), su semilla y su
+/// clase: 0 palmera dorada, 1 navideno (rojo y verde), 2 patrio (celeste
+/// y blanco), 3 de papel de china y 4 crepitante.
+#[derive(Clone, Copy, Debug)]
+struct Burst {
+    yaw: f32,
+    pitch: f32,
+    born: f32,
+    seed: u32,
+    kind: u8,
+}
+
+impl Burst {
+    /// Cuanto lleva reventado (negativo mientras sube).
+    fn age(&self, wall: f32) -> f32 {
+        wall - self.born - RISE
+    }
+
+    /// La chispa `i` a los `t` segundos de reventar, sin estado (todo sale
+    /// de la semilla): su corrimiento en rumbo y elevacion desde el centro
+    /// del cohete. La direccion es un punto al azar en una esfera vista de
+    /// frente, `(sin th cos ph, sin ph)` con `sin ph` parejo en `[-1, 1]`
+    /// (las chispas se juntan hacia el centro como en una esfera de
+    /// verdad). Se abre como `rho = R (1 - e^(-3 t))` (el aire la frena) y
+    /// cae `0.015 t^2` (el doble la palmera, que se deshace en sauce).
+    fn spark(&self, i: u32, t: f32) -> (f32, f32) {
+        let h = hash_u32(self.seed ^ i.wrapping_mul(0x9E37_79B9));
+        let th = unit(h) * TAU;
+        let sin_ph = unit(hash_u32(h ^ 0x51ED)) * 2.0 - 1.0;
+        let cos_ph = (1.0 - sin_ph * sin_ph).max(0.0).sqrt();
+        let reach = 0.10 + 0.08 * unit(hash_u32(self.seed ^ 0xB0B));
+        let rho = reach * (1.0 - (-3.0 * t.max(0.0)).exp());
+        let fall = if self.kind == 0 { 0.03 } else { 0.015 } * t * t;
+        (th.sin() * cos_ph * rho, sin_ph * rho - fall)
+    }
+
+    /// El color de la chispa `i` (luz lineal).
+    fn color(&self, i: u32) -> Vec3 {
+        match self.kind {
+            0 => Vec3::new(1.0, 0.72, 0.3),
+            1 => if i % 2 == 0 { Vec3::new(1.0, 0.15, 0.1) } else { Vec3::new(0.2, 1.0, 0.35) },
+            2 => if i % 2 == 0 { Vec3::new(0.3, 0.65, 1.0) } else { Vec3::new(1.0, 1.0, 1.0) },
+            3 => PAPEL[(i % 6) as usize],
+            _ => Vec3::new(0.95, 0.92, 1.0),
+        }
+    }
+
+    /// Lo que brilla la chispa `i` a los `t` segundos: `e^(-1.3 t)`, y la
+    /// crepitante destella al doble en uno de cada cuatro pasos de 1/18 s.
+    fn bright(&self, i: u32, t: f32) -> f32 {
+        let b = (-1.3 * t.max(0.0)).exp();
+        if self.kind == 4 && hash_u32(self.seed ^ i.wrapping_mul(0x2545_F491) ^ ((t * 18.0) as u32).wrapping_mul(0x85EB_CA77)) & 3 == 0 { 2.0 * b } else { b }
+    }
+}
+
+/// Un trazo de chispa en la pantalla: la capsula de la cola `a` a la cabeza
+/// `b`, su color ya por su brillo, cuanto emite, su radio (px), lo que
+/// brilla la cola y la caja hasta donde llega su halo.
+#[derive(Clone, Copy, Debug)]
+struct SparkSeg {
+    a: (f32, f32),
+    b: (f32, f32),
+    color: Vec3,
+    emit: f32,
+    w: f32,
+    /// Cuanto queda de luz en la cola (`a`): de ahi crece a 1 en la cabeza.
+    tail: f32,
+    lo: (f32, f32),
+    hi: (f32, f32),
+}
+
+/// Un barrilete en la vuelta: donde (m), de que lado, cuanto mide (m), su
+/// diseno y su numero.
+#[derive(Clone, Copy, Debug)]
+struct KiteSpot {
+    s: f32,
+    side: f32,
+    size: f32,
+    design: u8,
+    id: u32,
 }
 
 /// El sintetizador del juego: el motor de quien juega, el viento y los
@@ -502,6 +643,8 @@ struct Synth {
     throttle: f32,
     speed: f32,
     rpm_now: f32,
+    /// El ruido grave de los cohetes (un pasabajos de un polo).
+    boom: f32,
     events: Vec<(Sound, f32)>,
 }
 
@@ -518,6 +661,8 @@ pub struct Carrera {
     /// Sprites de cada clase (15 angulos) y de la nave propia (9).
     sets: Vec<Vec<Sprite>>,
     player_set: Vec<Sprite>,
+    /// El color del charco de luz de cada clase (el de sus LEDs).
+    tint: [Vec3; 4],
     panorama: Panorama,
     /// La capital horneada, el gradiente del cielo sobre el limbo (lineal y
     /// ya con tono) y lo que pasa en el: el Fuego y las estrellas fugaces.
@@ -527,6 +672,16 @@ pub struct Carrera {
     eruption: Eruption,
     meteor: Option<Meteor>,
     next_meteor: f32,
+    /// Los barriletes horneados (cada diseno con sus mips) y donde van.
+    kites: Vec<Vec<Sprite>>,
+    kite_spots: Vec<KiteSpot>,
+    /// Los cohetes en el aire, cuando sale el proximo de ambiente y
+    /// cuantos han salido (la semilla).
+    bursts: Vec<Burst>,
+    next_burst: f32,
+    burst_count: u32,
+    /// Cuando se dio el verde (reloj de pared).
+    green_at: Option<f32>,
     minimap: Vec<[f32; 4]>,
     map_size: usize,
     puffs: Vec<Puff>,
@@ -553,6 +708,11 @@ pub struct Carrera {
     done: bool,
     synth: Synth,
     wall: f32,
+    /// El paso de los `update` (s), suavizado: lo que se corre la pista en
+    /// un frame emborrona las rayas a lo largo. Con un pasabajos de 4/s,
+    /// `dt' += (dt - dt') (1 - e^(-4 dt))`, el temblor del vsync (16.4 a
+    /// 16.9 ms) no mueve el borron de un frame al otro.
+    frame_dt: f32,
     /// La entrada del frame (la fisica la usa en cada paso).
     steer_in: f32,
     throttle_in: bool,
@@ -590,7 +750,10 @@ impl Carrera {
             let rest = baked.split_off(YAWS);
             sets.push(std::mem::replace(&mut baked, rest));
         }
+        let tint = std::array::from_fn(|k| if Kind::ALL[k] == Kind::Chela { Vec3::new(1.0, 0.7, 0.3) } else { led_tint(&sets[k][YAWS / 2]) });
         let track = Track::new();
+        let kites = escenario::barriletes();
+        let kite_spots = kite_spots(&track);
         let map_size = (190.0 * s) as usize;
         let minimap = draw_map(&track, map_size);
         let names = models.map(|m| m.name);
@@ -603,6 +766,7 @@ impl Carrera {
             accumulator: 0.0,
             sets,
             player_set,
+            tint,
             panorama: Panorama::new(sky),
             ciudad: Ciudad::new(),
             sky_lin_lut: (0..SKY_LUT).map(|i| sky_lin(sky_eps(i))).collect(),
@@ -610,6 +774,12 @@ impl Carrera {
             eruption: Eruption::new(),
             meteor: None,
             next_meteor: 3.0,
+            kites,
+            kite_spots,
+            bursts: Vec::new(),
+            next_burst: 0.0,
+            burst_count: 0,
+            green_at: None,
             minimap,
             map_size,
             puffs: Vec::new(),
@@ -630,6 +800,7 @@ impl Carrera {
             done: false,
             synth: Synth { noise: 0x5EED, ..Synth::default() },
             wall: 0.0,
+            frame_dt: 1.0 / 60.0,
             steer_in: 0.0,
             throttle_in: false,
             brake_in: false,
@@ -672,11 +843,74 @@ impl Carrera {
         self.fov = 0.0;
         self.fov_v = 0.0;
         self.boost_s = 0.0;
+        self.bursts.clear();
+        self.green_at = None;
+        // Los pum de los cohetes que aun no llegan: sin cohetes, tampoco
+        // su trueno (al salir al menu seguirian tronando hasta 2 s).
+        self.synth.events.retain(|(sound, _)| !matches!(sound, Sound::Pum(..)));
+    }
+
+    /// Lanza un cohete que revienta en `(yaw, pitch)` dentro de `explode_in`
+    /// segundos (si es menos de lo que tarda en subir, ya va subiendo). Si
+    /// ya hay `MAX_BURSTS` en el aire se va el mas viejo. El pum llega de
+    /// 0.3 a 0.8 s despues de reventar (lo lejos que esta).
+    fn spawn_burst(&mut self, yaw: f32, pitch: f32, kind: u8, explode_in: f32) {
+        self.burst_count = self.burst_count.wrapping_add(1);
+        let seed = hash_u32(self.burst_count.wrapping_mul(0x2C1B_3C6D) ^ 0xC0E7);
+        if self.bursts.len() >= MAX_BURSTS {
+            self.bursts.remove(0);
+        }
+        self.bursts.push(Burst { yaw, pitch, born: self.wall + explode_in - RISE, seed, kind });
+        let delay = explode_in.max(0.0) + 0.3 + 0.5 * unit(hash_u32(seed ^ 0xD1A));
+        self.sound(Sound::Pum(delay, kind == 0));
+    }
+
+    /// Cohetes alrededor de un rumbo: `count` que revientan de `at` en
+    /// adelante, uno cada `every` segundos, repartidos `spread` rad a cada
+    /// lado y de `pitch.0` a `pitch.1` de alto, con clases al azar.
+    fn volley(&mut self, count: u32, at: f32, every: f32, spread: f32, pitch: (f32, f32)) {
+        let heading = self.camera().heading;
+        for k in 0..count {
+            let h = hash_u32(self.burst_count.wrapping_add(k).wrapping_mul(0x9E37_79B9) ^ 0x7ED);
+            let r = |j: u32| unit(hash_u32(h ^ j.wrapping_mul(0x85EB_CA6B)));
+            let side = if count > 1 { k as f32 / (count - 1) as f32 * 2.0 - 1.0 } else { 0.0 };
+            let yaw = heading + side * spread + (r(1) - 0.5) * 0.12;
+            self.spawn_burst(yaw, pitch.0 + (pitch.1 - pitch.0) * r(2), (r(3) * 5.0) as u8 % 5, at + every * k as f32);
+        }
     }
 
     /// Que la IA maneje la nave propia (pruebas y capturas).
     pub fn set_autopilot(&mut self, on: bool) {
         self.autopilot = on;
+    }
+
+    /// Si la camara va adentro de un tunel de arcos con arcos adelante (de
+    /// la entrada a 48 m de la salida): para las fotos.
+    pub fn in_tunnel(&self) -> bool {
+        let here = self.camera().s.rem_euclid(self.track.length());
+        ARCH_ZONES.iter().any(|&(a, b)| (a - 8.0..b - 48.0).contains(&here))
+    }
+
+    /// Si la camara va por el festival de barriletes con barriletes
+    /// adelante de los dos lados: para las fotos.
+    pub fn in_festival(&self) -> bool {
+        let here = self.camera().s.rem_euclid(self.track.length());
+        (FESTIVAL.0 + 40.0..FESTIVAL.1 - 240.0).contains(&here)
+    }
+
+    /// Cuantos metros faltan para el proximo tumulo delante de la nave
+    /// propia (el centro de su tramo), para la foto de los tumulos.
+    pub fn bump_ahead(&self) -> Option<f32> {
+        let s = self.player().s;
+        let length = self.track.length();
+        let here = s.rem_euclid(length);
+        self.track
+            .segments
+            .iter()
+            .enumerate()
+            .filter(|(_, seg)| seg.bumps != 0)
+            .map(|(i, _)| ((i as f32 + 0.5) * SEGMENT - here).rem_euclid(length))
+            .min_by(f32::total_cmp)
     }
 
     /// Empieza el semaforo.
@@ -745,6 +979,9 @@ impl Carrera {
                     self.drive(i, rubber)
                 }
             };
+            // Las calaveras siguen al freno (tambien en la largada).
+            let light = &mut self.cars[i].brake_light;
+            *light = if brake { (*light + 12.0 * STEP).min(1.0) } else { (*light - 5.0 * STEP).max(0.0) };
             if !racing {
                 // En la largada nadie se mueve (el trafico tampoco).
                 continue;
@@ -1052,6 +1289,7 @@ impl Minigame for Carrera {
     fn update(&mut self, dt: f64, keys: &Keys) {
         let dt = (dt as f32).min(0.1);
         self.wall += dt;
+        self.frame_dt += (dt - self.frame_dt) * (1.0 - (-4.0 * dt).exp());
         self.steer_in = keys.steer;
         self.throttle_in = keys.throttle;
         self.brake_in = keys.brake;
@@ -1074,8 +1312,12 @@ impl Minigame for Carrera {
                 }
                 self.phase = if next >= 3.0 { Phase::Racing } else { Phase::Countdown(next) };
                 if self.phase == Phase::Racing {
-                    // Con el verde, el Fuego da la salida.
+                    // Con el verde, el Fuego da la salida y revientan seis
+                    // cohetes alrededor de la torre.
                     self.eruption.next = self.wall;
+                    self.green_at = Some(self.wall);
+                    self.volley(6, 0.4, 0.12, 0.42, (0.12, 0.3));
+                    self.next_burst = self.wall + 5.0;
                     self.message("¡Dale!", [140, 255, 150, 255]);
                     // Salida perfecta: acelerando justo en el verde.
                     if keys.throttle && t > 2.6 {
@@ -1115,11 +1357,14 @@ impl Minigame for Carrera {
         if matches!(self.phase, Phase::Racing | Phase::Finished(_)) {
             self.clock += dt;
         }
+        let length = self.track.length();
+        let lap_before = self.cars[0].lap(length);
         self.accumulator += dt;
         while self.accumulator >= STEP {
             self.physics();
             self.accumulator -= STEP;
         }
+        self.fireworks(lap_before < self.cars[0].lap(length) && self.cars[0].s > 1.0);
         if self.phase == Phase::Racing && self.cars[0].finished.is_some() {
             self.phase = Phase::Finished(0.0);
             let place = self.place();
@@ -1203,6 +1448,9 @@ impl Minigame for Carrera {
             // El viento sube con la velocidad.
             synth.wind += (white - synth.wind) * (0.01 + 0.08 * synth.speed);
             let mut mix = synth.low * level + synth.wind * 0.25 * synth.speed * synth.speed;
+            // La envolvente de los pum de los cohetes: su ruido sale de un
+            // solo pasabajos compartido.
+            let mut boom = 0.0;
             for (sound, age) in &mut synth.events {
                 let t = *age;
                 mix += match *sound {
@@ -1224,12 +1472,25 @@ impl Minigame for Carrera {
                     }
                     Sound::Beep(f, len) => (t * f * TAU).sin() * 0.2 * smoothstep(len, len - 0.03, t),
                     Sound::Whoosh => white * 0.35 * (t * 4.0).min(1.0) * (-t * 2.2).exp(),
+                    // Ruido grave que cae en 0.4 s (`e^(-t / 0.4)`) y un
+                    // golpe de 48 Hz; la palmera truena otra vez 0.22 s
+                    // despues.
+                    Sound::Pum(delay, double) => {
+                        let hit = |t0: f32| if t >= t0 { (-(t - t0) / 0.4).exp() } else { 0.0 };
+                        let thump = |t0: f32| if t >= t0 { ((t - t0) * 48.0 * TAU).sin() * (-(t - t0) * 9.0).exp() } else { 0.0 };
+                        let second = if double { 0.8 } else { 0.0 };
+                        boom += hit(delay) + second * hit(delay + 0.22);
+                        (thump(delay) + second * thump(delay + 0.22)) * 0.3
+                    }
                 };
                 *age += dt;
             }
+            // Un polo en ~170 Hz: `y += (x - y) 0.025` a 44.1 kHz.
+            synth.boom += (white * boom.min(2.0) - synth.boom) * 0.025;
+            mix += synth.boom * 2.2;
             *sample = mix / (1.0 + mix.abs());
         }
-        synth.events.retain(|(_, age)| *age < 1.2);
+        synth.events.retain(|(sound, age)| *age < if matches!(sound, Sound::Pum(..)) { 4.0 } else { 1.2 });
     }
 
     /// Las filas en paralelo (con la emision de cada pixel en su alfa) y
@@ -1404,6 +1665,62 @@ impl Carrera {
         }
     }
 
+    /// Los cohetes: uno de ambiente cada 4 a 9 s durante la carrera (a
+    /// +-0.7 rad del rumbo y de 0.06 a 0.3 rad de alto), cuatro cuando
+    /// quien juega cruza la meta, y se van los que ya se apagaron.
+    fn fireworks(&mut self, lap_done: bool) {
+        let wall = self.wall;
+        self.bursts.retain(|b| b.age(wall) < BURST_LIFE);
+        if lap_done {
+            self.volley(4, 0.25, 0.3, 0.5, (0.1, 0.28));
+        }
+        if self.phase == Phase::Racing && wall >= self.next_burst {
+            let h = hash_u32(self.next_burst.to_bits() ^ 0xF17E);
+            let r = |k: u32| unit(hash_u32(h ^ k.wrapping_mul(0x9E37_79B9)));
+            let yaw = self.camera().heading + (r(1) * 2.0 - 1.0) * 0.7;
+            self.spawn_burst(yaw, 0.06 + 0.24 * r(2), (r(3) * 5.0) as u8 % 5, RISE);
+            self.next_burst = wall + 4.0 + 5.0 * r(4);
+        }
+    }
+
+    /// La luz que cae de los arcos de foquitos en el punto `s` de la pista
+    /// (m, contando vueltas): el color del arco mas cercano por
+    /// `e^(-ds^2 / 20)` (unos 4.5 m a cada lado). Cero lejos de los
+    /// tuneles. El color pasa al siguiente de la paleta tres veces por
+    /// segundo con un fundido, `smoothstep(fract(3 t))` en lo que dura cada
+    /// uno, y no de golpe (si no la pista y las naves parpadean).
+    fn arch_spill(&self, s: f32) -> Vec3 {
+        // (Los arcos se cuentan en cada vuelta y no hay cerca de la meta:
+        // basta el mas cercano dentro de la vuelta.)
+        let length = self.track.length();
+        let local = s.rem_euclid(length);
+        let n = ((local - ARCH_OFFSET) / ARCH_EVERY).round();
+        let at = n * ARCH_EVERY + ARCH_OFFSET;
+        let ds = local - at;
+        if !arches_at(at) {
+            return Vec3::ZERO;
+        }
+        // Los de junto a la meta con el eco del semaforo.
+        let signal = if at.min(length - at) < 48.0 { self.arch_signal() } else { 0 };
+        if signal > 0 {
+            return if signal == 1 { Vec3::new(1.0, 0.1, 0.08) } else { Vec3::new(0.2, 1.0, 0.35) } * fast_exp(-ds * ds / 20.0);
+        }
+        let phase = self.wall * 3.0;
+        let k = (2.0 * n + phase.floor()) as i64;
+        let (a, b) = (ARCH_PAL[k.rem_euclid(5) as usize], ARCH_PAL[(k + 1).rem_euclid(5) as usize]);
+        a.lerp(b, smoothstep(0.0, 1.0, fract(phase))) * fast_exp(-ds * ds / 20.0)
+    }
+
+    /// El eco del semaforo en los arcos de junto a la meta: 1 rojo con la
+    /// cuenta, 2 verde el primer segundo y medio del verde, 0 si no.
+    fn arch_signal(&self) -> u8 {
+        match self.phase {
+            Phase::Countdown(_) => 1,
+            _ if self.green_at.is_some_and(|g| self.wall - g < 1.5) => 2,
+            _ => 0,
+        }
+    }
+
     fn results(&self, o: &mut Overlay) {
         let s = self.height as f32 / 720.0;
         let w = self.width as f32;
@@ -1558,7 +1875,7 @@ impl Carrera {
                 let inv = (1.0 / d0) * (1.0 - t) + (1.0 / d1) * t;
                 let d = 1.0 / inv;
                 let u = (d - d0) / (d1 - d0);
-                RoadRow { center: sx0 + (sx1 - sx0) * t, per_meter: cam.focal / d, depth: d, s: s0 + u * SEGMENT, segment: self.track.index(s0 + u * SEGMENT) }
+                RoadRow { center: sx0 + (sx1 - sx0) * t, per_meter: cam.focal / d, depth: d, s: s0 + u * SEGMENT, ds_dy: 0.0, cut: false }
             };
             if sy1 > sy0 {
                 // Un tramo que baja en la pantalla al alejarse: la pista cae
@@ -1585,6 +1902,31 @@ impl Carrera {
             }
             top = top.min(sy1);
         }
+        // Cuantos metros de pista abarca cada fila (`ds_dy`): la resta con
+        // la de arriba, o si no sigue la misma pista (no hay, o el salto
+        // pasa de 20 m: un corte en una cresta) con la de abajo. Si ninguna
+        // sirve, el de un suelo plano a `hc` metros bajo la camara: de
+        // `y = f hc / d`, `|ds / dy| = d^2 / (f hc)`, y la fila queda
+        // marcada como corte.
+        for layer in [&mut rows, &mut far] {
+            for y in 0..h {
+                let Some(r) = layer[y] else { continue };
+                let step = |n: Option<RoadRow>| n.map(|n| (n.s - r.s).abs()).filter(|&ds| ds <= 20.0);
+                let up = if y > 0 { step(layer[y - 1]) } else { None };
+                let down = if y + 1 < h { step(layer[y + 1]) } else { None };
+                let (ds, cut) = match up.or(down) {
+                    Some(ds) => (ds, false),
+                    None => {
+                        let hc = (cam.y - self.track.height(r.s)).max(0.5);
+                        (r.depth * r.depth / (cam.focal * hc), true)
+                    }
+                };
+                if let Some(r) = layer[y].as_mut() {
+                    r.ds_dy = ds;
+                    r.cut = cut;
+                }
+            }
+        }
         // Lo que va encima.
         let mut items = Vec::new();
         let at = |d: f32| -> Option<(f32, f32, f32)> {
@@ -1601,43 +1943,90 @@ impl Carrera {
             let curve = self.track.curvature(s0);
             Some((x0 + local * (th0 + curve * local * 0.5), self.track.height(cam.s + d), th0 + curve * local))
         };
-        // Los postes, las vallas y la meta.
-        let first = ((cam.s / LAMP_EVERY).floor() + 1.0) as i64;
-        for k in first..first + (DRAW as f32 * SEGMENT / LAMP_EVERY) as i64 {
-            let s = k as f32 * LAMP_EVERY;
-            let d = s - cam.s;
-            if let Some((x, y, _)) = at(d) {
-                let side = if k % 2 == 0 { 1.0 } else { -1.0 };
-                items.push(Item { depth: d, kind: ItemKind::Lamp { side }, x: cx + (x + side * (RAIL + 0.7) - cam.x) * cam.focal / d, y: cam.horizon - (y - cam.y) * cam.focal / d, scale: cam.focal / d });
-            }
-        }
-        let first = ((cam.s / BILLBOARD_EVERY).floor() + 1.0) as i64;
-        for k in first..first + 5 {
-            let s = k as f32 * BILLBOARD_EVERY + 60.0;
-            let d = s - cam.s;
-            if let Some((x, y, _)) = at(d) {
-                let side = if k % 2 == 0 { 1.0 } else { -1.0 };
-                items.push(Item { depth: d, kind: ItemKind::Billboard { side, motif: k.rem_euclid(5) as usize }, x: cx + (x + side * (RAIL + 7.0) - cam.x) * cam.focal / d, y: cam.horizon - (y - cam.y) * cam.focal / d, scale: cam.focal / d });
-            }
-        }
+        // Algo a `d` metros, `lateral` del centro de la pista y a la altura
+        // `y` (m), con su punto en el suelo en la pantalla.
+        let place = |d: f32, kind: ItemKind, lateral: f32, x: f32, y: f32| Item::new(d, kind, cx + (x + lateral - cam.x) * cam.focal / d, cam.horizon - (y - cam.y) * cam.focal / d, cam.focal / d);
+        // Los postes.
         let length = self.track.length();
+        let first = lamp_after(cam.s, length);
+        for n in first..first + 64 {
+            let (s, side) = lamp(n, length);
+            let d = s - cam.s;
+            if d > DRAW as f32 * SEGMENT {
+                break;
+            }
+            if let Some((x, y, _)) = at(d) {
+                items.push(place(d, ItemKind::Lamp { side }, side * (RAIL + 0.7), x, y));
+            }
+        }
+        // Los arcos de foquitos (desde 1.5 m: mas cerca taparian la vista
+        // un frame; y no los que la neblina ya borro). Cada arco esta de
+        // frente a la pista; la camara lo ve con el angulo `rel` entre el
+        // rumbo de la pista alli y su rayo, `atan(x / d)`: a lo ancho se
+        // angosta `max(|cos rel|, 0.15)` (de canto es una elipse angosta y
+        // no un circulo entero). Los de junto a la meta (a menos de 48 m)
+        // hacen eco del semaforo con la cuenta y el primer segundo y medio
+        // del verde: todos sus focos rojos o verdes, asi no revuelven la
+        // senal con sus colores.
+        let signal = self.arch_signal();
+        let lap = (cam.s / length).floor();
+        for base_s in [lap * length, (lap + 1.0) * length] {
+            let mut k = (((cam.s - base_s - ARCH_OFFSET) / ARCH_EVERY).floor() as i64 + 1).max(0);
+            loop {
+                let local = k as f32 * ARCH_EVERY + ARCH_OFFSET;
+                let d = base_s + local - cam.s;
+                if local >= length || d > DRAW as f32 * SEGMENT {
+                    break;
+                }
+                if d > 1.5 && fog_at(d) < 0.98 && arches_at(local) {
+                    if let Some((x, y, theta)) = at(d) {
+                        let rel = theta - ((x - cam.x) / d).atan();
+                        let squash = rel.cos().abs().max(0.15);
+                        let signal = if local.min(length - local) < 48.0 { signal } else { 0 };
+                        items.push(place(d, ItemKind::Arch { id: k.rem_euclid(5) as u32, squash, signal }, 0.0, x, y));
+                    }
+                }
+                k += 1;
+            }
+        }
+        // Los barriletes de esta vuelta y de la siguiente. Puestos de canto:
+        // miran `0.45 rad` hacia la pista, y la camara los ve con el angulo
+        // `atan(x / d)`; se angostan con `0.35 + 0.65 |cos(rel)|`.
+        let lap = (cam.s / length).floor();
+        for base_s in [lap * length, (lap + 1.0) * length] {
+            for spot in &self.kite_spots {
+                let d = base_s + spot.s - cam.s;
+                if fog_at(d) > 0.98 {
+                    continue;
+                }
+                let Some((x, y, _)) = at(d) else { continue };
+                let lateral = spot.side * (RAIL + 4.0 + 0.5 * spot.size);
+                let rel = ((x + lateral - cam.x) / d).atan() - spot.side * 0.45;
+                let kind = ItemKind::Kite { design: spot.design, size: spot.size, id: spot.id, squash: 0.35 + 0.65 * rel.cos().abs(), lift: 0.5 * spot.size + 5.0 };
+                items.push(place(d, kind, lateral, x, y));
+            }
+        }
+        // La Torre del Reformador sobre la meta: su semaforo y sus focos
+        // siguen la fase.
         let next_line = ((cam.s / length).floor() + 1.0) * length;
         for s in [next_line - length, next_line] {
             let d = s - cam.s;
             if let Some((x, y, _)) = at(d) {
-                let lights = match self.phase {
-                    Phase::Ready => 0,
-                    Phase::Countdown(t) => 1 + t as u8,
-                    _ => 4,
+                let (lights, t) = match self.phase {
+                    Phase::Ready => (0, 0.0),
+                    Phase::Countdown(t) => (1 + t as u8, t),
+                    _ => (4, 0.0),
                 };
-                items.push(Item { depth: d, kind: ItemKind::Gantry { lights }, x: cx + (x - cam.x) * cam.focal / d, y: cam.horizon - (y - cam.y) * cam.focal / d, scale: cam.focal / d });
+                let green = self.green_at.map_or(f32::MAX, |g| self.wall - g);
+                let kind = ItemKind::Tower { lights, t, green, finished: matches!(self.phase, Phase::Finished(_)) };
+                items.push(place(d, kind, 0.0, x, y));
             }
         }
         // El humo.
         for puff in &self.puffs {
             let d = puff.s - cam.s;
             if let Some((x, _, _)) = at(d) {
-                items.push(Item { depth: d, kind: ItemKind::Puff { age: puff.age }, x: cx + (x + puff.x - cam.x) * cam.focal / d, y: cam.horizon - (puff.y - cam.y) * cam.focal / d, scale: cam.focal / d });
+                items.push(place(d, ItemKind::Puff { age: puff.age }, puff.x, x, puff.y));
             }
         }
         // Las naves.
@@ -1661,9 +2050,57 @@ impl Carrera {
             // la nave propia se le devuelve la mitad, `1 + fov / 2`, para
             // que no pierda presencia con el turbo.
             let keep = if i == 0 { 1.0 + 0.5 * self.fov.max(0.0) } else { 1.0 };
-            items.push(Item { depth: d, kind: ItemKind::Car { set, sprite, width: spec.width, length: spec.length, hover: spec.hover, boost: glow, player: i == 0 }, x: sx, y: sy, scale: cam.focal / d * keep });
+            let kind = ItemKind::Car { set, sprite, length: spec.length, boost: glow, player: i == 0, spill: self.arch_spill(car.s) };
+            items.push(Item::new(d, kind, sx, sy, cam.focal / d * keep));
         }
         items.sort_by(|a, b| b.depth.total_cmp(&a.depth));
+        // De que fila a que fila cae cada cosa: las demas filas ni la miran.
+        for item in &mut items {
+            (item.top, item.bottom) = self.item_rows(item);
+        }
+        // Las naves que tapan pista opacas: la propia y las demas que ya
+        // no se desvanecen (a mas de 5.5 m) y miden algo en la pantalla.
+        let solid_items = items.iter().filter(|i| matches!(i.kind, ItemKind::Car { player, .. } if player || (i.depth >= 5.5 && i.scale >= 6.0))).copied().collect();
+        // El charco de luz de cada nave: las diez mas cercanas a la vista.
+        let mut pools: Vec<(f32, Pool)> = self
+            .cars
+            .iter()
+            .filter_map(|car| {
+                let d = car.s - cam.s;
+                if !(0.5..250.0).contains(&d) {
+                    return None;
+                }
+                let spec = car.kind.spec();
+                // La chela flota y no tiene calaveras: su charco es lo unico
+                // que la asienta, va mas fuerte y mas recogido (ver `strip`).
+                let gain = if car.role == Role::Traffic { 0.5 } else { 1.0 } * if spec.hover > 0.0 { 2.0 } else { 1.0 } * (1.0 - fog_at(d));
+                Some((d, Pool { s: car.s, x: car.x, hw: spec.width * 0.5, hl: spec.length * 0.5, tint: self.tint[car.kind.index()], gain, brake: car.brake_light, hover: spec.hover > 0.0 }))
+            })
+            .collect();
+        pools.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let pools: Vec<Pool> = pools.into_iter().take(10).map(|(_, p)| p).collect();
+        // La raya del reflejo de cada poste en el piso mojado: el espejo de
+        // la lampara (a 8.65 m) queda a `-8.65`, y la recta de la camara a
+        // el cruza el suelo a la fraccion `t = hc / (hc + 8.65)` del camino
+        // (`hc` la altura de la camara sobre la pista alla). Se estira hacia
+        // la camara, mas de lejos: `largo = 2 + 0.25 (s - s_camara)`. El
+        // reflejo cae en el plano vertical del ojo y la lampara: en la
+        // pantalla es una raya vertical bajo la lampara, asi que se guarda
+        // la columna de la lampara y cada fila busca su `u` ahi.
+        let mut lamp_spec = Vec::new();
+        let first = lamp_after(cam.s, length);
+        for n in first..first + 16 {
+            let (s_l, side) = lamp(n, length);
+            let d = s_l - cam.s;
+            if d >= 300.0 {
+                break;
+            }
+            let Some((x, _, _)) = at(d) else { continue };
+            let hc = (cam.y - self.track.height(s_l)).max(0.5);
+            let t = hc / (hc + LAMP_HEIGHT);
+            let s_spec = cam.s + d * t;
+            lamp_spec.push((s_spec, cx + (x + side * LAMP_REACH - cam.x) * cam.focal / d, 2.0 + 0.25 * (s_spec - cam.s)));
+        }
 
         // Los puntos del mapa.
         let dots = self
@@ -1689,6 +2126,15 @@ impl Carrera {
             })
             .collect();
         let limb = cam.limb();
+        // El rumbo de cada columna de la estela (su centro en la pantalla)
+        // en el cielo suave.
+        let bw = self.post.streak().width;
+        let sky_u = (0..bw)
+            .map(|i| {
+                let x = (((i as f32 + 0.5) * w as f32 / bw as f32) as usize).min(w.saturating_sub(1));
+                Panorama::soft_cols(cols.get(x).map_or(cam.heading, |c| c.yaw))
+            })
+            .collect();
         // La neblina de cada fila: el cielo que queda atras, en la columna
         // del centro (donde se pierde la pista).
         let haze_row = (0..h).map(|y| sky_sample(&self.sky_lut, (((cam.horizon - (y as f32 + 0.5)) / cam.focal).atan() + limb).max(0.0))).collect();
@@ -1752,6 +2198,77 @@ impl Carrera {
             }
         }
         sparks.sort_by(|a, b| a.lo.1.total_cmp(&b.lo.1));
+        // Los cohetes: cada chispa es una capsula de donde estaba hace
+        // 0.07 s (0.15 la palmera) a donde esta, en el mismo rumbo y
+        // elevacion que el cielo (`project`). Se reparten en cubetas de 8
+        // filas por su caja. El destello de los que acaban de reventar,
+        // `sum color 0.012 e^(-7 t)` (hasta 0.02 por canal), alumbra el cielo
+        // y la pista. (Con 0.06 el cielo de noche, de ~0.005, se iba a gris
+        // cuando revientan varios juntos.)
+        let mut fw_segs: Vec<SparkSeg> = Vec::new();
+        let mut fw_flash = Vec3::ZERO;
+        let push = |segs: &mut Vec<SparkSeg>, a: (f32, f32), b: (f32, f32), color: Vec3, emit: f32, w: f32| {
+            if segs.len() < MAX_SPARK_SEGS {
+                let reach = 8.0 * w + 1.0;
+                segs.push(SparkSeg { a, b, color, emit, w, tail: 0.15, lo: (a.0.min(b.0) - reach, a.1.min(b.1) - reach), hi: (a.0.max(b.0) + reach, a.1.max(b.1) + reach) });
+            }
+        };
+        for burst in &self.bursts {
+            let t = burst.age(self.wall);
+            if t < 0.0 {
+                // Subiendo desde la capital (elevacion -0.35) y frenando:
+                // `p = pitch + (-0.35 - pitch) u^2` con `u` lo que le falta.
+                let rise = |t: f32| {
+                    let u = (-t / RISE).clamp(0.0, 1.0);
+                    burst.pitch + (-0.35 - burst.pitch) * u * u
+                };
+                if let (Some(a), Some(b)) = (project(burst.yaw, rise(t - 0.12)), project(burst.yaw, rise(t))) {
+                    push(&mut fw_segs, a, b, Vec3::new(1.0, 0.7, 0.4) * 0.9, 0.8, 0.7);
+                }
+                continue;
+            }
+            if t < 0.6 {
+                fw_flash += (burst.color(0) + burst.color(1)) * (0.006 * (-7.0 * t).exp());
+            }
+            let Some(center) = project(burst.yaw, burst.pitch) else { continue };
+            // El fogonazo del centro al reventar.
+            if t < 0.25 {
+                let f = (-12.0 * t).exp();
+                push(&mut fw_segs, center, center, Vec3::new(1.0, 0.9, 0.75) * (2.0 * f), f, 1.5 + 2.5 * f);
+                // (Un punto: pareja, sin cola.)
+                if let Some(last) = fw_segs.last_mut() {
+                    last.tail = 1.0;
+                }
+            }
+            // Lo que mide abierto en la pantalla: si no pasa de 2 px, aun no.
+            if burst.spark(0, t).0.hypot(burst.spark(0, t).1) * cam.focal < 2.0 && t < 0.1 {
+                continue;
+            }
+            let trail = if burst.kind == 0 { 0.15 } else { 0.07 };
+            let w = 0.6 + 0.5 * (-t).exp();
+            for i in 0..SPARKS {
+                let bright = burst.bright(i, t);
+                if bright < 0.02 {
+                    continue;
+                }
+                let (y0, p0) = burst.spark(i, (t - trail).max(0.0));
+                let (y1, p1) = burst.spark(i, t);
+                if let (Some(a), Some(b)) = (project(burst.yaw + y0, burst.pitch + p0), project(burst.yaw + y1, burst.pitch + p1)) {
+                    push(&mut fw_segs, a, b, burst.color(i) * (1.3 * bright), bright.min(1.0), w);
+                }
+            }
+        }
+        // Al cielo hasta 0.02 por canal; la pista se aclara aparte, por su
+        // propio color (`c (1 + 2 destello)`), hasta un 12 %.
+        let fw_flash_road = fw_flash.min(Vec3::splat(0.06));
+        let fw_flash = fw_flash.min(Vec3::splat(0.02));
+        let mut fw_buckets: Vec<Vec<u16>> = vec![Vec::new(); h.div_ceil(8)];
+        for (i, seg) in fw_segs.iter().enumerate() {
+            let (b0, b1) = ((seg.lo.1.max(0.0) / 8.0) as usize, (seg.hi.1.max(0.0) / 8.0) as usize);
+            for bucket in fw_buckets.iter_mut().take(b1 + 1).skip(b0) {
+                bucket.push(i as u16);
+            }
+        }
         let e = &self.eruption;
         View {
             game: self,
@@ -1772,7 +2289,174 @@ impl Carrera {
             flows: e.flows,
             meteor,
             sparks,
+            pools,
+            lamp_spec,
+            blur_s: (self.cars[0].v * self.frame_dt).clamp(0.0, 3.0),
+            sky_u,
+            solid_items,
+            fw_segs,
+            fw_buckets,
+            fw_flash,
+            fw_flash_road,
         }
+    }
+
+    /// De que fila a que fila de la pantalla cae algo (con un margen): la
+    /// nave, su sprite (y el fuego del turbo de la propia); el poste, la
+    /// torre, el arco y el barrilete, lo que miden en metros por los
+    /// pixeles por metro; el humo, su radio.
+    fn item_rows(&self, item: &Item) -> (f32, f32) {
+        let k = item.scale;
+        let y = item.y;
+        match item.kind {
+            ItemKind::Car { set, sprite, player, .. } => {
+                let sprite = if set == usize::MAX { self.player_set.get(sprite) } else { self.sets.get(set).and_then(|s| s.get(sprite)) };
+                let Some(sprite) = sprite else { return (0.0, -1.0) };
+                let scale = k / sprite.scale;
+                let (mut top, mut bottom) = (y - sprite.anchor.1 * scale, y + (sprite.height as f32 - sprite.anchor.1) * scale);
+                if player {
+                    top = top.min(y - 2.1 * k);
+                    bottom = bottom.max(y + 1.1 * k);
+                }
+                (top - 1.0, bottom + 1.0)
+            }
+            ItemKind::Lamp { .. } => (y - 11.5 * k, y + 0.3 * k),
+            ItemKind::Tower { .. } => (y - (TOWER_TOP - 1.0) * k - 4.0 * beacon_spread(k), y + 0.3 * k),
+            ItemKind::Arch { .. } => (y - (ARCH_B + 1.2) * k, y + 0.5 * k),
+            ItemKind::Kite { size, lift, .. } => (y - (lift + 0.62 * size) * k - 2.0, y + 0.3 * k),
+            ItemKind::Puff { age } => {
+                let radius = (1.0 + 1.6 * age) * k;
+                (y - radius, y + radius)
+            }
+        }
+    }
+}
+
+/// Si en el punto `lap_s` de la vuelta (m) hay tunel de arcos.
+fn arches_at(lap_s: f32) -> bool {
+    ARCH_ZONES.iter().any(|&(a, b)| (a..b).contains(&lap_s))
+}
+
+/// Cuantos postes hay en una vuelta de `length` m: en `k LAMP_EVERY` con
+/// `k = 1, 2, ...` mientras quede a `LAMP_CLEAR` m de la meta siguiente
+/// (el de `k = 0` caeria en la pata de la torre).
+fn lamps_per_lap(length: f32) -> i64 {
+    ((length - LAMP_CLEAR) / LAMP_EVERY).floor().max(1.0) as i64
+}
+
+/// El poste numero `n` (contando desde la primera vuelta, negativo antes):
+/// su `s` contando vueltas y su lado (los pares a la derecha). Se cuentan
+/// por vuelta para que caigan en el mismo lugar de cada vuelta (la vuelta
+/// no mide un multiplo de 48 m) y lejos de la meta.
+fn lamp(n: i64, length: f32) -> (f32, f32) {
+    let per = lamps_per_lap(length);
+    let (lap, k) = (n.div_euclid(per), n.rem_euclid(per) + 1);
+    (lap as f32 * length + k as f32 * LAMP_EVERY, if k % 2 == 0 { 1.0 } else { -1.0 })
+}
+
+/// El numero del primer poste despues de `s` (m, contando vueltas).
+fn lamp_after(s: f32, length: f32) -> i64 {
+    let per = lamps_per_lap(length);
+    let lap = (s / length).floor();
+    let k = ((s - lap * length) / LAMP_EVERY).floor() as i64 + 1;
+    lap as i64 * per + (k - 1).min(per)
+}
+
+/// Los barriletes de una vuelta: uno de 12 m cada 200 m, alternando lado,
+/// y el festival antes de la meta, uno cada 48 m alternando lado y de 9, 14
+/// y 18 m. Todos caen a medio camino entre dos postes (`s = 24` modulo 48:
+/// los postes se cuentan por vuelta) y ninguno adentro de un tunel de arcos
+/// (ni a 6 m): el que caeria ahi se corre al lugar libre mas cercano, asi
+/// sus focos y su cable no le pasan por la cara.
+fn kite_spots(track: &Track) -> Vec<KiteSpot> {
+    let length = track.length();
+    let mid = |s: f32| ((s - 0.5 * LAMP_EVERY) / LAMP_EVERY).round() * LAMP_EVERY + 0.5 * LAMP_EVERY;
+    let clear = |s: f32| !ARCH_ZONES.iter().any(|&(a, b)| (a - 6.0..b + 6.0).contains(&s));
+    let mut spots = Vec::new();
+    let mut id = 0u32;
+    let mut k = 0;
+    while (k as f32 + 0.5) * KITE_EVERY < length {
+        let mut s = mid((k as f32 + 0.5) * KITE_EVERY);
+        // El lugar libre mas cercano, de 48 en 48 hacia los dos lados.
+        if !clear(s) {
+            s = (1..12)
+                .flat_map(|j| [s + j as f32 * LAMP_EVERY, s - j as f32 * LAMP_EVERY])
+                .find(|&c| (0.0..length).contains(&c) && clear(c))
+                .unwrap_or(s);
+        }
+        if !(FESTIVAL.0 - 20.0..FESTIVAL.1 + 20.0).contains(&s) {
+            spots.push(KiteSpot { s, side: if k % 2 == 0 { -1.0 } else { 1.0 }, size: 12.0, design: (id % 4) as u8, id });
+            id += 1;
+        }
+        k += 1;
+    }
+    let mut s = mid(FESTIVAL.0);
+    let mut side = 1.0;
+    while s < FESTIVAL.1 {
+        spots.push(KiteSpot { s, side, size: [9.0, 14.0, 18.0][id as usize % 3], design: (id % 4) as u8, id });
+        id += 1;
+        side = -side;
+        s += FESTIVAL_EVERY;
+    }
+    spots
+}
+
+/// Lo que mide la torre a la altura `my` (m) a cada lado del centro: el borde de
+/// afuera de las patas, `wo = 2.2 + (RAIL + 2.6) max(1 - my / 58, 0)^1.8`
+/// (abiertas abajo, rectas arriba), y el arco de adentro,
+/// `wi = (RAIL + 0.9) sqrt(1 - (my / 13)^2)` hasta 13 m (0 arriba).
+fn tower_outer(my: f32) -> f32 {
+    2.2 + (RAIL + 2.6) * (1.0 - my / 58.0).max(0.0).powf(1.8)
+}
+
+fn tower_inner(my: f32) -> f32 {
+    if my < 13.0 { (RAIL + 0.9) * (1.0 - (my / 13.0).powi(2)).max(0.0).sqrt() } else { 0.0 }
+}
+
+/// Los doce focos de cada lado del arco de la torre: parejos en el angulo
+/// `phi = (j + 0.5) pi / 24` de la elipse de semiejes `(RAIL + 0.9, 13)`,
+/// `(a cos phi, b sin phi)`, calculados una vez.
+fn tower_arc_bulbs() -> &'static [(f32, f32); 12] {
+    static BULBS: OnceLock<[(f32, f32); 12]> = OnceLock::new();
+    BULBS.get_or_init(|| {
+        std::array::from_fn(|j| {
+            let phi = (j as f32 + 0.5) * std::f32::consts::FRAC_PI_2 / 12.0;
+            ((RAIL + 0.9) * phi.cos(), 13.0 * phi.sin())
+        })
+    })
+}
+
+/// Lo que se abre el halo del faro de la torre (px): 1.5 m, entre 6 y 40
+/// px (de cerca, un halo de cientos de pixeles solo costaria).
+fn beacon_spread(k: f32) -> f32 {
+    (1.5 * k).clamp(6.0, 40.0)
+}
+
+/// Una lista corta en la pila, para lo que se arma por fila sin pedir
+/// memoria al monton: lo que ya no cabe se descarta.
+struct Short<T: Copy + Default, const N: usize> {
+    items: [T; N],
+    len: usize,
+}
+
+impl<T: Copy + Default, const N: usize> Short<T, N> {
+    fn new() -> Self {
+        Self { items: [T::default(); N], len: 0 }
+    }
+
+    fn push(&mut self, v: T) {
+        if self.len < N {
+            self.items[self.len] = v;
+            self.len += 1;
+        }
+    }
+
+    fn as_slice(&self) -> &[T] {
+        &self.items[..self.len]
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [T] {
+        &mut self.items[..self.len]
     }
 }
 
@@ -1845,14 +2529,24 @@ struct RowCtx<'s> {
     /// fila: la profundidad no cambia a lo largo de ella).
     fog: f32,
     far_fog: f32,
-    /// La pista de atras en esta fila y de que columna a cual va (entre
-    /// las orillas de sus barandas).
-    far: Option<RoadRow>,
+    /// De que columna a cual va la pista de atras en esta fila (entre las
+    /// orillas de sus barandas).
     far_span: (f32, f32),
     /// Cuanto queda del destello del Fuego a esta altura,
     /// `e^(-max(p - cima, 0) / 0.1)` con la elevacion de la columna del
     /// centro (en las orillas cambia poco y es un resplandor suave).
     flash_up: f32,
+    /// La pista de esta fila y la de atras, con lo que no cambia a lo
+    /// ancho.
+    near: Option<Strip>,
+    far_strip: Option<Strip>,
+    /// La fila en espacio de pantalla, a la resolucion de la estela: la
+    /// estela del reflejo (del frame anterior, ya interpolada en vertical)
+    /// y el cielo suave que se refleja; y texeles por pixel a lo ancho.
+    /// Solo las columnas entre las barandas, desde `screen_lo`.
+    screen: Vec<[Vec3; 2]>,
+    screen_lo: usize,
+    screen_scale: f32,
 }
 
 /// Que punto de la pista muestra una fila.
@@ -1863,17 +2557,31 @@ struct RoadRow {
     per_meter: f32,
     depth: f32,
     s: f32,
-    segment: usize,
+    /// Cuantos metros de pista abarca la fila a lo largo.
+    ds_dy: f32,
+    /// Si `ds_dy` salio del suelo plano porque ninguna vecina sigue la
+    /// misma pista (un corte en una cresta): ahi no se pinta la junta, que
+    /// con ese `ds_dy` aproximado saldria como una franja.
+    cut: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
 enum ItemKind {
-    /// Una nave: su juego de sprites (`usize::MAX` el propio) y cual, y su
-    /// largo (m).
-    Car { set: usize, sprite: usize, width: f32, length: f32, hover: f32, boost: f32, player: bool },
+    /// Una nave: su juego de sprites (`usize::MAX` el propio) y cual, su
+    /// largo (m) y la luz de los arcos de foquitos que le cae.
+    Car { set: usize, sprite: usize, length: f32, boost: f32, player: bool, spill: Vec3 },
     Lamp { side: f32 },
-    Billboard { side: f32, motif: usize },
-    Gantry { lights: u8 },
+    /// Un barrilete: su diseno, cuanto mide (m), su numero, cuanto se
+    /// angosta puesto de canto y a que altura va su centro (m).
+    Kite { design: u8, size: f32, id: u32, squash: f32, lift: f32 },
+    /// La Torre del Reformador: las luces del semaforo (0 apagado, 1 a 3
+    /// rojas, 4 verde), el segundo de la cuenta, cuanto lleva el verde y
+    /// si quien juega ya termino.
+    Tower { lights: u8, t: f32, green: f32, finished: bool },
+    /// Un arco de foquitos: su numero (de 0 a 4, mueve los colores),
+    /// cuanto se angosta visto de canto y si hace eco del semaforo (0 no,
+    /// 1 rojo, 2 verde).
+    Arch { id: u32, squash: f32, signal: u8 },
     Puff { age: f32 },
 }
 
@@ -1886,6 +2594,16 @@ struct Item {
     y: f32,
     /// Pixeles por metro a su distancia.
     scale: f32,
+    /// De que fila a que fila de la pantalla puede caer (`item_rows`).
+    top: f32,
+    bottom: f32,
+}
+
+impl Item {
+    /// Uno que cae en cualquier fila (hasta que `item_rows` lo acote).
+    fn new(depth: f32, kind: ItemKind, x: f32, y: f32, scale: f32) -> Self {
+        Self { depth, kind, x, y, scale, top: f32::MIN, bottom: f32::MAX }
+    }
 }
 
 struct View<'a> {
@@ -1915,11 +2633,91 @@ struct View<'a> {
     flows: [f32; 3],
     meteor: Option<MeteorView>,
     sparks: Vec<Spark>,
+    /// Los charcos de luz de las naves cercanas.
+    pools: Vec<Pool>,
+    /// La raya del reflejo de cada poste: donde cae en la pista (`s`), la
+    /// columna de la pantalla de su lampara y su largo (m).
+    lamp_spec: Vec<(f32, f32, f32)>,
+    /// Lo que se corre la pista en un frame (m, hasta 3): emborrona a lo
+    /// largo las rayas, las tachas y el grano.
+    blur_s: f32,
+    /// Por columna de la estela (un cuarto de la pantalla): de que dos
+    /// columnas del cielo suave lee y con que peso.
+    sky_u: Vec<(usize, usize, f32)>,
+    /// Las naves cercanas (para no pintar la pista que tapan enteras).
+    solid_items: Vec<Item>,
+    /// Las chispas de los cohetes, sus cubetas de 8 filas y el destello
+    /// de los que acaban de reventar (luz lineal).
+    fw_segs: Vec<SparkSeg>,
+    fw_buckets: Vec<Vec<u16>>,
+    fw_flash: Vec3,
+    /// El mismo destello para la pista (con su propio tope).
+    fw_flash_road: Vec3,
 }
 
+/// El charco de luz de una nave en la pista: donde va (`s`, `x`), su medio
+/// ancho y medio largo (m), el color de sus LEDs, cuanto pesa (la mitad el
+/// trafico, y se apaga en la neblina), sus calaveras y si flota (la chela
+/// no deja sombra de contacto).
+#[derive(Clone, Copy, Debug, Default)]
+struct Pool {
+    s: f32,
+    x: f32,
+    hw: f32,
+    hl: f32,
+    tint: Vec3,
+    gain: f32,
+    brake: f32,
+    hover: bool,
+}
+
+/// La altura de la lampara de los postes sobre la pista y a cuanto del
+/// centro queda (la punta del brazo).
+const LAMP_HEIGHT: f32 = 8.65;
+const LAMP_REACH: f32 = 7.4;
+
 const LAMP_COLOR: Vec3 = Vec3::new(1.0, 0.62, 0.25);
-const ASPHALT: Vec3 = Vec3::new(0.05, 0.05, 0.06);
+/// `h^2` de la lampara de los postes.
+const LAMP_H2: f32 = LAMP_HEIGHT * LAMP_HEIGHT;
+/// El cono de la lampara en `cos(theta)`: adentro de 0.86 (unos 5 m de
+/// radio en el suelo) alumbra entera, afuera de 0.72 solo un cuarto. Con
+/// el cono ancho (0.45 a 0.62, 11 m) el charco cubria toda la pista y no
+/// tenia borde.
+const LAMP_CONE: (f32, f32) = (0.72, 0.86);
+/// El asfalto de cada losa (antes de su tono) y la pintura de las rayas:
+/// gris tibio, no blanco de karting, y la orilla amarilla.
+const SLAB: Vec3 = Vec3::new(0.06, 0.06, 0.07);
+const LANE_PAINT: Vec3 = Vec3::new(0.46, 0.45, 0.41);
+const EDGE_PAINT: Vec3 = Vec3::new(0.75, 0.55, 0.1);
+/// La junta entre losas, cian.
+const JOINT: Vec3 = Vec3::new(0.35, 0.8, 1.0);
+/// El bordillo: blanco y celeste.
+const CURB_WHITE: Vec3 = Vec3::new(0.85, 0.87, 0.9);
+const CURB_BLUE: Vec3 = Vec3::new(0.25, 0.55, 0.85);
+/// El promedio de la faja del hombro (lo que queda de lejos).
+const SASH_AVG: Vec3 = Vec3::new(0.5, 0.18, 0.1);
+/// Los tumulos: amarillo y negro.
+const BUMP_YELLOW: Vec3 = Vec3::new(0.85, 0.65, 0.05);
+const BUMP_BLACK: Vec3 = Vec3::new(0.03, 0.03, 0.03);
+/// El rojo de las calaveras en el piso.
+const BRAKE_RED: Vec3 = Vec3::new(1.0, 0.08, 0.05);
+/// Cuanto del cielo refleja la pista mojada (con Fresnel encima).
+const SKY_REFLECT: f32 = 0.6;
 const NEON: [Vec3; 2] = [Vec3::new(1.0, 0.2, 0.6), Vec3::new(0.15, 0.85, 1.0)];
+/// El promedio de los colores del papel de china (los flecos de lejos).
+const PAPEL_AVG: Vec3 = Vec3::new(0.617, 0.5, 0.4);
+
+/// El coseno y el seno del angulo de cada foco de un arco,
+/// `phi = pi (j + 0.5) / 41`, calculados una vez.
+fn arch_bulbs() -> &'static [(f32, f32); ARCH_BULBS] {
+    static BULBS: OnceLock<[(f32, f32); ARCH_BULBS]> = OnceLock::new();
+    BULBS.get_or_init(|| {
+        std::array::from_fn(|j| {
+            let phi = PI * (j as f32 + 0.5) / ARCH_BULBS as f32;
+            (phi.cos(), phi.sin())
+        })
+    })
+}
 
 impl View<'_> {
     /// Lo de la fila `y` que no cambia de pixel a pixel.
@@ -1928,9 +2726,355 @@ impl View<'_> {
         let fog = |r: Option<RoadRow>| r.map_or(0.0, |r| fog_at(r.depth).max(horizon_fog(-yoff, r.depth)));
         let summit = FUEGO.height - self.limb;
         let pitch = (yoff / self.cam.focal).atan();
+        let road = self.rows[y];
         let far = self.far[y];
         let far_span = far.map_or((f32::MAX, f32::MIN), |f| (f.center - (RAIL + 0.35) * f.per_meter, f.center + (RAIL + 0.35) * f.per_meter));
-        RowCtx { y, yoff, sparks, span, fog: fog(self.rows[y]), far_fog: fog(far), far, far_span, flash_up: (-(pitch - summit).max(0.0) / 0.1).exp() }
+        // El reflejo en la pista mojada. La fila de la estela del frame
+        // anterior, interpolada en vertical una vez (por pixel queda solo
+        // la interpolacion a lo ancho).
+        let mut screen = Vec::new();
+        let mut screen_lo = 0;
+        let mut screen_scale = 0.0;
+        let (mut near, mut far_strip) = (None, None);
+        if road.is_some() || far.is_some() {
+            // El cielo que se refleja: el rayo de la fila rebota hacia
+            // arriba con la elevacion `pm = -pitch`. Fresnel de Schlick con
+            // `cos(theta) = sin(pm)` (rasante: casi espejo),
+            // `F = 0.02 + 0.98 (1 - sin pm)^5`; y el gradiente del cielo a
+            // esa altura sobre el limbo.
+            let pm = (-pitch).max(0.0);
+            let fres_s = if pitch >= 0.0 { 1.0 } else { 0.02 + 0.98 * (1.0 - pm.sin()).max(0.0).powi(5) };
+            let sky_row = sky_sample(&self.game.sky_lut, pm + self.limb);
+            // La fila en espacio de pantalla, a la resolucion de la estela
+            // (un cuarto): la estela del frame anterior interpolada en
+            // vertical y el cielo suave a esa altura (el panorama suave en
+            // modo pantalla con el gradiente). Por pixel queda una
+            // interpolacion a lo ancho.
+            let st = self.game.post.streak();
+            if st.width > 0 && st.height > 0 && st.pixels.len() >= st.width * st.height && self.sky_u.len() == st.width {
+                let fy = ((y as f32 + 0.5) / self.game.height as f32 * st.height as f32 - 0.5).max(0.0);
+                let y0 = (fy as usize).min(st.height - 1);
+                let y1 = (y0 + 1).min(st.height - 1);
+                let ty = (fy - y0 as f32).min(1.0);
+                let (a, b) = (&st.pixels[y0 * st.width..][..st.width], &st.pixels[y1 * st.width..][..st.width]);
+                let (v0, v1, tv) = Panorama::soft_rows(pm);
+                let pano = &self.game.panorama;
+                screen_scale = st.width as f32 / self.game.width as f32;
+                // Solo las columnas entre las barandas de las pistas de la
+                // fila (de lejos, unas pocas): no se llenan ni se reservan
+                // las demas.
+                let span = |r: Option<RoadRow>| r.map_or((f32::MAX, f32::MIN), |r| (r.center - (RAIL + 0.5) * r.per_meter, r.center + (RAIL + 0.5) * r.per_meter));
+                let (n0, n1) = span(road);
+                let (f0, f1) = span(far);
+                let lo = ((n0.min(f0) * screen_scale - 1.0).max(0.0) as usize).min(st.width);
+                let hi = ((n1.max(f1) * screen_scale + 2.0).max(0.0) as usize).min(st.width);
+                screen_lo = lo;
+                screen.reserve_exact(hi.saturating_sub(lo));
+                for i in lo..hi {
+                    let (x0, x1, tx) = self.sky_u[i];
+                    let soft = pano.soft_at(x0, x1, tx, v0, v1, tv);
+                    // La estela sale del brillo de todo lo que emite a un
+                    // cuarto (ya mezclada): se le devuelve color,
+                    // `v + 0.5 (v - luma)`, para que el charco de una nave
+                    // salga del tono de sus LEDs y no cafe.
+                    let v = a[i].lerp(b[i], ty);
+                    let luma = 0.2126 * v.x + 0.7152 * v.y + 0.0722 * v.z;
+                    let streak = (v * 1.5 - Vec3::splat(0.5 * luma)).max(Vec3::ZERO);
+                    screen.push([streak, Vec3::ONE - (Vec3::ONE - soft) * (Vec3::ONE - sky_row)]);
+                }
+            }
+            near = road.map(|r| self.strip(r, fres_s));
+            far_strip = far.map(|r| self.strip(r, fres_s));
+        }
+        RowCtx { y, yoff, sparks, span, fog: fog(road), far_fog: fog(far), far_span, flash_up: (-(pitch - summit).max(0.0) / 0.1).exp(), near, far_strip, screen, screen_lo, screen_scale }
+    }
+
+    /// Lo de una fila de pista que no cambia a lo ancho: lo que cubre cada
+    /// cosa pintada a lo largo (filtrado en caja sobre lo que abarca la
+    /// fila mas lo que se corre la pista en el frame, `w`), el ruido de la
+    /// fila, los postes y las naves que la alumbran, y el reflejo.
+    fn strip(&self, r: RoadRow, fres_s: f32) -> Strip {
+        let game = self.game;
+        let s = r.s;
+        let px = 1.0 / r.per_meter;
+        let blur = self.blur_s;
+        let w = (r.ds_dy + blur).max(1e-3);
+        // Cada losa de 32 m con su tono, `1 + 0.05 (hash - 0.5)`.
+        let slab_i = (s / 32.0).floor();
+        let slab = SLAB * (1.0 + 0.05 * ((hash_u32(slab_i as i32 as u32) >> 8) as f32 * (1.0 / 16_777_216.0) - 0.5));
+        // La junta cian entre losas: un hilo de 8 cm que destella de cerca
+        // y despacio. La linea se filtra solo sobre lo que abarca la fila
+        // (`ds_dy`, sin el borron: con el borron en caja la linea y su
+        // resplandor salian como una meseta de bordes duros) y el
+        // resplandor `e^(-|d| / 0.22)` con una tienda de medio ancho
+        // `ds_dy` (ver `exp_tent`: sin bordes de fila en fila). Con la
+        // velocidad se apaga, `1 / (1 + (borron / 0.25)^2)` (a 15 m/s la
+        // mitad, a 60 m/s un 4 %: el hilo de cerca seria un borron de un
+        // metro que casi no tine), y en una fila de corte (con `ds_dy`
+        // aproximado) no se pinta.
+        let dj = (s + 16.0).rem_euclid(32.0) - 16.0;
+        let wj = r.ds_dy.max(1e-3);
+        let joint_on = if r.cut {
+            0.0
+        } else {
+            let k = blur / 0.25;
+            1.0 / (1.0 + k * k)
+        };
+        let joint = band(s + 0.04, 32.0, 0.08, wj) * joint_on;
+        let joint_glow = exp_tent(dj, 0.22, wj) * joint_on * (0.8 + 0.2 * (game.wall * 3.0 + slab_i).sin());
+        // El relieve del bordillo: una loma cada 0.9 m, iluminada de frente
+        // y en sombra atras; cuando la fila (con el borron) abarca mas que
+        // media loma, se va suave a su promedio 0.83 (sin un salto en una
+        // fila fija ni de un frame al otro al acelerar).
+        let p = (s / 0.9).rem_euclid(1.0);
+        let bumpy = 0.75 + 0.35 * smoothstep(0.0, 0.15, p) * smoothstep(0.45, 0.3, p) - 0.15 * smoothstep(0.6, 0.9, p);
+        let relief = bumpy + (0.83 - bumpy) * smoothstep(0.3, 0.6, w);
+        // La faja del hombro: rombos de 1.4 m, uno por celda de color. El
+        // rombo es ancho entero a la mitad de su celda,
+        // `pico = 1 - |fract(s / 1.4) - 0.5| 2`, y angosto en la punta,
+        // donde cambia el color: asi el rombo es de un solo color sobre el
+        // rojo. El color (amarillo en una celda, verde en la otra) tambien
+        // se filtra en caja, `band(s, 2.8, 1.4, w)`: de lejos o rapido pasa
+        // a su promedio sin escalones.
+        let along = s / 1.4;
+        let sash_col = transition::YELLOW.lerp(transition::GREEN, band(s, 2.8, 1.4, w));
+        let sash_soft = (px / 0.7).max(w / 1.4);
+        // De lejos (menos de ~10 px por metro) o cuando el frame corre mas
+        // que un rombo, su promedio; con menos, el rombo solo se suaviza.
+        let sash_far = smoothstep(0.06, 0.12, px).max(smoothstep(0.9, 1.4, w));
+        // Los tumulos: cada uno cubre `0.3..0.7` de su tramo (1.6 m) con
+        // los botones al centro. Se buscan en los tramos que toca la
+        // ventana de la fila (de lejos una fila abarca varios tramos, y si
+        // solo se mirara el del centro el tumulo se perderia). Para que se
+        // lea de lejos, nunca mide menos de 2.5 filas a lo largo
+        // (`max(1.6, 2.5 ds_dy)`, hasta 30 m) y los botones menos de una:
+        // la cobertura es lo que cae de ese tramo en la ventana `w`.
+        let (mut bumps, mut bump_cov, mut bump_q, mut bump_btn) = (0u8, 0.0, 0.0, 0.0);
+        let k0 = (s / SEGMENT).floor() as i64;
+        let reach = (0.5 * w / SEGMENT).ceil().min(16.0) as i64 + 4;
+        let count = game.track.segments.len() as i64;
+        for k in k0 - reach..=k0 + reach {
+            let mask = game.track.segments[k.rem_euclid(count) as usize].bumps;
+            if mask == 0 {
+                continue;
+            }
+            let d = s - (k as f32 + 0.5) * SEGMENT;
+            let half = (0.2 * SEGMENT).max(1.25 * r.ds_dy).min(15.0);
+            let cov = window_cover(d, half, w);
+            if cov > bump_cov {
+                bumps = mask;
+                bump_cov = cov;
+                bump_q = ((d + 0.2 * SEGMENT) / (0.4 * SEGMENT)).clamp(0.0, 1.0);
+                bump_btn = window_cover(d, (0.032 * SEGMENT).max(0.5 * r.ds_dy), w);
+            }
+        }
+        let bump_far = smoothstep(0.2, 1.0, w).max(smoothstep(0.1, 0.4, px));
+        // La meta: 2.5 m de cuadros de 1 m.
+        let length = game.track.length();
+        let finish = band(s, length, 2.5, w);
+        let finish_fs = if finish > 0.0 { band(s, 2.0, 1.0, w) } else { 0.0 };
+        // Los postes que alumbran esta fila (a menos de 40 m a lo largo).
+        let mut lamps = [(0.0, 0.0); 3];
+        let mut n_lamps = 0;
+        let first = lamp_after(s - 40.0, length);
+        for n in first..first + 3 {
+            let (s_l, side) = lamp(n, length);
+            let ds = s - s_l;
+            if ds < -40.0 {
+                break;
+            }
+            if ds.abs() <= 40.0 && n_lamps < lamps.len() {
+                lamps[n_lamps] = (side * LAMP_REACH, 0.56 * ds * ds + LAMP_H2);
+                n_lamps += 1;
+            }
+        }
+        // Las rayas del reflejo de los postes: gaussiana de 0.30 m a lo
+        // ancho (nunca menos de 0.7 px, con la energia conservada) y de
+        // `largo` a lo largo, `1.1 e^(-t^2)` con `t = ds / largo` (se lleva
+        // la luz que el difuso pierde en lo mojado). Caben cuatro por fila:
+        // las que pesan mas (con `|t| < 2`, `e^-4 = 0.018`), no las
+        // primeras que aparezcan (de lejos califican mas, y las cercanas
+        // ahi ya no pesan nada).
+        let mut specs = [(0.0, 0.0, 0.0); 4];
+        let mut n_specs = 0;
+        let sigma = 0.30f32.max(0.7 * px);
+        for &(ss, column, len) in &self.lamp_spec {
+            let t = (s - ss) / len.max(0.5);
+            if t.abs() >= 2.0 {
+                continue;
+            }
+            let amp = 1.1 * fast_exp(-t * t) * (0.30 / sigma);
+            let spec = ((column - r.center) / r.per_meter, amp, 1.0 / sigma);
+            if n_specs < specs.len() {
+                specs[n_specs] = spec;
+                n_specs += 1;
+            } else if let Some(min) = specs.iter_mut().min_by(|a, b| a.1.total_cmp(&b.1)) {
+                if min.1 < amp {
+                    *min = spec;
+                }
+            }
+        }
+        // Las naves cerca de esta fila a lo largo (con la cola de las
+        // calaveras): lo que solo depende de `ds` va aqui.
+        let mut pools = [PoolRow::default(); 6];
+        let mut n_pools = 0;
+        for p in &self.pools {
+            let ds = s - p.s;
+            if ds.abs() >= p.hl + 8.0 || n_pools == pools.len() {
+                continue;
+            }
+            // La elipse de la luz: `hw + 1.5` por `hl + 2`, y la de lo que
+            // flota mas recogida, `hw + 0.7` por `hl + 1` (un charco de luz
+            // bajo la botella, como el brillo de antes).
+            let (lw, ll) = if p.hover { (p.hw + 0.7, p.hl + 1.0) } else { (p.hw + 1.5, p.hl + 2.0) };
+            let ey = ds / ll;
+            // La sombra de contacto: la huella de la carroceria, de la cola
+            // a la trompa con orillas de 0.8 m (`fy`, a lo largo), mas una
+            // franja oscura de 0.6 m en la linea de la cola. Desde la camara
+            // de persecucion lo que asoma bajo el sprite es piso que queda
+            // debajo de la nave (de la mitad de atras; la cola de una nave
+            // larga cae fuera de la pantalla): con la sombra solo cerca del
+            // centro, el sprite la tapaba entera y no se veia nunca.
+            let fy = smoothstep(-p.hl - 0.4, -p.hl + 0.4, ds) * smoothstep(p.hl + 0.4, p.hl - 0.4, ds);
+            let lip = (ds + p.hl + 0.05) * (1.0 / 0.3);
+            let lip = 0.35 * fast_exp(-lip * lip);
+            let behind = -(ds + p.hl);
+            let tail = if !p.hover && (-0.6..8.0).contains(&behind) { (0.15 + 0.5 * p.brake) * p.gain * fast_exp(-behind / 2.5) * smoothstep(-0.6, 0.4, behind) * smoothstep(8.0, 4.0, behind) } else { 0.0 };
+            pools[n_pools] = PoolRow {
+                x: p.x,
+                reach: p.hw + 5.0,
+                inv_l: 1.0 / lw,
+                ey2: ey * ey,
+                tint: p.tint * (0.22 * p.gain),
+                shadow: !p.hover,
+                inv_c: 1.0 / (p.hw * 0.9).max(0.1),
+                fy,
+                lip,
+                tail,
+                tail_x: p.hw * 0.75,
+            };
+            n_pools += 1;
+        }
+        // La tabla a lo ancho: la luz de los postes, el charco de las naves
+        // (su luz, la sombra de contacto y las calaveras) y lo mojado son
+        // suaves a lo ancho (cambian en metros), asi que se calculan cada
+        // `paso` metros y por pixel se interpolan: de cerca, una fila de
+        // 1280 pixeles hace ~100 muestras y no 1280. El paso es de dos
+        // pixeles (de lejos, pocas muestras) y nunca menos de lo que cabe.
+        let u0 = -(RAIL + 0.5);
+        let step = (2.0 * px).max(TABLE_STEP);
+        let n = ((-2.0 * u0 / step).ceil() as usize + 2).clamp(2, TABLE);
+        let wet_line = NoiseLine::<8>::new(3.0 + u0 * 0.15 - 0.1, s * 0.045);
+        // Las manchas, pegadas a `s` y promediadas a lo largo sobre lo que
+        // se corre la pista en el frame (ver `NoiseLine::blurred`).
+        let patch = NoiseLine::<8>::blurred(u0 * 0.35 - 0.1, s * 0.12, blur * 0.12);
+        let pulse = 0.75 + 0.25 * (s * 0.15 - game.wall * 6.0).sin();
+        // (En el monton: la fila se mueve entera de funcion en funcion y
+        // con la tabla adentro serian kilobytes por fila.)
+        let mut table = Vec::with_capacity(n);
+        for k in 0..n {
+            let u = u0 + k as f32 * step;
+            // La luz de los postes: con `h = 8.65` m de alto y
+            // `q = h^2 / (r^2 + h^2) = cos^2`, la iluminancia es
+            // `cos^3 = q sqrt(q)` (inverso del cuadrado por el coseno), mas
+            // fuerte adentro del cono de la lampara (`LAMP_CONE`): el
+            // charco tiene borde. A lo largo pesa
+            // `0.56 ds^2`: el charco se alarga con la pista.
+            let mut light = 0.0;
+            for &(uc, ds2) in &lamps[..n_lamps] {
+                let du = u - uc;
+                let q = LAMP_H2 / (du * du + ds2);
+                let cos = q.sqrt();
+                light += q * cos * (0.25 + 0.75 * smoothstep(LAMP_CONE.0, LAMP_CONE.1, cos));
+            }
+            // Las naves: su luz `tinte 0.22 e^(-2.2 e)` con la elipse
+            // `e = (du / (hw + 1.5))^2 + (ds / (hl + 2))^2`; la huella
+            // `h = e^(-cx^4) fy` con `cx = du / 0.9 hw` (pareja adentro,
+            // suave en las orillas), que oscurece `1 - 0.6 h` y tapa su
+            // propia luz (`1 - 0.7 h`: las LEDs van por fuera, abajo de la
+            // carroceria no llegan); la franja de la cola
+            // `1 - 0.35 e^(-((ds + hl + 0.05) / 0.3)^2) e^(-cx^4)`; y las
+            // dos calaveras a `0.75 hw` del centro.
+            let (mut add, mut tail, mut shade) = (Vec3::ZERO, 0.0, 1.0);
+            for p in &pools[..n_pools] {
+                let du = u - p.x;
+                if du.abs() > p.reach {
+                    continue;
+                }
+                let lx = du * p.inv_l;
+                let mut glow = fast_exp(-2.2 * (lx * lx + p.ey2));
+                if p.shadow {
+                    let cx = du * p.inv_c;
+                    let cx2 = cx * cx;
+                    let fx = fast_exp(-cx2 * cx2);
+                    let foot = fx * p.fy;
+                    shade *= (1.0 - 0.6 * foot) * (1.0 - p.lip * fx);
+                    glow *= 1.0 - 0.7 * foot;
+                }
+                add += p.tint * glow;
+                if p.tail > 0.0 {
+                    let q = (du.abs() - p.tail_x) * (1.0 / 0.45);
+                    tail += p.tail * fast_exp(-q * q);
+                }
+            }
+            // Lo mojado: charcos de unos 7 x 22 m.
+            let wet = 0.30 + 0.70 * smoothstep(-0.1, 0.35, wet_line.at(u * 0.15 + 3.0));
+            // El neon de la baranda tine la orilla, el bordillo y el hombro:
+            // `0.2 pulso e^(-1.6 (RAIL - |u|))` desde 1.5 m antes del
+            // bordillo.
+            let a = u.abs();
+            let neon = if a > HALF_ROAD - 1.5 { NEON[(u > 0.0) as usize] * (pulse * 0.2 * fast_exp(-(RAIL - a).max(0.0) * 1.6)) } else { Vec3::ZERO };
+            // Las manchas del asfalto (de metros: caben en la tabla).
+            table.push([light, wet, patch.at(u * 0.35), neon.x, neon.y, neon.z, add.x, add.y, add.z, tail, shade, 0.0]);
+        }
+        // El ruido de la fila: la `y` es la misma en toda la fila, asi que
+        // se interpolan una vez las esquinas de cada celda a lo ancho.
+        let spill = game.arch_spill(s);
+        let resolved = smoothstep(0.6, 0.15, px);
+        let grain_on = px < 0.12;
+        let grain_amp = 0.18 * smoothstep(0.12, 0.03, px);
+        Strip {
+            r,
+            px,
+            dash: band(s, 12.0, 6.0, w),
+            eye: tracer(band(s - 8.92, 12.0, 0.16, w)) * smoothstep(0.35, 0.1, px),
+            amber: tracer(band(s - 2.92, 12.0, 0.16, w)) * smoothstep(0.35, 0.1, px),
+            curb: band(s, 16.0, 8.0, w),
+            relief,
+            joint,
+            joint_glow,
+            slab,
+            resolved,
+            grain_on,
+            grain_amp,
+            sash_peak: 1.0 - ((along - along.floor()) - 0.5).abs() * 2.0,
+            sash_soft,
+            sash_col,
+            sash_far,
+            bumps,
+            bump_cov,
+            bump_q,
+            bump_btn,
+            bump_far,
+            finish,
+            finish_fs,
+            specs,
+            n_specs,
+            table,
+            u0,
+            inv_step: 1.0 / step,
+            n,
+            has_pools: n_pools > 0,
+            fres: 0.35 + 0.65 * smoothstep(8.0, 160.0, r.depth),
+            fres_s,
+            pulse,
+            spill,
+            lit: spill != Vec3::ZERO || self.fw_flash_road != Vec3::ZERO,
+            // El grano, pegado a `s` y promediado a lo largo como las
+            // manchas (el promedio de las muestras lo apaga con la
+            // velocidad).
+            grain: if grain_on { NoiseLine::blurred(17.0 - HALF_ROAD * 6.0 - 0.1, s * 6.0, blur * 6.0) } else { NoiseLine::default() },
+        }
     }
 
     fn row(&self, y: usize, row: &mut [u8]) {
@@ -1942,17 +3086,116 @@ impl View<'_> {
         let sparks: Vec<Spark> = self.sparks[..to].iter().filter(|s| s.hi.1 >= yf).copied().collect();
         let span = sparks.iter().fold((f32::MAX, f32::MIN), |(lo, hi), s| (lo.min(s.lo.0), hi.max(s.hi.0)));
         let ctx = self.row_ctx(y, &sparks, span);
-        let road = self.rows[y];
-        for x in 0..game.width {
-            let (c, e) = match road {
-                Some(r) => self.road(r, x as f32 + 0.5, &ctx, x),
-                None => self.background(x, &ctx),
-            };
-            write_emit(&mut row[x * 4..x * 4 + 4], c, e);
+        match &ctx.near {
+            Some(st) => {
+                // Lo que una nave cercana tapa del todo no se pinta: ella lo
+                // sobreescribe entero (color y emision) mas abajo. Se
+                // pintan los huecos entre sus tramos.
+                let mut cut = [(0usize, 0usize); 8];
+                let mut n = 0;
+                for item in &self.solid_items {
+                    let (a, b) = self.solid_cols(item, y, yf);
+                    if b > a && n < cut.len() {
+                        cut[n] = (a, b);
+                        n += 1;
+                    }
+                }
+                cut[..n].sort_unstable();
+                let mut from = 0;
+                for &(a, b) in cut[..n].iter().chain(std::iter::once(&(game.width, game.width))) {
+                    for x in from..a.max(from) {
+                        let (c, e) = self.road(st, x as f32 + 0.5, &ctx, x);
+                        write_emit(&mut row[x * 4..x * 4 + 4], c, e);
+                    }
+                    from = from.max(b);
+                }
+            }
+            None => {
+                for x in 0..game.width {
+                    let (c, e) = self.background(x, &ctx);
+                    write_emit(&mut row[x * 4..x * 4 + 4], c, e);
+                }
+            }
         }
+        self.fireworks_row(y, yf, &ctx, row);
         for item in &self.items {
+            if yf < item.top || yf > item.bottom {
+                continue;
+            }
             self.draw_item(item, y, yf, row);
         }
+    }
+
+    /// Las chispas de los cohetes que caen en la fila, solo sobre el fondo
+    /// (afuera de las barandas de la pista de la fila y de la de atras):
+    /// la distancia `d` (px) a la capsula de cada una da
+    /// `color (cubre(d - w) + 0.45 e^(-d / 2w))`, que se suma, y la emision
+    /// con su brillo.
+    fn fireworks_row(&self, y: usize, yf: f32, ctx: &RowCtx, row: &mut [u8]) {
+        let Some(bucket) = self.fw_buckets.get(y / 8) else { return };
+        if bucket.is_empty() {
+            return;
+        }
+        let width = self.game.width;
+        let near = self.rows[y].map_or((f32::MAX, f32::MIN), |r| (r.center - (RAIL + 0.35) * r.per_meter, r.center + (RAIL + 0.35) * r.per_meter));
+        let far = ctx.far_span;
+        for &i in bucket {
+            let Some(s) = self.fw_segs.get(i as usize) else { continue };
+            if yf < s.lo.1 || yf > s.hi.1 {
+                continue;
+            }
+            let x0 = (s.lo.0.max(0.0) as usize).min(width);
+            let x1 = ((s.hi.0.max(0.0) as usize) + 1).min(width);
+            let (ax, ay) = s.a;
+            let (bx, by) = (s.b.0 - ax, s.b.1 - ay);
+            let inv_len2 = 1.0 / (bx * bx + by * by).max(1e-4);
+            let (reach, inv_glow) = (8.0 * s.w, 1.0 / (2.0 * s.w));
+            for x in x0..x1 {
+                let xf = x as f32 + 0.5;
+                if (xf > near.0 && xf < near.1) || (xf > far.0 && xf < far.1) {
+                    continue;
+                }
+                let t = (((xf - ax) * bx + (yf - ay) * by) * inv_len2).clamp(0.0, 1.0);
+                let d = len(xf - ax - bx * t, yf - ay - by * t);
+                if d > reach {
+                    continue;
+                }
+                // Mas luz en la cabeza que en la cola.
+                // (Al resplandor se le resta lo que vale en el corte.)
+                let v = (cover(d - s.w) + 0.45 * (fast_exp(-d * inv_glow) - FW_CUT).max(0.0)) * (s.tail + (1.0 - s.tail) * t);
+                let p = &mut row[x * 4..x * 4 + 4];
+                write_emit(p, lienzo::read(p) + s.color * v, emission(p).max(s.emit * v.min(1.0)));
+            }
+        }
+    }
+
+    /// Las columnas `[desde, hasta)` de la fila `y` que la nave `item`
+    /// cubre opaca del todo (el bilineal de su sprite lee cuatro pixeles
+    /// opacos), o un tramo vacio. Si la pista de la fila esta mas cerca que
+    /// la cola de la nave (una loma la tapa), ninguna.
+    fn solid_cols(&self, item: &Item, y: usize, yf: f32) -> (usize, usize) {
+        let game = self.game;
+        let ItemKind::Car { set, sprite, length, .. } = item.kind else { return (0, 0) };
+        let sprite = if set == usize::MAX { game.player_set.get(sprite) } else { game.sets.get(set).and_then(|s| s.get(sprite)) };
+        let Some(sprite) = sprite else { return (0, 0) };
+        let front = item.depth - 1.0 - 0.5 * length;
+        if self.rows[y].is_some_and(|r| r.depth < front) || self.far[y].is_some_and(|r| r.depth < front) {
+            return (0, 0);
+        }
+        let scale = item.scale / sprite.scale;
+        if !(scale > 0.0) {
+            return (0, 0);
+        }
+        let (lo, hi) = sprite.solid_span((yf - item.y) / scale + sprite.anchor.1);
+        if hi <= lo {
+            return (0, 0);
+        }
+        // El pixel `x` (centro en `x + 0.5`) cae en el tramo si
+        // `xa <= x + 0.5 < xb`.
+        let (xa, xb) = (item.x + (lo - sprite.anchor.0) * scale, item.x + (hi - sprite.anchor.0) * scale);
+        let b = ((xb - 0.5).ceil().max(0.0) as usize).min(game.width);
+        let a = ((xa - 0.5).ceil().max(0.0) as usize).min(b);
+        (a, b)
     }
 
     /// Lo que el HUD de CPU necesita despues del posproceso (dueno de sus
@@ -2124,6 +3367,8 @@ impl View<'_> {
             extra = extra + spark;
             emit += spark.luminance();
         }
+        // El destello de los cohetes que acaban de reventar.
+        extra = extra + self.fw_flash;
         let gradient = if extra.x + extra.y + extra.z > 1e-4 {
             tone_fast(self.lut, sky_sample(&self.game.sky_lin_lut, eps) + extra)
         } else {
@@ -2220,13 +3465,13 @@ impl View<'_> {
 
     /// Un pixel de la fila de la pista (o lo que se ve a los lados).
     ///
-    /// Va siempre en linea dentro del ciclo de la fila: asi lo que solo
-    /// depende de la fila de pista (`1 / px`, el tramo, las rayas, el pulso
-    /// de la baranda) se saca del ciclo. La pista de atras va aparte, en
-    /// una funcion que no se mete en linea (son pocos pixeles). Da el color
-    /// y cuanto emite.
+    /// Va siempre en linea dentro del ciclo de la fila; lo que solo
+    /// depende de la fila de pista ya viene en `st`. La pista de atras va
+    /// aparte, en una funcion que no se mete en linea (son pocos pixeles).
+    /// Da el color y cuanto emite.
     #[inline(always)]
-    fn road(&self, r: RoadRow, x: f32, ctx: &RowCtx, column: usize) -> (Vec3, f32) {
+    fn road(&self, st: &Strip, x: f32, ctx: &RowCtx, column: usize) -> (Vec3, f32) {
+        let r = st.r;
         let u = (x - r.center) / r.per_meter;
         let a = u.abs();
         // Afuera de las barandas: la pista de atras si asoma ahi, o el
@@ -2238,29 +3483,42 @@ impl View<'_> {
             let glow = NEON[side] * (0.45 * halo((a - RAIL - 0.35) * r.per_meter, 6.0 + 0.5 * r.per_meter));
             return (back + glow * (1.0 - ctx.fog), e);
         }
-        self.surface(r, u, ctx.fog, ctx)
+        self.surface(st, u, x, ctx.fog, ctx)
     }
 
     /// La pista de atras que asoma al lado de la de adelante.
     #[inline(never)]
     fn far_road(&self, x: f32, ctx: &RowCtx) -> (Vec3, f32) {
-        match ctx.far {
-            Some(f) => self.surface(f, (x - f.center) / f.per_meter, ctx.far_fog, ctx),
+        match &ctx.far_strip {
+            Some(f) => self.surface(f, (x - f.r.center) / f.r.per_meter, x, ctx.far_fog, ctx),
             None => (Vec3::ZERO, 0.0),
         }
     }
 
-    /// La pista misma entre las barandas, a `u` metros del centro, ya con
-    /// su neblina `fog`, y cuanto emite (solo la baranda de neon,
-    /// `0.9 pulso`, que se apaga en la neblina).
+    /// La pista misma entre las barandas, a `u` metros del centro (en la
+    /// columna `x` de la pantalla), ya con su neblina `fog`, y cuanto emite.
+    ///
+    /// - **Material**: asfalto con un tono por losa, manchas y grano (que
+    ///   se estira a lo largo con la velocidad), carrileras mas lisas donde
+    ///   pisan las llantas, rayas, juntas cian que destellan cada 32 m,
+    ///   tachas (ojos de gato) y tumulos. Todo lo pintado a lo largo se
+    ///   filtra en caja sobre lo que abarca la fila (`band`), asi de lejos
+    ///   se promedia en vez de saltar de fila en fila, y con la velocidad se
+    ///   estira (las tachas se vuelven trazadoras).
+    /// - **Luz**: cada poste deja un charco con borde, `cos^3` (la ley del
+    ///   inverso del cuadrado por el coseno) mas un cono, y las naves su
+    ///   charco del color de sus LEDs, su sombra de contacto y el rojo de
+    ///   las calaveras atras.
+    /// - **Mojado**: `wet` sale de un ruido grande (charcos de unos 7 x 22 m)
+    ///   y de las carrileras. Se le suman la estela de todo lo que emite
+    ///   (del frame anterior), la raya de cada poste y el cielo con Fresnel.
     #[inline(always)]
-    fn surface(&self, r: RoadRow, u: f32, fog: f32, ctx: &RowCtx) -> (Vec3, f32) {
-        let game = self.game;
+    fn surface(&self, st: &Strip, u: f32, x: f32, fog: f32, ctx: &RowCtx) -> (Vec3, f32) {
+        let r = st.r;
         let a = u.abs();
-        let px = 1.0 / r.per_meter;
-        let segment = &game.track.segments[r.segment];
-        let mut c;
-        let mut e = 0.0;
+        let px = st.px;
+        let side = (u > 0.0) as usize;
+        let haze = self.haze_row[ctx.y];
         if a > RAIL {
             // La baranda de luz: un tubo de neon con su color de pantalla
             // (no el tono de `2.2 NEON`, que se recortaba casi a blanco),
@@ -2268,73 +3526,171 @@ impl View<'_> {
             // con `t` de -1 a 1 a lo ancho, y una linea fina casi blanca al
             // centro (la parte mas caliente del gas). De lejos, cuando el
             // tubo mide pocos pixeles, la linea se apaga y queda el color.
-            let side = (u > 0.0) as usize;
-            let pulse = 0.75 + 0.25 * (r.s * 0.15 - game.wall * 6.0).sin();
+            let pulse = st.pulse;
             let t = (a - RAIL) * (2.0 / 0.35) - 1.0;
-            c = NEON[side] * ((0.55 + 0.45 * (1.0 - t * t)) * (0.8 + 0.2 * pulse));
+            let mut c = NEON[side] * ((0.55 + 0.45 * (1.0 - t * t)) * (0.8 + 0.2 * pulse));
             let tube_px = 0.35 * r.per_meter;
             if tube_px > 1.5 {
                 let core = cover(t.abs() * 0.5 * tube_px - (0.06 * tube_px).max(0.4)) * smoothstep(1.5, 6.0, tube_px) * (0.5 + 0.4 * pulse);
                 c = c.lerp(NEON[side] * 0.25 + Vec3::splat(0.75), core);
             }
-            e = 0.9 * pulse;
-        } else if a > HALF_ROAD + 0.7 {
-            // El hombro de concreto, tenido por el neon de su lado: un
-            // halo corto pintado aqui, `0.35 e^(-d / ancho)` a `d` pixeles
-            // de la baranda (el brillo del posproceso pone la cola ancha).
-            let side = (u > 0.0) as usize;
-            let d = (RAIL - a) * r.per_meter;
-            c = Vec3::new(0.09, 0.09, 0.1) + NEON[side] * (0.35 * halo(d, 2.0 + 0.25 * r.per_meter));
+            return (c.lerp(haze, fog), 0.9 * pulse * (1.0 - fog));
+        }
+        // Lo de la tabla a lo ancho de la fila (ver `strip`): la luz de los
+        // postes (antes del material: el grano la recoge), el charco de las
+        // naves y lo mojado.
+        // Por grupos: lo de siempre (luz, mojado y manchas), el neon solo
+        // cerca de la baranda y las naves solo si alguna alumbra la fila.
+        let f = ((u - st.u0) * st.inv_step).clamp(0.0, st.n as f32 - 1.001);
+        let i = (f as usize).min(st.n - 2);
+        let t = f - i as f32;
+        let (lo, hi) = match (st.table.get(i), st.table.get(i + 1)) {
+            (Some(lo), Some(hi)) => (lo, hi),
+            _ => (&TABLE_EMPTY, &TABLE_EMPTY),
+        };
+        let at = |k: usize| lo[k] + (hi[k] - lo[k]) * t;
+        let light = at(0);
+        let mut e = 0.0;
+        let mut tm = 0.0;
+        // Cuanto refleja el material: el asfalto mojado todo, el bordillo
+        // pintado un poco menos y la faja del hombro (tela) casi nada.
+        let mut gloss = 1.0;
+        let mut c;
+        if a > HALF_ROAD + 0.7 {
+            // El hombro: una faja tejida de rombos amarillos y verdes sobre
+            // rojo (`tt` de 0 al centro a 1 en las orillas, el rombo cubre
+            // donde `tt < pico`), suavizado medio pixel y, de lejos, su
+            // promedio.
+            let v = (a - HALF_ROAD - 0.7) * (1.0 / 0.7);
+            let tt = (v - 0.5).abs() * 2.0;
+            let sash = transition::HUIPIL_RED.lerp(st.sash_col, smoothstep(st.sash_peak + st.sash_soft, st.sash_peak - st.sash_soft, tt));
+            c = sash.lerp(SASH_AVG, st.sash_far) * 0.6;
+            gloss = 0.25;
         } else if a > HALF_ROAD {
-            // El bordillo rojo y blanco.
-            let stripe = ((r.s / (SEGMENT * 2.0)).floor() as i64).rem_euclid(2) == 0;
-            c = if stripe { Vec3::new(0.55, 0.05, 0.06) } else { Vec3::new(0.7, 0.7, 0.72) };
+            // El bordillo celeste y blanco con relieve; el filo de afuera
+            // en sombra.
+            let shade = if a > HALF_ROAD + 0.6 { st.relief * 0.6 } else { st.relief };
+            c = CURB_WHITE.lerp(CURB_BLUE, st.curb) * (shade * 0.8);
+            // (Refleja menos que el asfalto: con la estela entera, el neon
+            // de la baranda lavaba el celeste y blanco.)
+            gloss = 0.35;
         } else {
-            // El asfalto: manchas suaves y un grano fino que se apagan de
-            // lejos (ahi se veria solo ruido).
-            let resolved = smoothstep(0.6, 0.15, px);
-            let patches = value_noise(u * 0.35, r.s * 0.12);
-            let grain = if px < 0.08 { value_noise(u * 6.0 + 17.0, r.s * 6.0) } else { 0.0 };
-            c = ASPHALT * (1.0 + (0.25 * patches + 0.18 * grain * smoothstep(0.08, 0.02, px)) * resolved);
-            // Las rayas: discontinuas entre carriles y amarillas en la orilla.
-            // Una raya mas angosta que un pixel no cubre mas que su ancho en
-            // pixeles: `min(cover, ancho * px por metro)`. Asi de lejos se
-            // apagan en vez de salir como puntitos blancos.
-            let dash = (r.s / 12.0).rem_euclid(1.0) < 0.5;
-            for lane in [-LANE, 0.0, LANE] {
+            // El asfalto. Las carrileras: a 0.85 m del centro de cada
+            // carril, donde pisan las llantas, mas oscuras y lisas.
+            // (Con `floor` y no `rem_euclid`: el `%` de flotantes es una
+            // llamada a la biblioteca de C, lenta para cada pixel.)
+            let w = (u + HALF_ROAD) * (1.0 / LANE);
+            let l = (w - w.floor() - 0.5) * LANE;
+            tm = smoothstep(0.42, 0.12, (l.abs() - 0.85).abs());
+            let patches = at(2);
+            let grain = if st.grain_on { st.grain.at(u * 6.0 + 17.0) * st.grain_amp * (1.0 + light) } else { 0.0 };
+            c = st.slab * ((1.0 + (0.25 * patches + grain) * st.resolved) * (1.0 - 0.22 * tm));
+            // Las rayas entre carriles (6 m de 12, filtradas a lo largo) y
+            // la orilla amarilla. A lo ancho, una raya mas angosta que un
+            // pixel no cubre mas que su ancho en pixeles.
+            let lane = (u * (1.0 / LANE)).round().clamp(-1.0, 1.0) * LANE;
+            if st.dash > 0.0 {
                 let d = ((u - lane).abs() - 0.12) * r.per_meter;
-                if dash {
-                    c = over(c, Vec3::new(0.75, 0.75, 0.72), cover(d).min(0.24 * r.per_meter));
-                }
+                c = over(c, LANE_PAINT, cover(d).min(0.24 * r.per_meter) * st.dash);
             }
             let edge = ((a - (HALF_ROAD - 0.35)).abs() - 0.1) * r.per_meter;
-            c = over(c, Vec3::new(0.8, 0.6, 0.08), cover(edge).min(0.2 * r.per_meter));
-            // Los tumulos: franjas amarillas y negras en sus carriles.
-            if segment.bumps != 0 {
-                let lane = (((u + HALF_ROAD) / LANE).floor() as i32).clamp(0, 3);
-                let within = (r.s / SEGMENT).rem_euclid(1.0);
-                if segment.bumps & (1 << lane) != 0 && (0.3..0.7).contains(&within) {
-                    let stripe = ((u + r.s) * 1.5).rem_euclid(1.0) < 0.5;
-                    c = if stripe { Vec3::new(0.85, 0.65, 0.05) } else { Vec3::new(0.03, 0.03, 0.03) };
+            c = over(c, EDGE_PAINT, cover(edge).min(0.2 * r.per_meter));
+            // La junta cian que destella: un hilo con un resplandor leve.
+            c = over(c, JOINT * 1.1, st.joint * 0.7) + JOINT * (0.05 * st.joint_glow * (1.0 - fog));
+            e = 0.3 * st.joint;
+            // Los ojos de gato en el hueco de las rayas (blancos) y en las
+            // orillas (ambar): 10 cm de ancho y al menos un pixel.
+            let half = 0.05f32.max(0.5 * px);
+            if st.eye > 0.0 {
+                let v = cover(((u - lane).abs() - half) * r.per_meter) * st.eye;
+                c = c + Vec3::new(0.9, 0.95, 1.0) * (1.6 * v * (1.0 - fog));
+                e += v;
+            }
+            if st.amber > 0.0 {
+                let v = cover(((a - (HALF_ROAD - 0.35)).abs() - half) * r.per_meter) * st.amber;
+                c = c + Vec3::new(1.0, 0.7, 0.15) * (1.6 * v * (1.0 - fog));
+                e += v;
+            }
+            // Los tumulos: chevrones amarillos y negros (la cara de
+            // adelante iluminada, la de atras en sombra) con botones ambar
+            // al centro; de lejos, su promedio y su cobertura a lo largo.
+            if st.bump_cov > 0.0 {
+                let k = (((u + HALF_ROAD) / LANE).floor() as i32).clamp(0, 3);
+                if st.bumps & (1 << k) != 0 {
+                    let face = if st.bump_q < 0.5 { 1.35 } else { 0.6 };
+                    let chevron = if fract(u * 1.2 + st.bump_q * 2.0) < 0.5 { BUMP_YELLOW * face } else { BUMP_BLACK };
+                    let avg = (BUMP_YELLOW * 0.975 + BUMP_BLACK) * 0.5;
+                    c = over(c, chevron.lerp(avg, st.bump_far), st.bump_cov);
+                    if st.bump_btn > 0.0 {
+                        let b = cover(((fract(u * 2.0) - 0.5).abs() * 0.5 - 0.06) * r.per_meter) * st.bump_btn;
+                        c = c + Vec3::new(1.0, 0.7, 0.15) * (2.0 * b);
+                        e += b;
+                    }
                 }
             }
-            // La meta: cuadros blancos y negros.
-            let lap_s = r.s.rem_euclid(game.track.length());
-            if lap_s < 2.5 {
-                let check = ((u.floor() as i64) + ((lap_s * 1.0).floor() as i64)).rem_euclid(2) == 0;
-                c = if check { Vec3::new(0.8, 0.8, 0.8) } else { Vec3::new(0.02, 0.02, 0.02) };
+            // La meta: cuadros de 1 m, filtrados a lo largo (y a lo ancho
+            // cuando un cuadro mide menos de unos pixeles).
+            if st.finish > 0.0 {
+                let even = fract(u * 0.5) < 0.5;
+                let white = if even { st.finish_fs } else { 1.0 - st.finish_fs };
+                let white = white + (0.5 - white) * smoothstep(0.3, 1.0, px);
+                c = over(c, Vec3::splat(0.02).lerp(Vec3::splat(0.8), white), st.finish);
             }
         }
-        // La luz de los postes en charcos naranja.
-        let lamp = (r.s / LAMP_EVERY).round();
-        let side = if (lamp as i64).rem_euclid(2) == 0 { 1.0 } else { -1.0 };
-        let ds = r.s - lamp * LAMP_EVERY;
-        let dx = u - side * (HALF_ROAD - 1.0);
-        let pool = (-(ds * ds) / 90.0 - (dx * dx) / 45.0).exp();
-        c = c + LAMP_COLOR * (0.18 * pool) + c * (pool * 1.5);
+        // Lo mojado: charcos de unos 7 x 22 m y las carrileras.
+        let wet = (at(1) + 0.35 * tm).min(1.0) * gloss;
+        // El charco del poste: luz que se suma y que tine lo que alumbra.
+        // Lo mojado devuelve menos difuso, `1.6 (1 - 0.5 wet)` (esa luz se
+        // va a la raya del reflejo): asi no queda gris de concreto seco.
+        c = c + LAMP_COLOR * (light * 0.22) + c * (light * 1.6 * (1.0 - 0.5 * wet));
+        // La luz del arco de foquitos mas cercano y el destello de los
+        // cohetes. La del arco es un charco: alumbra el asfalto (su luz por
+        // el color de lo que toca, pero ese color tomado hasta 0.12, mas un
+        // poco que se suma) y no tine de mas las rayas blancas, que con
+        // `c spill` saldrian salmon.
+        if st.lit {
+            c = c + c.min(Vec3::splat(0.12)) * (st.spill * 1.3) + c * (self.fw_flash_road * 2.0) + st.spill * 0.04;
+        }
+        // La estela de lo que emite, desde el frame anterior, mas fuerte de
+        // lejos (Fresnel de la distancia), y el cielo reflejado con su
+        // Fresnel (nunca suma mas de 0.8): los dos de la fila en espacio
+        // de pantalla, bilineal a lo ancho.
+        if !ctx.screen.is_empty() {
+            let last = ctx.screen.len() - 1;
+            let f = (x * ctx.screen_scale - 0.5 - ctx.screen_lo as f32).max(0.0);
+            let i = (f as usize).min(last);
+            let (a0, a1) = (&ctx.screen[i], &ctx.screen[(i + 1).min(last)]);
+            let t = (f - i as f32).min(1.0);
+            let (streak, sky) = (a0[0].lerp(a1[0], t), a0[1].lerp(a1[1], t));
+            c = c + streak * (1.4 * wet * st.fres * (1.0 - fog));
+            c = c + (sky * (st.fres_s * (0.25 + 0.75 * wet) * SKY_REFLECT)).min(Vec3::splat(0.8));
+        }
+        // La raya de cada poste en el piso mojado.
+        if st.n_specs > 0 {
+            let k = wet * (0.3 + 0.7 * st.fres);
+            for &(us, amp, inv) in &st.specs[..st.n_specs] {
+                let t = (u - us) * inv;
+                if t.abs() < 4.0 {
+                    let v = amp * fast_exp(-t * t) * k;
+                    c = c + LAMP_COLOR * v;
+                    e = e.max(0.4 * v);
+                }
+            }
+        }
+        // Las naves: la sombra de contacto (antes de su luz, para que los
+        // LEDs no la tapen), su charco de luz (en el bordillo, la mitad) y
+        // el rojo de las calaveras atras de ellas.
+        if st.has_pools && a <= HALF_ROAD + 0.7 {
+            let curb = if a > HALF_ROAD { 0.5 } else { 1.0 };
+            c = c * at(10) + Vec3::new(at(6), at(7), at(8)) * ((0.6 + 0.4 * wet) * curb) + BRAKE_RED * (at(9) * curb);
+        }
+        // El neon de la baranda tine el bordillo, el hombro y la orilla.
+        if a > HALF_ROAD - 1.5 {
+            c = c + Vec3::new(at(3), at(4), at(5));
+        }
         // La neblina toma el color del cielo de atras: la pista lejana se
         // funde en el horizonte.
-        (c.lerp(self.haze_row[ctx.y], fog), e * (1.0 - fog))
+        (c.lerp(haze, fog), e.min(1.0) * (1.0 - fog))
     }
 
     /// Lo que cae en la fila `y` de un objeto encima de la pista. No se ve
@@ -2358,13 +3714,17 @@ impl View<'_> {
         };
         let (near_road, far_road) = (reach(road), reach(far));
         let hidden = |x: f32| (x > near_road.0 && x < near_road.1) || (x > far_road.0 && x < far_road.1);
-        let fog = fog_at(item.depth).max(horizon_fog(item.y - self.cam.horizon, item.depth));
+        // La neblina del horizonte se mide en la fila para lo alto (la
+        // torre, los barriletes, los postes y los arcos): con la de su pie,
+        // que de lejos cae en el horizonte, se borrarian enteros.
+        let tall = !matches!(item.kind, ItemKind::Car { .. } | ItemKind::Puff { .. });
+        let fog = fog_at(item.depth).max(horizon_fog(if tall { yf } else { item.y } - self.cam.horizon, item.depth));
         let haze = self.haze_row[y];
         let k = item.scale;
         // Coordenadas en metros alrededor del punto en el suelo (y hacia arriba).
         let my = (item.y - yf) / k;
         match item.kind {
-            ItemKind::Car { set, sprite, width, hover, boost, player, .. } => {
+            ItemKind::Car { set, sprite, boost, player, spill, .. } => {
                 let sprite = if set == usize::MAX { &game.player_set[sprite] } else { &game.sets[set][sprite] };
                 let scale = k / sprite.scale;
                 // Las que pasan pegadas a la camara se desvanecen: de tan
@@ -2375,33 +3735,6 @@ impl View<'_> {
                 }
                 let top = item.y - sprite.anchor.1 * scale;
                 let bottom = item.y + (sprite.height as f32 - sprite.anchor.1) * scale;
-                // La sombra (o el brillo de la chela que flota) en el suelo.
-                let ground = item.y + hover * k;
-                let shadow_r = (width * 0.65 * k, width * 0.18 * k + 2.0);
-                if (yf - ground).abs() < shadow_r.1 && hover == 0.0 {
-                    let x0 = (item.x - shadow_r.0).max(0.0) as usize;
-                    let x1 = ((item.x + shadow_r.0) as usize).min(game.width);
-                    for x in x0..x1 {
-                        let e = ((x as f32 + 0.5 - item.x) / shadow_r.0).hypot((yf - ground) / shadow_r.1);
-                        if e < 1.0 && !hidden(x as f32) {
-                            let p = &mut row[x * 4..x * 4 + 4];
-                            let dim = 1.0 - 0.45 * near * (1.0 - e * e).powi(2);
-                            write_emit(p, lienzo::read(p) * dim, emission(p) * dim);
-                        }
-                    }
-                }
-                if hover > 0.0 && (yf - ground).abs() < shadow_r.1 * 2.0 {
-                    let x0 = (item.x - shadow_r.0 * 1.3).max(0.0) as usize;
-                    let x1 = ((item.x + shadow_r.0 * 1.3) as usize).min(game.width);
-                    for x in x0..x1 {
-                        let e = ((x as f32 + 0.5 - item.x) / (shadow_r.0 * 1.3)).hypot((yf - ground) / (shadow_r.1 * 2.0));
-                        if e < 1.0 && !hidden(x as f32) {
-                            let p = &mut row[x * 4..x * 4 + 4];
-                            let light = 0.35 * (1.0 - e);
-                            write_emit(p, lienzo::read(p) + Vec3::new(0.9, 0.7, 0.3) * light, emission(p).max(light));
-                        }
-                    }
-                }
                 if yf < top || yf >= bottom {
                     return;
                 }
@@ -2431,6 +3764,9 @@ impl View<'_> {
                     let p = &mut row[x * 4..x * 4 + 4];
                     let back = lienzo::read(p);
                     let mut src = Vec3::new(r, g, b);
+                    // La luz del arco de foquitos que le cae encima.
+                    // (A 0.6 y no mas: la laca se tine sin perder su color.)
+                    src = src + src * (spill * 0.6);
                     // De lejos se pierde en la neblina.
                     src = src.lerp(haze * a, fog);
                     write_emit(p, src + back * (1.0 - a), e_src + emission(p) * (1.0 - a));
@@ -2454,21 +3790,55 @@ impl View<'_> {
                 }
             }
             ItemKind::Lamp { side } => {
-                // Poste de 9 m con su brazo hacia la pista y la lampara. En
-                // cada fila solo se recorre lo que tiene algo: el poste y,
-                // cerca de la lampara, el brazo y su resplandor.
+                // Poste de 9 m con su brazo hacia la pista y la lampara: una
+                // caja oscura de 1 x 0.32 m con la cara de abajo encendida.
+                // En la cara del palo que mira a la pista, una tira LED del
+                // color del neon de su baranda con un pulso que sube; abajo
+                // de la lampara, su cono de luz en el aire. En cada fila solo
+                // se recorre lo que tiene algo.
                 if !(-0.3..11.5).contains(&my) {
                     return;
                 }
                 let spread = 0.8f32.max(3.0 / k);
                 let near_head = ((my - 8.5) * 1.5).abs() < 2.6 * spread || (8.4..9.1).contains(&my);
-                // Lo que se recorre, en metros hacia la pista.
-                let (from, to) = if near_head { (-0.3, 2.7 + 2.6 * spread) } else if my <= 9.0 { (-0.3, 0.3) } else { return };
-                // De metros hacia la pista a pixeles de la pantalla.
-                let (a, b) = (item.x - side * from * k, item.x - side * to * k);
-                let x0 = (a.min(b) - 1.0).max(0.0) as usize;
-                let x1 = ((a.max(b) + 1.0).max(0.0) as usize).min(game.width);
+                // El cono: medio ancho `w = 0.3 + 0.36 (8.5 - my)` alrededor
+                // de la lampara (a 2.7 m hacia la pista).
+                let cone_w = 0.3 + 0.36 * (8.5 - my);
+                let below = if my < 8.5 { 2.7 + cone_w } else { 0.0 };
+                // Lo que se recorre con todo, en metros hacia la pista: cerca
+                // de la lampara, hasta su resplandor (y su cono); abajo, el
+                // palo con su tira y el halo de la tira, que llega a cero a
+                // 9 px de ella (de 0.105 a 0.175 m). El resto del cono va
+                // aparte, solo luz.
                 let px = 1.0 / k;
+                let strip_on = (0.6..8.3).contains(&my);
+                let strip_reach = if strip_on { 10.0 * px } else { 0.0 };
+                let (from, to) = if near_head {
+                    ((-0.3f32).min(0.105 - strip_reach), (2.7 + 2.6 * spread).max(below).max(0.175 + strip_reach))
+                } else if my <= 9.0 {
+                    ((-0.3f32).min(0.105 - strip_reach), 0.3f32.max(0.175 + strip_reach))
+                } else {
+                    return;
+                };
+                // De metros hacia la pista a columnas de la pantalla.
+                let columns = |from: f32, to: f32| {
+                    let (a, b) = (item.x - side * from * k, item.x - side * to * k);
+                    ((a.min(b) - 1.0).max(0.0) as usize, ((a.max(b) + 1.0).max(0.0) as usize).min(game.width))
+                };
+                let (x0, x1) = columns(from, to);
+                let neon = NEON[(side > 0.0) as usize];
+                // La tira: 7 cm en `mx = 0.14` con un pulso que corre hacia
+                // arriba. Mas angosta que un pixel se le quita la luz que
+                // sobra (`0.1 / px`), si no de lejos seria una raya gruesa.
+                // Su halo es `e^(-d / 3) - e^-3` (llega a cero a los 9 px).
+                let strip_col = neon * (0.6 + 0.4 * (my * 1.6 - game.wall * 9.0).sin());
+                let thin = (0.1 / px).min(1.0);
+                // La cara encendida: al menos 1.2 px de alto.
+                let lens_h = 0.05f32.max(0.6 * px);
+                // El cono en el aire: `0.07 (1 - q)^2 sqrt(my / 8.5)` con
+                // `q = |mx - 2.7| / w` (mas tenue al bajar).
+                let cone = if my > 0.0 && my < 8.5 { 0.07 * (my / 8.5).sqrt() * (1.0 - fog) } else { 0.0 };
+                let steel_col = Vec3::new(0.06, 0.06, 0.07);
                 for x in x0..x1 {
                     let xf = x as f32 + 0.5;
                     if hidden(xf) {
@@ -2479,128 +3849,323 @@ impl View<'_> {
                     let pole = ((mx.abs() - 0.12).max(my - 9.0).max(-my)) / px;
                     let arm = ((my - 8.85).abs() - 0.1).max((mx - 1.5).abs() - 1.5) / px;
                     let head = ((my - 8.65).abs() - 0.16).max((mx - 2.7).abs() - 0.5) / px;
+                    let lens = ((my - 8.49 - lens_h).abs() - lens_h).max((mx - 2.7).abs() - 0.44) / px;
                     let p = &mut row[x * 4..x * 4 + 4];
                     let (mut c, mut e) = (lienzo::read(p), emission(p));
+                    if cone > 0.0 {
+                        let q = (mx - 2.7).abs() / cone_w;
+                        if q < 1.0 {
+                            c = c + LAMP_COLOR * (cone * (1.0 - q) * (1.0 - q));
+                        }
+                    }
+                    // El palo y el brazo; el 30 % del palo del lado de la
+                    // pista lleva un filo del neon.
                     let steel = cover(pole.min(arm));
-                    c = over(c, Vec3::new(0.06, 0.06, 0.07).lerp(haze, fog), steel);
-                    // La lampara de sodio: su tono, `(1, 0.72, 0.38)`, sin
-                    // recortarse (antes se le sumaba el resplandor encima
-                    // y salia crema), con el centro apenas mas claro.
-                    let bulb = cover(head);
-                    let hot = smoothstep(0.5, 0.0, (mx - 2.7).abs() / 0.5);
-                    c = over(c, Vec3::new(1.0, 0.72, 0.38).lerp(Vec3::new(1.0, 0.82, 0.55), hot), bulb);
-                    // La lampara emite toda; lo que tapa el poste no.
-                    e = (e * (1.0 - steel) * (1.0 - bulb)).max(bulb * (1.0 - fog));
+                    let edge = if my < 8.7 { 0.25 * smoothstep(0.03, 0.06, mx) } else { 0.0 };
+                    c = over(c, (steel_col + neon * edge).lerp(haze, fog), steel);
+                    e *= 1.0 - steel;
+                    if strip_on {
+                        let d = ((mx - 0.14).abs() - 0.035) / px;
+                        let on = cover(d) * thin;
+                        c = over(c, strip_col * 1.4, on) + strip_col * (0.35 * (halo(d, 3.0) - STRIP_CUT).max(0.0) * thin * (1.0 - fog));
+                        e = e.max(on * (1.0 - fog));
+                    }
+                    // La lampara: la caja oscura y su cara encendida, apenas
+                    // mas clara al centro.
+                    let house = cover(head);
+                    c = over(c, Vec3::new(0.07, 0.07, 0.08).lerp(haze, fog), house);
+                    let lit = cover(lens);
+                    let hot = smoothstep(0.44, 0.0, (mx - 2.7).abs());
+                    c = over(c, Vec3::new(1.0, 0.85, 0.6).lerp(Vec3::new(1.0, 0.95, 0.85), 0.5 * hot), lit);
+                    e = (e * (1.0 - house)).max(lit * (1.0 - fog));
                     // El resplandor: gaussiano en metros (y nunca menos de
-                    // unos pixeles); a 2.6 anchos ya no se ve. Solo afuera
-                    // de la lampara.
-                    let dm = (mx - 2.7).hypot((my - 8.5) * 1.5) / spread;
-                    let glow = (-dm * dm).exp() * (1.0 - fog) * (1.0 - bulb);
+                    // unos pixeles); a 2.6 anchos ya no se ve. Afuera de la
+                    // caja y sobre la cara encendida.
+                    let dm = len(mx - 2.7, (my - 8.5) * 1.5) / spread;
+                    let glow = (-dm * dm).exp() * (1.0 - fog) * (1.0 - house * (1.0 - lit));
                     c = c + LAMP_COLOR * (0.55 * glow);
                     write_emit(p, c, e.max(0.5 * glow));
                 }
-            }
-            ItemKind::Billboard { side, motif } => {
-                // Valla de 10 x 5 m sobre dos patas de 3 m, con motivos de la
-                // faja tejida.
-                if !(-0.2..8.5).contains(&my) {
-                    return;
-                }
-                let x0 = (item.x - 6.0 * k).max(0.0) as usize;
-                let x1 = ((item.x + 6.0 * k) as usize + 1).min(game.width);
-                let px = 1.0 / k;
-                for x in x0..x1 {
-                    let xf = x as f32 + 0.5;
-                    if hidden(xf) {
-                        continue;
-                    }
-                    let mx = (xf - item.x) / k * side;
-                    let p = &mut row[x * 4..x * 4 + 4];
-                    let (mut c, mut e) = (lienzo::read(p), emission(p));
-                    let legs = ((mx.abs() - 3.0).abs() - 0.15).max(my - 3.2) / px;
-                    c = over(c, Vec3::new(0.08, 0.08, 0.09).lerp(haze, fog), cover(legs));
-                    e *= 1.0 - cover(legs);
-                    let panel = (mx.abs() - 5.0).max((my - 5.5).abs() - 2.5) / px;
-                    if panel < 1.0 {
-                        let border = (mx.abs() - 4.7).max((my - 5.5).abs() - 2.2) / px;
-                        let mut face = Vec3::new(0.95, 0.75, 0.15);
-                        if border < 0.0 {
-                            // Dos cuadros con su motivo.
-                            face = Vec3::new(0.6, 0.04, 0.07);
-                            let cell = if mx < 0.0 { motif } else { motif + 2 };
-                            let (cx, cy) = (((mx + 4.7) / 4.7).fract() - 0.5, (my - 5.5) / 4.4);
-                            transition::motif(cell, &mut face, cx, cy, (px / 4.4).max(0.004));
+                // El cono abajo de la lampara, lejos del palo: solo luz que
+                // se suma (de cerca son cientos de pixeles por fila).
+                if !near_head && cone > 0.0 {
+                    let (c0, c1) = columns((2.7 - cone_w).max(0.3), 2.7 + cone_w);
+                    for x in c0..c1 {
+                        let xf = x as f32 + 0.5;
+                        if (x0..x1).contains(&x) || hidden(xf) {
+                            continue;
                         }
-                        // Los reflectores de abajo la alumbran.
-                        let lit = 0.75 + 0.5 * smoothstep(8.0, 3.0, my);
-                        c = over(c, (face * lit).lerp(haze, fog), cover(panel));
-                        e *= 1.0 - cover(panel);
+                        let q = ((xf - item.x) / k * -side - 2.7).abs() / cone_w;
+                        if q < 1.0 {
+                            let p = &mut row[x * 4..x * 4 + 4];
+                            write_emit(p, lienzo::read(p) + LAMP_COLOR * (cone * (1.0 - q) * (1.0 - q)), emission(p));
+                        }
                     }
-                    write_emit(p, c, e);
                 }
             }
-            ItemKind::Gantry { lights } => {
-                // La meta: dos postes, una viga a cuadros a 8 m y, colgado al
-                // centro, el semaforo.
-                if !(-0.2..11.0).contains(&my) {
+            ItemKind::Kite { design, size, id, squash, lift } => {
+                // Barrilete de Sumpango: la rueda horneada (el mip que toca
+                // por su tamano en la pantalla y el siguiente, mezclados),
+                // con un bamboleo `0.05 sin(0.9 t + id)` y puesta de canto
+                // (se angosta `squash` a lo ancho). En vivo, los flecos de
+                // papel que ondean en el anillo `1 < r < 1.12 + 0.035
+                // sin(9 a + 5 t + id)`, dos colas que culebrean y la cana
+                // que la sostiene desde el suelo. De lejos (menos de ~40 px
+                // de diametro) los flecos y las colas se desvanecen
+                // (`detalle`) y se lee un solo mip.
+                let Some(mips) = game.kites.get(design as usize % game.kites.len().max(1)) else { return };
+                let Some(first) = mips.first() else { return };
+                let rad = 0.5 * size * k;
+                if rad < 0.75 {
                     return;
                 }
-                let span = RAIL + 0.6;
-                let x0 = (item.x - (span + 0.6) * k).max(0.0) as usize;
-                let x1 = ((item.x + (span + 0.6) * k) as usize + 1).min(game.width);
+                let (cx, cy) = (item.x, item.y - lift * k);
+                let rx = rad * squash;
+                let theta = 0.05 * (game.wall * 0.9 + id as f32).sin();
+                let (st, ct) = theta.sin_cos();
+                let dy = yf - cy;
                 let px = 1.0 / k;
-                for x in x0..x1 {
-                    let xf = x as f32 + 0.5;
-                    if hidden(xf) {
-                        continue;
+                // Las colas: desde abajo del disco hasta 1.2 veces su tamano,
+                // sin pasar de la altura de la pista. `ty` son los metros
+                // bajo el disco.
+                let ty = (dy - rad) / k;
+                let detail = smoothstep(12.0, 20.0, rad);
+                let disk = dy.abs() < rad * if detail > 0.0 { 1.2 } else { KITE_EXTENT };
+                let pole = (-0.1..=lift).contains(&my);
+                let tails = detail > 0.0 && ty > -0.5 && ty < 1.2 * size && my > 0.0;
+                if !(disk || pole || tails) {
+                    return;
+                }
+                // El mip: cuantos texeles caen en un pixel a lo ancho (lo
+                // mas apretado), `log2(texeles por unidad / pixeles por
+                // unidad)`, y la mezcla con el siguiente (sin saltos al
+                // acercarse).
+                let lod = (first.scale / rx.max(1e-3)).max(1.0).log2();
+                let (l0, blend) = if detail < 1.0 { ((lod.round() as usize).min(mips.len() - 1), 0.0) } else { ((lod.floor() as usize).min(mips.len() - 1), lod.fract()) };
+                let l1 = (l0 + 1).min(mips.len() - 1);
+                let blend = if l1 > l0 { blend } else { 0.0 };
+                let sample = |m: &Sprite, u: f32, v: f32| m.sample(m.anchor.0 + u * m.scale, m.anchor.1 + v * m.scale);
+                // Las tiras de los flecos, cada `2 pi / 90`: si miden menos
+                // de 3 px se van a su promedio (de lejos no titilan).
+                let strips = smoothstep(1.5, 4.0, TAU / 90.0 * rx);
+                let tail_col = [PAPEL[id as usize % 6] * 0.55, PAPEL[(id as usize + 3) % 6] * 0.55];
+                let thin = (0.2 / px).min(1.0);
+                let tail_fade = smoothstep(1.2 * size, 0.7 * size, ty) * smoothstep(-0.5, 0.0, ty) * detail;
+                let wave = |j: f32| 0.5 * (my * 1.1 + game.wall * 4.0 + j * 1.7).sin();
+                let tail_x = [-0.18 * size + wave(0.0), 0.18 * size + wave(1.0)];
+                // Lo que se recorre en la fila, alrededor de `cx`: la cuerda
+                // del disco con sus flecos (`rx sqrt(1.21^2 - (dy / R)^2)`,
+                // mas lo que lo gira el bamboleo), la cana y cada cola.
+                let mut ranges = [(0.0f32, 0.0f32); 4];
+                let mut n = 0;
+                if disk {
+                    let q = dy / rad;
+                    let outer = if detail > 0.0 { 1.21 } else { KITE_EXTENT };
+                    let hw = rx * (outer * outer - q * q).max(0.0).sqrt() + theta.abs() * rad + 2.0;
+                    ranges[n] = (-hw, hw);
+                    n += 1;
+                }
+                if pole {
+                    ranges[n] = (-(0.075 * k + 2.0), 0.075 * k + 2.0);
+                    n += 1;
+                }
+                if tails && tail_fade > 0.0 {
+                    for tx in tail_x {
+                        ranges[n] = (tx * k - 0.1 * k - 2.0, tx * k + 0.1 * k + 2.0);
+                        n += 1;
                     }
-                    let mx = (xf - item.x) / k;
-                    let p = &mut row[x * 4..x * 4 + 4];
-                    let (mut c, mut e) = (lienzo::read(p), emission(p));
-                    let posts = ((mx.abs() - span).abs() - 0.3).max(my - 9.0) / px;
-                    c = over(c, Vec3::new(0.12, 0.12, 0.14).lerp(haze, fog), cover(posts));
-                    e *= 1.0 - cover(posts);
-                    let beam = (mx.abs() - span).max((my - 8.4).abs() - 0.6) / px;
-                    if beam < 1.0 {
-                        let check = ((mx.floor() as i64) + ((my - 7.8) / 0.6).floor() as i64).rem_euclid(2) == 0;
-                        let face = if check { Vec3::new(0.85, 0.85, 0.85) } else { Vec3::new(0.03, 0.03, 0.03) };
-                        c = over(c, face.lerp(haze, fog), cover(beam));
-                        e *= 1.0 - cover(beam);
+                }
+                let ranges = &mut ranges[..n];
+                ranges.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+                let mut from = 0usize;
+                for &(a, b) in ranges.iter() {
+                    let x0 = ((cx + a).max(0.0) as usize).max(from).min(game.width);
+                    let x1 = ((cx + b).max(0.0) as usize + 1).min(game.width);
+                    from = from.max(x1);
+                    for x in x0..x1 {
+                        let xf = x as f32 + 0.5;
+                        if hidden(xf) {
+                            continue;
+                        }
+                        let dx = xf - cx;
+                        let p = &mut row[x * 4..x * 4 + 4];
+                        let (mut c, mut e) = (lienzo::read(p), emission(p));
+                        if pole {
+                            let d = (dx.abs() * px - 0.075).max(my - lift) / px;
+                            let cov = cover(d) * (0.15 / px).min(1.0);
+                            c = over(c, Vec3::new(0.08, 0.05, 0.03).lerp(haze, fog), cov);
+                            e *= 1.0 - cov;
+                        }
+                        if tails && tail_fade > 0.0 {
+                            for (j, &tx) in tail_x.iter().enumerate() {
+                                let d = ((dx * px - tx).abs() - 0.1) / px;
+                                let cov = cover(d) * thin * 0.9 * tail_fade;
+                                if cov > 0.0 {
+                                    c = over(c, tail_col[j].lerp(haze, fog), cov);
+                                    e = e * (1.0 - cov) + 0.25 * cov * (1.0 - fog);
+                                }
+                            }
+                        }
+                        if disk {
+                            let (ux, uy) = (dx / rx, dy / rad);
+                            let (u, v) = (ux * ct + uy * st, -ux * st + uy * ct);
+                            let r2 = u * u + v * v;
+                            if r2 < 1.21 * 1.21 {
+                                let r1 = r2.sqrt();
+                                if r1 > 0.97 && detail > 0.0 {
+                                    let ang = fast_atan2(-v, u);
+                                    let edge = 1.12 + 0.035 * (9.0 * ang + game.wall * 5.0 + id as f32).sin();
+                                    let cov = 0.9 * detail * cover((r1 - edge) * rx);
+                                    if cov > 0.0 {
+                                        let k_strip = ((ang + PI) * (90.0 / TAU)) as usize + id as usize;
+                                        let col = PAPEL_AVG.lerp(PAPEL[k_strip % 6], strips) * 0.5;
+                                        c = over(c, col.lerp(haze, fog), cov);
+                                        e = e * (1.0 - cov) + 0.3 * cov * (1.0 - fog);
+                                    }
+                                }
+                                if r1 < KITE_EXTENT {
+                                    let mut s = sample(&mips[l0], u, v);
+                                    if blend > 0.0 {
+                                        let s1 = sample(&mips[l1], u, v);
+                                        s = std::array::from_fn(|i| s[i] + (s1[i] - s[i]) * blend);
+                                    }
+                                    let a = s[3];
+                                    let src = Vec3::new(s[0], s[1], s[2]).lerp(haze * a, fog);
+                                    c = src + c * (1.0 - a);
+                                    e = (e * (1.0 - a) + 0.45 * src.x.max(src.y).max(src.z) * (1.0 - fog)).min(1.0);
+                                }
+                            }
+                        }
+                        write_emit(p, c, e);
                     }
-                    if lights > 0 {
-                        let housing = (mx.abs() - 0.75).max((my - 6.3).abs() - 1.5) / px;
-                        c = over(c, Vec3::new(0.02, 0.02, 0.025), cover(housing));
-                        e *= 1.0 - cover(housing);
-                        for (k_light, (ly, on_color)) in [(7.2, Vec3::new(1.0, 0.1, 0.08)), (6.3, Vec3::new(1.0, 0.1, 0.08)), (5.4, Vec3::new(1.0, 0.1, 0.08))].into_iter().enumerate() {
-                            let green = lights >= 4;
-                            let on = green || lights as usize > k_light;
-                            let color = if green { Vec3::new(0.2, 1.0, 0.35) } else { on_color };
-                            let d = (mx.hypot(my - ly) - 0.36) / px;
-                            let bulb = if on { color * 1.2 } else { color * 0.12 };
-                            c = over(c, bulb, cover(d));
-                            e = if on { (e * (1.0 - cover(d))).max(cover(d)) } else { e * (1.0 - cover(d)) };
-                            if on {
-                                c = c + color * (0.5 * halo(d, 8.0 + 0.6 * k));
+                }
+            }
+            ItemKind::Tower { lights, t, green, finished } => {
+                self.draw_tower(item, (lights, t, green, finished), my, row, &hidden, fog, haze);
+            }
+            ItemKind::Arch { id, squash, signal } => {
+                // Arco de foquitos de feria: 41 focos en la semielipse de
+                // medio ancho `a` (angostado `squash` de canto) y alto `b`,
+                // colgados de un cable. Cada foco suma
+                // `color (1.8 cubre(d - r) + 0.55 h e^(-(2.2 d / g)^2))`: un
+                // nucleo de radio `r` (nunca menos de 1.1 px; de lejos la
+                // misma energia repartida, `(0.17 / r)^2`) y un halo de
+                // radio `g` (0.6 m, entre 4 y 22 px). De lejos (un pixel de
+                // mas de 0.12 a 0.2 m) el halo se apaga (`h`): el brillo del
+                // posproceso ya lo abre, y asi cada foco recorre unos
+                // pixeles y no un circulo de 9. Por fila solo se miran los
+                // focos a su alcance de alto, y solo alrededor de cada uno.
+                if !(-0.5..ARCH_B + 1.2).contains(&my) {
+                    return;
+                }
+                let width = game.width;
+                let px = 1.0 / k;
+                let r = 0.17f32.max(1.1 * px);
+                let energy = (0.17 / r).powi(2) * (1.0 - fog);
+                if energy < 1e-3 {
+                    return;
+                }
+                let g = (4.0 * px).max(0.6).min(22.0 * px);
+                let halo_w = 0.55 * smoothstep(0.2, 0.12, px);
+                let reach = if halo_w > 0.0 { g } else { r + px };
+                let (a, b) = (ARCH_A * squash, ARCH_B);
+                // El cable: la banda `|d| < t` con `d = (hypot(mx / a, my / b) - 1) b`
+                // (`t = 0.03 m` mas pixel y medio). En la fila cae entre las
+                // elipses `hypot = 1 -+ t / b`: de `x_in = a sqrt((1 - t/b)^2 - (my/b)^2)`
+                // a `x_out = a sqrt((1 + t/b)^2 - (my/b)^2)` de cada lado, y
+                // arriba, donde la de adentro ya no llega, de lado a lado.
+                // Lo alumbran los focos: un tono calido tenue que emite
+                // un poco (sobre el cielo oscuro un cable negro no se ve).
+                let t = 0.03 + 1.5 * px;
+                if my > -t && my < b + t {
+                    let q = (my / b).powi(2);
+                    let x_out = a * ((1.0 + t / b).powi(2) - q).max(0.0).sqrt();
+                    let x_in = a * ((1.0 - t / b).powi(2) - q).max(0.0).sqrt();
+                    let spans = if x_in > 0.0 { [(-x_out, -x_in), (x_in, x_out)] } else { [(-x_out, x_out), (0.0, 0.0)] };
+                    let cable = (Vec3::new(0.32, 0.22, 0.26) * 0.35).lerp(haze, fog);
+                    let thin = (0.06 / px).min(1.0);
+                    for (lo, hi) in spans {
+                        if hi <= lo {
+                            continue;
+                        }
+                        let x0 = ((item.x + lo * k).floor().max(0.0) as usize).min(width);
+                        let x1 = ((item.x + hi * k).ceil().max(0.0) as usize + 1).min(width);
+                        for x in x0..x1 {
+                            let xf = x as f32 + 0.5;
+                            if hidden(xf) {
+                                continue;
+                            }
+                            let mx = (xf - item.x) * px;
+                            let d = (len(mx / a, my / b) - 1.0) * b;
+                            let cov = cover((d.abs() - 0.03) / px) * thin;
+                            if cov > 0.0 {
+                                let p = &mut row[x * 4..x * 4 + 4];
+                                write_emit(p, over(lienzo::read(p), cable, cov), emission(p).max(0.15 * cov * (1.0 - fog)));
                             }
                         }
                     }
-                    write_emit(p, c, e);
+                }
+                let wall9 = (game.wall * 9.0).floor() as i64;
+                let inv_g = 2.2 / g;
+                for (j, &(cos, sin)) in arch_bulbs().iter().enumerate() {
+                    let (bx, by) = (-a * cos, b * sin);
+                    if (my - by).abs() > reach {
+                        continue;
+                    }
+                    let color = match signal {
+                        1 => Vec3::new(1.0, 0.1, 0.08),
+                        2 => Vec3::new(0.2, 1.0, 0.35),
+                        _ => ARCH_PAL[(j as i64 + 2 * id as i64 + wall9).rem_euclid(5) as usize],
+                    };
+                    let bright = 0.65 + 0.35 * (game.wall * 7.0 - 0.6 * j as f32).sin();
+                    let amp = color * (bright * energy);
+                    let x0 = ((item.x + (bx - reach) * k).floor().max(0.0) as usize).min(width);
+                    let x1 = ((item.x + (bx + reach) * k).ceil().max(0.0) as usize + 1).min(width);
+                    for x in x0..x1 {
+                        let xf = x as f32 + 0.5;
+                        if hidden(xf) {
+                            continue;
+                        }
+                        let dm = len((xf - item.x) * px - bx, my - by);
+                        let cov = cover((dm - r) / px);
+                        let v = if halo_w > 0.0 {
+                            let q = dm * inv_g;
+                            1.8 * cov + halo_w * fast_exp(-q * q)
+                        } else {
+                            1.8 * cov
+                        };
+                        if v < 1e-3 {
+                            continue;
+                        }
+                        let p = &mut row[x * 4..x * 4 + 4];
+                        write_emit(p, lienzo::read(p) + amp * v, emission(p).max(cov * (1.0 - fog)));
+                    }
                 }
             }
             ItemKind::Puff { age } => {
                 let radius = (1.0 + 1.6 * age) * k;
-                if (yf - item.y).abs() > radius {
+                let dy = (yf - item.y) / radius;
+                if dy.abs() >= 1.0 {
                     return;
                 }
-                let opacity = 0.6 * smoothstep(2.6, 0.4, age) * smoothstep(0.0, 0.15, age);
-                let x0 = (item.x - radius).max(0.0) as usize;
-                let x1 = ((item.x + radius) as usize + 1).min(game.width);
+                // Pegada a la camara (a menos de 4 m) se desvanece: de tan
+                // cerca taparia media pantalla con cientos de miles de
+                // pixeles, y ese humo ya lo pinta el de la pantalla.
+                let opacity = 0.6 * smoothstep(2.6, 0.4, age) * smoothstep(0.0, 0.15, age) * smoothstep(1.5, 4.0, item.depth);
+                if opacity < 0.004 {
+                    return;
+                }
+                // Solo la cuerda del disco en la fila, `|dx| < r sqrt(1 - dy^2)`.
+                let chord = radius * (1.0 - dy * dy).max(0.0).sqrt();
+                let x0 = (item.x - chord).max(0.0) as usize;
+                let x1 = ((item.x + chord).max(0.0) as usize + 1).min(game.width);
+                let inv_r = 1.0 / radius;
                 for x in x0..x1 {
                     let xf = x as f32 + 0.5;
                     if hidden(xf) {
                         continue;
                     }
-                    let d = ((xf - item.x) / radius).hypot((yf - item.y) / radius);
+                    let d = len((xf - item.x) * inv_r, dy);
                     if d >= 1.0 {
                         continue;
                     }
@@ -2618,6 +4183,317 @@ impl View<'_> {
                     let p = &mut row[x * 4..x * 4 + 4];
                     write_emit(p, over(lienzo::read(p), Vec3::new(0.05, 0.045, 0.04), a), emission(p) * (1.0 - a));
                 }
+            }
+        }
+    }
+
+    /// La fila `yf` (a `my` metros de alto) de la Torre del Reformador sobre
+    /// la meta: una torre de celosia de hierro de 66 m con las patas a los
+    /// lados de la pista (`tower_outer` y el arco `tower_inner`), tres
+    /// plataformas, la caja de la campana arriba con su faro rojo que
+    /// parpadea, la manta de la meta a cuadros con orillas de faja entre las
+    /// patas y, colgado de ella, el semaforo. Los focos LED que la delinean
+    /// (cada 1.5 m en el borde de afuera y en el arco) son tambien el
+    /// semaforo: blancos que respiran antes de arrancar, rojos por tercios
+    /// de lo que se ve desde la parrilla con la cuenta (las patas de 0 a 6,
+    /// de 6 a 12 y de 12 para arriba; el arco, cuatro focos por tercio),
+    /// toda verde con un destello al arrancar, una persecucion celeste y
+    /// blanca en la carrera y dorada al terminar.
+    ///
+    /// La celosia son dos familias de diagonales,
+    /// `min(|fract((|mx| + my) / 2.4) - 0.5|, |fract((|mx| - my) / 2.4) - 0.5|) 2.4 < 0.09`;
+    /// cuando un pixel mide mas de ~12 cm se va a un hierro parejo al 30 %
+    /// (si no, la reja de lejos haria moire). Las barras mas angostas que
+    /// un pixel se pintan de un pixel con su cobertura (`ancho / px`): asi
+    /// de lejos no se rompen en puntos. Y el hierro se va al color de la
+    /// neblina con la distancia antes que lo demas (perspectiva aerea).
+    ///
+    /// Por fila solo se recorren las patas, la corona, la manta, el
+    /// semaforo y el faro donde caen; lo que depende solo de la fila (las
+    /// plataformas, el color de cada foco, la altura de cada luz del
+    /// semaforo, los focos del arco que alcanzan la fila) se saca antes.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_tower(&self, item: &Item, state: (u8, f32, f32, bool), my: f32, row: &mut [u8], hidden: &dyn Fn(f32) -> bool, fog: f32, haze: Vec3) {
+        let game = self.game;
+        let (lights, _, green, finished) = state;
+        if my < -0.3 {
+            return;
+        }
+        let k = item.scale;
+        let px = 1.0 / k;
+        let g = 3.0 * px;
+        let wo = tower_outer(my);
+        let wi = tower_inner(my);
+        let body = my < 64.0;
+        let spread = beacon_spread(k);
+        let beacon_reach = 4.0 * spread * px;
+        // El halo de los focos del semaforo, `8 + 0.6 k` px (hasta 26),
+        // hasta 3 veces eso (se le resta `e^-3`: llega a cero sin borde).
+        let sem_spread = (8.0 + 0.6 * k).min(26.0);
+        let sem_reach = 3.0 * sem_spread * px;
+        let lattice_far = smoothstep(0.08, 0.16, px);
+        let led_r = 0.16f32.max(0.7 * px);
+        let led_reach = led_r + 7.0 * px;
+        // Una barra de medio ancho `h` a `dist` m de su eje: de un pixel
+        // por lo menos, con la cobertura de lo que mide.
+        let bar = |dist: f32, h: f32| cover((dist - h.max(0.5 * px)) / px) * (2.0 * h / px).min(1.0);
+        // Las plataformas (solo dependen de la fila).
+        let platform = [13.0f32, 28.0, 42.0].iter().fold(0.0f32, |acc, f| acc.max(bar((my - f).abs(), 0.35)));
+        // El color de un foco: su tercio (de abajo arriba) y la altura
+        // `yb` (m) para la persecucion; y cuanto brilla.
+        let breathe = 0.6 + 0.4 * (game.wall * 2.0).sin();
+        let green_led = Vec3::new(0.2, 1.0, 0.35);
+        let led = |tier: u8, yb: f32| -> (Vec3, f32) {
+            match lights {
+                0 => (Vec3::new(1.0, 0.95, 0.9), breathe),
+                1..=3 => (Vec3::new(1.0, 0.1, 0.08), if tier < lights { 1.0 } else { 0.1 }),
+                _ if finished => (Vec3::new(1.0, 0.75, 0.3), 1.0),
+                _ if green < 1.5 => (green_led, 1.0),
+                _ => {
+                    let chase = ((yb / 1.5 - game.wall * 6.0).floor() as i64).rem_euclid(2) == 0;
+                    (if chase { Vec3::new(0.3, 0.65, 1.0) } else { Vec3::new(1.0, 1.0, 1.0) }, 1.0)
+                }
+            }
+        };
+        // Los focos del arco que alcanzan esta fila (de los doce de cada
+        // lado, parejos en el angulo de la elipse de semiejes
+        // `(RAIL + 0.9, 13)`), con su color: uno a cuatro, nunca un
+        // `atan2` por pixel.
+        let mut arc: Short<(f32, f32, Vec3, f32), 12> = Short::new();
+        if body && my < 13.0 + led_reach {
+            for (j, &(bx, by)) in tower_arc_bulbs().iter().enumerate() {
+                if (my - by).abs() < led_reach {
+                    let (col, on) = led((j / 4) as u8, by);
+                    arc.push((bx, by, col.lerp(haze, fog * fog) * on, on));
+                }
+            }
+        }
+        // Los tramos de la fila en metros desde el centro.
+        let mut spans: Short<(f32, f32), 96> = Short::new();
+        let mirror = |spans: &mut Short<(f32, f32), 96>, a: f32, b: f32| {
+            spans.push((a, b));
+            spans.push((-b, -a));
+        };
+        if body {
+            if lattice_far > 0.0 || platform > 0.0 {
+                // De lejos (la celosia es un hierro parejo) o en una
+                // plataforma: todo lo que va de las patas.
+                if wi > g {
+                    mirror(&mut spans, wi - g, wo + g);
+                } else {
+                    spans.push((-(wo + g), wo + g));
+                }
+            } else {
+                // De cerca, solo donde hay algo: los bordes con el halo de
+                // sus focos (7 px), cada diagonal de la celosia (en la fila
+                // `|mx| = 2.4 (n + 0.5) -+ my`, con su medio ancho mas un
+                // pixel) y los focos del arco. Los huecos de la reja ni se
+                // recorren.
+                let pad = 1.5 * px;
+                mirror(&mut spans, wo - 0.35f32.max(led_reach) - pad, wo + 0.35f32.max(led_reach) + pad);
+                if wi > 0.0 {
+                    mirror(&mut spans, wi - 0.3 - pad, wi + 0.3 + pad);
+                }
+                let (lo, hi) = (wi.max(0.0), wo);
+                let hw = 0.09 + px;
+                for offset in [-my, my] {
+                    let first = ((lo - hw - offset) / 2.4 - 0.5).ceil() as i64;
+                    let last = ((hi + hw - offset) / 2.4 - 0.5).floor() as i64;
+                    for n in first..=last.min(first + 32) {
+                        let at = 2.4 * (n as f32 + 0.5) + offset;
+                        mirror(&mut spans, (at - hw).max(lo), (at + hw).min(hi));
+                    }
+                }
+                for &(bx, ..) in arc.as_slice() {
+                    mirror(&mut spans, bx - led_reach, bx + led_reach);
+                }
+            }
+        }
+        if my > 56.0 && my < 65.0 {
+            spans.push((-2.6, 2.6));
+        }
+        if (9.5..11.8).contains(&my) {
+            spans.push((-(RAIL + 0.8), RAIL + 0.8));
+        }
+        let semaphore = lights > 0 && my > 5.4 - sem_reach && my < 10.0f32.max(7.2 + sem_reach);
+        if semaphore {
+            spans.push((-(0.9 + sem_reach), 0.9 + sem_reach));
+        }
+        if (my - 65.0).abs() < beacon_reach + 0.4 {
+            spans.push((-(beacon_reach + 0.4), beacon_reach + 0.4));
+        }
+        if spans.len == 0 {
+            return;
+        }
+        // A columnas, ordenados y juntando los que se pisan (en su lugar).
+        let width = game.width;
+        let mut cols: Short<(usize, usize), 96> = Short::new();
+        for &(a, b) in spans.as_slice() {
+            let x1 = ((item.x + b * k).ceil().max(0.0) as usize + 1).min(width);
+            cols.push((((item.x + a * k).floor().max(0.0) as usize).min(x1), x1));
+        }
+        let cols = cols.as_mut_slice();
+        cols.sort_unstable();
+        let mut merged = 0usize;
+        for i in 0..cols.len() {
+            let (a, b) = cols[i];
+            if merged > 0 && a <= cols[merged - 1].1 {
+                cols[merged - 1].1 = cols[merged - 1].1.max(b);
+            } else {
+                cols[merged] = (a, b);
+                merged += 1;
+            }
+        }
+        // Lo que es igual en toda la fila.
+        // El destello verde al arrancar: el hierro se alumbra de verde.
+        let flash = if lights >= 4 && green < 1.5 { 0.4 * (-green * 4.0).exp() * (1.0 - fog) } else { 0.0 };
+        let iron_fog = fog.max(0.6 * smoothstep(100.0, 500.0, item.depth));
+        let iron_col = (Vec3::new(0.05, 0.05, 0.06) + Vec3::new(0.9, 0.6, 0.35) * (0.4 * (-my / 14.0).exp())).lerp(haze, iron_fog) + green_led * flash;
+        // Lo que pesa un foco: su energia `(0.16 / r)^2` repartida en el
+        // disco de radio `r` (de lejos, mas que el foco), pero nunca menos
+        // de 0.4 de un pixel: de lejos la torre se lee como su silueta de
+        // luces. Se mezcla con lo de atras con esa cobertura (si se pintara
+        // el color ya oscurecido encima, de lejos serian puntos negros).
+        // Las luces atraviesan la neblina mejor que el hierro (se ven
+        // puntos aunque la torre ya se pierda): a ellas les toca `fog^2`.
+        let led_fog = fog * fog;
+        let led_k = (0.16 / led_r).powi(2).max(0.4) * (1.0 - led_fog);
+        // Los focos del borde de afuera: uno cada 1.5 m de alto, el de esta
+        // fila en `1.5 floor(my / 1.5) + 0.75`.
+        let row_bulb = 1.5 * (my / 1.5).floor() + 0.75;
+        let (outer_col, outer_on) = led(if row_bulb < 6.0 { 0 } else if row_bulb < 12.0 { 1 } else { 2 }, row_bulb);
+        let outer = outer_col.lerp(haze, led_fog) * outer_on;
+        let outer_near = (my - row_bulb).abs() < led_reach;
+        let beacon_on = if game.wall.rem_euclid(1.0) < 0.5 { 1.0 } else { 0.0 };
+        let red = Vec3::new(1.0, 0.1, 0.04);
+        // El semaforo: la altura de cada luz desde la fila y su color.
+        let sem_green = lights >= 4;
+        let sem_col = if sem_green { green_led } else { Vec3::new(1.0, 0.1, 0.08) };
+        let sem_dy = [my - 7.2, my - 6.3, my - 5.4];
+        let sem_cut = (0.36 + sem_reach) * (0.36 + sem_reach);
+        let crown = my > 57.5 && my < 65.0;
+        let beacon = (my - 65.0).abs() < beacon_reach + 0.4;
+        let banner = (9.9..11.7).contains(&my);
+        for &(x0, x1) in cols[..merged].iter() {
+            for x in x0..x1 {
+                let xf = x as f32 + 0.5;
+                if hidden(xf) {
+                    continue;
+                }
+                let mx = (xf - item.x) * px;
+                let amx = mx.abs();
+                let p = &mut row[x * 4..x * 4 + 4];
+                let (mut c, mut e) = (lienzo::read(p), emission(p));
+                // El hierro: los bordes de las patas y del arco, la celosia
+                // y las plataformas.
+                if body && amx < wo + g {
+                    let mut iron = bar((amx - wo).abs(), 0.35);
+                    if wi > 0.0 {
+                        iron = iron.max(bar((amx - wi).abs(), 0.3));
+                    }
+                    if amx < wo && amx > wi {
+                        let lat = (fract((amx + my) / 2.4) - 0.5).abs().min((fract((amx - my) / 2.4) - 0.5).abs()) * 2.4;
+                        let sharp = cover((lat - 0.09) / px);
+                        iron = iron.max(sharp + (0.3 - sharp) * lattice_far).max(platform);
+                    }
+                    c = over(c, iron_col, iron);
+                    e *= 1.0 - iron;
+                }
+                // La corona: la caja de la campana (abierta), la campana de
+                // bronce alumbrada desde abajo y la aguja del faro.
+                if crown && amx < 2.7 {
+                    let frame = bar((amx - 0.8).max((my - 61.0).abs() - 3.0).abs(), 0.12);
+                    let spire = cover((amx - 0.06f32.max(0.5 * px)).max((my - 64.5).abs() - 0.5) / px) * (0.12 / px).min(1.0);
+                    let cov = frame.max(spire);
+                    c = over(c, iron_col, cov);
+                    e *= 1.0 - cov;
+                    let bell = cover((len(mx, my - 61.5) - 0.9) / px);
+                    if bell > 0.0 {
+                        let shade = 0.55 + 0.6 * smoothstep(0.9, -0.9, my - 61.5);
+                        c = over(c, (Vec3::new(0.6, 0.4, 0.15) * shade).lerp(haze, iron_fog), bell);
+                        e *= 1.0 - bell;
+                    }
+                }
+                // El faro rojo de la punta, a 1 Hz.
+                if beacon {
+                    let d = (len(mx, my - 65.0) - 0.35) / px;
+                    let bulb = cover(d);
+                    c = over(c, red * (0.15 + 0.85 * beacon_on), bulb);
+                    let h = if d <= 0.0 { 1.0 } else { fast_exp(-d / spread) };
+                    let glow = beacon_on * (h - 0.018).max(0.0) * (1.0 - bulb) * (1.0 - fog);
+                    c = c + red * (0.6 * glow);
+                    e = (e * (1.0 - bulb)).max(bulb * beacon_on * (1.0 - fog)).max(0.3 * glow);
+                }
+                // Los focos LED: el del borde de afuera en esta fila y los
+                // del arco que la alcanzan. Cada uno, `cubre(d)` con su peso
+                // y un halo `e^(-d / 2.5)` que llega a cero en 7 px (se le
+                // resta `e^(-2.8)`).
+                if body {
+                    let mut dot = |d: f32, col: Vec3, on: f32| {
+                        let cov = cover(d) * led_k;
+                        c = over(c, col, cov) + col * (0.5 * led_k * (fast_exp(-d.max(0.0) / 2.5) - 0.061).max(0.0) * (1.0 - cov));
+                        e = e.max(cov * on.min(1.0));
+                    };
+                    if outer_near && (amx - wo).abs() < led_reach {
+                        let d = (len(amx - wo, my - row_bulb) - led_r) / px;
+                        if d < 7.0 {
+                            dot(d, outer, outer_on);
+                        }
+                    }
+                    for &(bx, by, col, on) in arc.as_slice() {
+                        if (amx - bx).abs() < led_reach {
+                            let d = (len(amx - bx, my - by) - led_r) / px;
+                            if d < 7.0 {
+                                dot(d, col, on);
+                            }
+                        }
+                    }
+                }
+                // El semaforo colgado de la manta: una varilla y la caja con
+                // sus tres focos (rojos por segundo de la cuenta, todos
+                // verdes al arrancar). El halo alumbra el aire afuera de la
+                // caja; adentro solo brillan las lamparas.
+                if semaphore && amx < 0.9 + sem_reach {
+                    let rod = (amx - 0.06f32.max(0.5 * px)).max((my - 8.9).abs() - 1.1) / px;
+                    let housing = cover((amx - 0.75).max((my - 6.3).abs() - 1.5) / px);
+                    let cov = housing.max(cover(rod));
+                    c = over(c, Vec3::new(0.02, 0.02, 0.025), cov);
+                    e *= 1.0 - cov;
+                    for (k_light, &dy) in sem_dy.iter().enumerate() {
+                        let r2 = mx * mx + dy * dy;
+                        if r2 > sem_cut {
+                            continue;
+                        }
+                        let on = sem_green || lights as usize > k_light;
+                        let d = (r2.sqrt() - 0.36) / px;
+                        let bulb = cover(d);
+                        c = over(c, if on { sem_col * 1.2 } else { sem_col * 0.12 }, bulb);
+                        e = if on { (e * (1.0 - bulb)).max(bulb) } else { e * (1.0 - bulb) };
+                        if on {
+                            let h = if d <= 0.0 { 1.0 } else { fast_exp(-d / sem_spread) };
+                            c = c + sem_col * (0.5 * (h - 0.05).max(0.0) * (1.0 - fog) * (1.0 - housing));
+                        }
+                    }
+                }
+                // La manta de la meta, encima de los focos del arco: cuadros
+                // de 1 x 0.55 m con orillas de faja de 0.25 m arriba y abajo
+                // (los cuadros de lejos se van a su gris).
+                if banner && amx < RAIL + 0.9 {
+                    let cov = cover((amx - (RAIL + 0.8)).max((my - 10.8).abs() - 0.8) / px);
+                    if cov > 0.0 {
+                        let face = if !(10.25..=11.35).contains(&my) {
+                            let v = if my < 10.25 { (my - 10.0) / 0.25 * transition::EDGE } else { 1.0 - (11.6 - my) / 0.25 * transition::EDGE };
+                            transition::sash((mx + RAIL + 0.8) / (RAIL * 2.0), v.clamp(0.0, 1.0), (px / 0.25 * transition::EDGE).max(0.004))
+                        } else {
+                            let check = (mx.floor() as i64 + ((my - 10.25) / 0.55).floor() as i64).rem_euclid(2) == 0;
+                            let f = if check { 0.85 } else { 0.03 };
+                            Vec3::splat(f + (0.44 - f) * smoothstep(0.25, 0.6, px))
+                        };
+                        c = over(c, (face * 0.9).lerp(haze, fog), cov);
+                        e *= 1.0 - cov;
+                    }
+                }
+                write_emit(p, c, e);
             }
         }
     }
@@ -2667,16 +4543,301 @@ impl HudFrame {
     }
 }
 
+/// Lo de una fila de pista que no cambia a lo ancho (ver `View::strip`).
+#[derive(Clone, Debug)]
+struct Strip {
+    r: RoadRow,
+    /// Metros por pixel a lo ancho.
+    px: f32,
+    /// Lo que cubre a lo largo (de 0 a 1, filtrado en caja): las rayas de
+    /// carril, las tachas blancas y ambar, el celeste del bordillo, la
+    /// junta y la meta (con la fraccion de sus cuadros pares).
+    dash: f32,
+    eye: f32,
+    amber: f32,
+    curb: f32,
+    joint: f32,
+    finish: f32,
+    finish_fs: f32,
+    /// El relieve del bordillo y el resplandor de la junta (ya promediado).
+    relief: f32,
+    joint_glow: f32,
+    /// El tono de la losa, cuanto se resuelven las manchas y el grano.
+    slab: Vec3,
+    resolved: f32,
+    grain_on: bool,
+    grain_amp: f32,
+    /// La faja del hombro: el pico del rombo, su suavizado, el color del
+    /// rombo y cuanto se va a su promedio de lejos.
+    sash_peak: f32,
+    sash_soft: f32,
+    sash_col: Vec3,
+    sash_far: f32,
+    /// Los tumulos: carriles, cobertura, donde va la fila adentro del
+    /// tumulo (0 a 1), los botones y cuanto se va al promedio.
+    bumps: u8,
+    bump_cov: f32,
+    bump_q: f32,
+    bump_btn: f32,
+    bump_far: f32,
+    /// Las rayas del reflejo de los postes: `(u, amplitud, 1 / sigma)`.
+    specs: [(f32, f32, f32); 4],
+    n_specs: usize,
+    /// La tabla a lo ancho: cada `1 / inv_step` metros desde `u0`, `n`
+    /// muestras de `[luz de los postes, mojado, manchas, neon (rgb), luz
+    /// de las naves (rgb), calaveras, sombra de contacto, -]`.
+    table: Vec<[f32; ENTRY]>,
+    u0: f32,
+    inv_step: f32,
+    n: usize,
+    /// Si alguna nave alumbra la fila (si no, esas columnas de la tabla
+    /// son cero y no se interpolan).
+    has_pools: bool,
+    /// El Fresnel de la estela (con la distancia) y el del cielo (con el
+    /// angulo).
+    fres: f32,
+    fres_s: f32,
+    /// El pulso del neon de la baranda.
+    pulse: f32,
+    /// La luz del arco de foquitos mas cercano (lineal; cero afuera de los
+    /// tuneles).
+    spill: Vec3,
+    /// Si a la fila le cae la luz de un arco o el destello de un cohete.
+    lit: bool,
+    /// El grano de la fila.
+    grain: NoiseLine<100>,
+}
+
+/// Las muestras de la tabla a lo ancho de una fila de pista y su paso mas
+/// fino (m): 20 cm alcanzan para la calavera, la mas angosta (0.45 m).
+const TABLE: usize = 100;
+const ENTRY: usize = 12;
+/// Una muestra vacia (sin luz, seco, sin sombra): por si la tabla no
+/// alcanza.
+const TABLE_EMPTY: [f32; ENTRY] = [0.0, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+const TABLE_STEP: f32 = 0.2;
+
+/// El charco de una nave en una fila: lo que depende de `ds` ya resuelto.
+#[derive(Clone, Copy, Debug, Default)]
+struct PoolRow {
+    x: f32,
+    /// Hasta donde alcanza a lo ancho (m).
+    reach: f32,
+    /// La luz: `1 / ancho`, `(ds / largo)^2` de su elipse y el color con
+    /// su peso.
+    inv_l: f32,
+    ey2: f32,
+    tint: Vec3,
+    /// La sombra de contacto: `1 / (0.9 hw)`, cuanto cae la fila adentro
+    /// de la huella a lo largo y la fuerza de la franja de la cola.
+    shadow: bool,
+    inv_c: f32,
+    fy: f32,
+    lip: f32,
+    /// Las calaveras: su fuerza a esta distancia atras y donde van a lo
+    /// ancho (`0.75 hw`).
+    tail: f32,
+    tail_x: f32,
+}
+
+/// El ruido de valor a lo largo de una fila: con la `y` fija, el ruido es
+/// la interpolacion suave entre los valores de las esquinas enteras de
+/// `x` (ya interpoladas en `y`). Se guardan `N` desde `x0` y por pixel solo
+/// queda una interpolacion: lo mismo que `value_noise` sin cuatro hashes
+/// por pixel.
+#[derive(Clone, Copy, Debug)]
+struct NoiseLine<const N: usize> {
+    x0: f32,
+    v: [f32; N],
+}
+
+impl<const N: usize> Default for NoiseLine<N> {
+    fn default() -> Self {
+        Self { x0: 0.0, v: [0.0; N] }
+    }
+}
+
+impl<const N: usize> NoiseLine<N> {
+    fn new(x_lo: f32, y: f32) -> Self {
+        let x0 = x_lo.floor();
+        let yi = y.floor();
+        let fy = y - yi;
+        let sy = fy * fy * (3.0 - 2.0 * fy);
+        let (xi, yi) = (x0 as i32 as u32, yi as i32 as u32);
+        let mut v = [0.0; N];
+        for (k, o) in v.iter_mut().enumerate() {
+            let x = xi.wrapping_add(k as u32);
+            let (a, b) = (lattice(x, yi), lattice(x, yi.wrapping_add(1)));
+            *o = a + (b - a) * sy;
+        }
+        Self { x0, v }
+    }
+
+    /// El ruido promediado a lo largo sobre `[y - spread / 2, y + spread /
+    /// 2]` (lo que se corre la pista en un frame, el borron) con
+    /// `BLUR_TAPS` muestras parejas. Queda pegado a `y` (a la pista): si el
+    /// borron cambia un poco (el `dt` tiembla, la nave acelera), las
+    /// muestras se corren un poco y el ruido no salta. Estirar la `y`
+    /// dividiendola entre la velocidad, en cambio, movia todo el patron con
+    /// `s` de miles de metros. Cuesta `BLUR_TAPS` veces la fila, nada por
+    /// pixel; quieto, una sola.
+    fn blurred(x_lo: f32, y: f32, spread: f32) -> Self {
+        if !(spread > 1e-3) {
+            return Self::new(x_lo, y);
+        }
+        let mut out = Self::new(x_lo, y - 0.5 * spread);
+        for j in 1..BLUR_TAPS {
+            let tap = Self::new(x_lo, y + (j as f32 / (BLUR_TAPS - 1) as f32 - 0.5) * spread);
+            for (o, v) in out.v.iter_mut().zip(tap.v) {
+                *o += v;
+            }
+        }
+        for o in &mut out.v {
+            *o *= 1.0 / BLUR_TAPS as f32;
+        }
+        out
+    }
+
+    #[inline(always)]
+    fn at(&self, x: f32) -> f32 {
+        let t = (x - self.x0).clamp(0.0, N as f32 - 1.001);
+        let i = (t as usize).min(N - 2);
+        let f = t - i as f32;
+        let s = f * f * (3.0 - 2.0 * f);
+        self.v[i] + (self.v[i + 1] - self.v[i]) * s
+    }
+}
+
+/// Las muestras del ruido emborronado a lo largo (`NoiseLine::blurred`).
+const BLUR_TAPS: usize = 4;
+
+/// El valor al azar de la esquina `(x, y)` de la rejilla del ruido, de -1
+/// a 1.
+#[inline(always)]
+fn lattice(x: u32, y: u32) -> f32 {
+    (hash_u32(x.wrapping_mul(0x9E37_79B9) ^ y.wrapping_mul(0x85EB_CA6B)) >> 8) as f32 / 8_388_608.0 - 1.0
+}
+
+/// Una franja periodica filtrada en caja: cuanto de la ventana
+/// `[s - w / 2, s + w / 2]` cae en lo encendido de un patron que prende
+/// `on` metros de cada `period`. Con `F(x)` lo encendido de 0 a `x`,
+/// `F(x) = floor(x / P) on + min(fract(x / P) P, on)`, es
+/// `(F(s + w / 2) - F(s - w / 2)) / w`. De cerca (`w` chica) es la franja
+/// con su borde; de lejos, su promedio `on / P`: una fila que abarca
+/// varios metros no salta entre raya y hueco.
+fn band(s: f32, period: f32, on: f32, w: f32) -> f32 {
+    let w = w.max(1e-3);
+    // Se resta lo entero primero: con `s` de miles de metros, `s +- w / 2`
+    // perderia los milimetros.
+    let x = s - (s / period).floor() * period;
+    let f = |x: f32| {
+        let k = (x / period).floor();
+        k * on + (x - k * period).clamp(0.0, on)
+    };
+    ((f(x + 0.5 * w) - f(x - 0.5 * w)) / w).clamp(0.0, 1.0)
+}
+
+/// El largo de `(x, y)`. `f32::hypot` cuida el desborde y es una llamada a
+/// la biblioteca de C, lenta para cada pixel; aqui los numeros son chicos.
+#[inline(always)]
+fn len(x: f32, y: f32) -> f32 {
+    (x * x + y * y).sqrt()
+}
+
+/// La parte fraccionaria hacia abajo, de 0 a 1 (tambien con negativos).
+#[inline(always)]
+fn fract(x: f32) -> f32 {
+    x - x.floor()
+}
+
+/// Una tacha emborronada a lo largo: la caja reparte su luz en lo que
+/// abarca la fila, `0.16 / w` (con el turbo, una trazadora de 3 m se
+/// apagaria a un 5 %). Pero la tacha devuelve los faros, es mucho mas
+/// brillante que lo que el pixel muestra (se recorta): emborronada sigue
+/// llena en un tercio de su luz, `min(3 c, 1)`.
+fn tracer(c: f32) -> f32 {
+    (3.0 * c).min(1.0)
+}
+
+/// `e^(-|t| / a)` filtrado con una tienda de medio ancho `w` (area 1,
+/// `(1 - |t| / w) / w`): un resplandor angosto que una fila promedia en
+/// vez de muestrear, y que a diferencia de la caja no deja bordes (la
+/// tienda es la caja de ancho `w` aplicada dos veces, y el resultado pasa
+/// suave de fila en fila).
+///
+/// Con `H` la segunda primitiva, `H(x) = a |x| - a^2 (1 - e^(-|x| / a))`,
+/// es `(H(d + w) - 2 H(d) + H(d - w)) / w^2`. Si `|d| >= w` la parte
+/// `a |x|` se cancela y queda
+/// `a^2 e^(-|d| / a) (e^k - 2 + e^-k) / w^2 = (2 a sinh(k / 2) / w)^2 e^(-|d| / a)`
+/// con `k = w / a`: con `k` chico la forma del `sinh` (sin restar
+/// numeros parecidos) y con `k` grande los tres exponentes, todos `<= 0`
+/// (sin desbordar). Con `w` mucho menor que `a`, la exponencial misma.
+fn exp_tent(d: f32, a: f32, w: f32) -> f32 {
+    let w = w.max(1e-3);
+    let ad = d.abs();
+    let k = w / a;
+    if k < 0.1 {
+        return (-ad / a).exp();
+    }
+    let v = if ad >= w {
+        if k < 1.0 {
+            let sh = 2.0 * a * (0.5 * k).sinh() / w;
+            sh * sh * (-ad / a).exp()
+        } else {
+            a * a / (w * w) * (((w - ad) / a).exp() - 2.0 * (-ad / a).exp() + (-(ad + w) / a).exp())
+        }
+    } else {
+        let h = |x: f32| {
+            let x = x.abs();
+            a * (x - a * (1.0 - (-x / a).exp()))
+        };
+        (h(d + w) - 2.0 * h(d) + h(d - w)) / (w * w)
+    };
+    v.clamp(0.0, 1.0)
+}
+
+/// Cuanto de la ventana `[d - w / 2, d + w / 2]` cae en `[-half, half]`
+/// (de 0 a 1): un tramo filtrado en caja, sin periodo.
+fn window_cover(d: f32, half: f32, w: f32) -> f32 {
+    let w = w.max(1e-3);
+    ((d + 0.5 * w).min(half) - (d - 0.5 * w).max(-half)).max(0.0) / w
+}
+
+/// El color de lo que emite un sprite: el promedio de su rgb pesado por
+/// cuanto emite cada pixel (las LEDs que marco el horneado) mas el
+/// resplandor sumado (premultiplicado, `max(rgb) - a > 0.15`: suma mas de
+/// lo que tapa), normalizado a maximo 1. Si no emite nada, ambar.
+///
+/// Cada pixel pesa ademas `0.2 + saturacion` (`(max - min) / max`): las
+/// LEDs blancas o casi blancas (faros, el resplandor recortado) no lavan el
+/// tinte, y el charco sale del color de las de color (magenta y ambar en la
+/// Mamaneta) y no de su promedio cafe.
+fn led_tint(sprite: &Sprite) -> Vec3 {
+    let mut sum = Vec3::ZERO;
+    for (p, &e) in sprite.pixels.iter().zip(&sprite.emit) {
+        let c = Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32) * (1.0 / 255.0);
+        let a = p[3] as f32 * (1.0 / 255.0);
+        let top = c.x.max(c.y).max(c.z);
+        let weight = e as f32 * (1.0 / 255.0) + if top - a > 0.15 { 1.0 } else { 0.0 };
+        if weight > 0.0 && top > 1e-4 {
+            let sat = (top - c.x.min(c.y).min(c.z)) / top;
+            sum += c * (weight * (0.2 + sat));
+        }
+    }
+    let top = sum.x.max(sum.y).max(sum.z);
+    if top > 1e-6 { sum * (1.0 / top) } else { Vec3::new(1.0, 0.68, 0.16) }
+}
+
 /// Ruido de valor en 2D, de -1 a 1: un numero al azar en cada esquina de la
 /// cuadricula, interpolado suave. Mucho mas barato que el Perlin, y para el
 /// asfalto alcanza.
 #[inline]
-fn value_noise(x: f32, y: f32) -> f32 {
+pub(super) fn value_noise(x: f32, y: f32) -> f32 {
     let (xi, yi) = (x.floor(), y.floor());
     let (fx, fy) = (x - xi, y - yi);
     let (sx, sy) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));
     let (xi, yi) = (xi as i32 as u32, yi as i32 as u32);
-    let corner = |dx: u32, dy: u32| (hash_u32(xi.wrapping_add(dx).wrapping_mul(0x9E37_79B9) ^ yi.wrapping_add(dy).wrapping_mul(0x85EB_CA6B)) >> 8) as f32 / 8_388_608.0 - 1.0;
+    let corner = |dx: u32, dy: u32| lattice(xi.wrapping_add(dx), yi.wrapping_add(dy));
     let top = corner(0, 0) + (corner(1, 0) - corner(0, 0)) * sx;
     let bottom = corner(0, 1) + (corner(1, 1) - corner(0, 1)) * sx;
     top + (bottom - top) * sy
@@ -2701,7 +4862,7 @@ fn horizon_fog(dy: f32, depth: f32) -> f32 {
 }
 
 /// Mapeo de tonos y gamma (de luz lineal a lo que se ve).
-fn tone(c: Vec3) -> Vec3 {
+pub(super) fn tone(c: Vec3) -> Vec3 {
     let t = |v: f32| (1.0 - (-v.max(0.0) * 1.3).exp()).powf(1.0 / 2.2);
     Vec3::new(t(c.x), t(c.y), t(c.z))
 }
@@ -2790,6 +4951,12 @@ const FLASH_COLOR: Vec3 = Vec3::new(0.3, 0.05, 0.004);
 const CITY_HAZE: Vec3 = Vec3::new(0.012, 0.006, 0.02);
 /// El halo de las bombas llega a cero en 8 px: se le resta `e^(-8 / 1.5)`.
 const SPARK_CUT: f32 = 0.004_828;
+/// `e^-3`: lo que vale el halo de la tira del poste a los 9 px, donde se
+/// corta (se le resta, asi llega a cero sin escalon).
+const STRIP_CUT: f32 = 0.049_787;
+/// `e^-4`: el resplandor de una chispa de cohete donde se corta (a `8 w`
+/// con `e^(-d / 2w)`).
+const FW_CUT: f32 = 0.018_316;
 /// La gravedad de las bombas de lava, en radianes de elevacion por s^2.
 const BOMB_GRAVITY: f32 = 0.12;
 
@@ -2999,7 +5166,13 @@ struct Panorama {
     /// Ya con tono, un byte por canal (6 MB en vez de 18: cabe mejor en la
     /// cache y se lee por pixel).
     texels: Vec<[u8; 4]>,
+    /// El mismo cielo a un cuarto y borroso (`SOFT_W x SOFT_H`): lo que
+    /// refleja la pista mojada, que no es un espejo.
+    soft: Vec<Vec3>,
 }
+
+const SOFT_W: usize = 512;
+const SOFT_H: usize = 180;
 
 const PITCH_LOW: f32 = -1.0;
 /// El nivel de negro del panorama (luminancia lineal).
@@ -3031,7 +5204,76 @@ impl Panorama {
                 *t = [byte(c.x), byte(c.y), byte(c.z), 255];
             }
         });
-        Self { width, height, texels }
+        // El suave: el promedio de cada bloque de 4 x 4 y despues una caja
+        // de radio 2, dos veces a lo ancho (dando la vuelta) y a lo alto
+        // (recortando al borde); dos cajas se parecen a una gaussiana.
+        let (bx, by) = (width / SOFT_W, height / SOFT_H);
+        let mut soft: Vec<Vec3> = (0..SOFT_W * SOFT_H)
+            .map(|i| {
+                let (sx, sy) = (i % SOFT_W, i / SOFT_W);
+                let mut sum = Vec3::ZERO;
+                for y in sy * by..(sy + 1) * by {
+                    for x in sx * bx..(sx + 1) * bx {
+                        let p = texels[y * width + x];
+                        sum += Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32);
+                    }
+                }
+                sum * (1.0 / (255.0 * (bx * by).max(1) as f32))
+            })
+            .collect();
+        let mut tmp = vec![Vec3::ZERO; SOFT_W * SOFT_H];
+        for _ in 0..2 {
+            for y in 0..SOFT_H {
+                for x in 0..SOFT_W {
+                    let mut sum = Vec3::ZERO;
+                    for dx in 0..5 {
+                        sum += soft[y * SOFT_W + (x + SOFT_W + dx - 2) % SOFT_W];
+                    }
+                    tmp[y * SOFT_W + x] = sum * 0.2;
+                }
+            }
+            for y in 0..SOFT_H {
+                for x in 0..SOFT_W {
+                    let mut sum = Vec3::ZERO;
+                    for dy in 0..5 {
+                        let yy = (y + dy).saturating_sub(2).min(SOFT_H - 1);
+                        sum += tmp[yy * SOFT_W + x];
+                    }
+                    soft[y * SOFT_W + x] = sum * 0.2;
+                }
+            }
+        }
+        Self { width, height, texels, soft }
+    }
+
+    /// Las dos columnas del cielo suave de un rumbo y el peso de la
+    /// segunda (bilineal, dando la vuelta: el ancho es potencia de 2).
+    fn soft_cols(yaw: f32) -> (usize, usize, f32) {
+        let turns = yaw * (1.0 / TAU);
+        let u = (turns - turns.floor()) * SOFT_W as f32 - 0.5;
+        let x0 = u.floor();
+        let fx = (u - x0).clamp(0.0, 1.0);
+        let x0 = (x0 as i32 as usize) & (SOFT_W - 1);
+        (x0, (x0 + 1) & (SOFT_W - 1), fx)
+    }
+
+    /// Las dos filas del cielo suave de una elevacion y el peso de la
+    /// segunda.
+    fn soft_rows(pitch: f32) -> (usize, usize, f32) {
+        let v = ((PITCH_HIGH - pitch) / (PITCH_HIGH - PITCH_LOW)).clamp(0.0, 1.0) * SOFT_H as f32 - 0.5;
+        let y0 = v.floor().max(0.0);
+        let fy = (v - y0).clamp(0.0, 1.0);
+        let y0 = (y0 as usize).min(SOFT_H - 1);
+        (y0, (y0 + 1).min(SOFT_H - 1), fy)
+    }
+
+    /// El cielo suave entre esas columnas y filas.
+    #[inline]
+    fn soft_at(&self, x0: usize, x1: usize, fx: f32, y0: usize, y1: usize, fy: f32) -> Vec3 {
+        let t = |x: usize, y: usize| self.soft[(y * SOFT_W + x).min(self.soft.len() - 1)];
+        let top = t(x0, y0).lerp(t(x1, y0), fx);
+        let bottom = t(x0, y1).lerp(t(x1, y1), fx);
+        top.lerp(bottom, fy)
     }
 
     /// Bilineal, con el rumbo dando la vuelta. El ancho es potencia de 2:
@@ -3508,8 +5750,9 @@ mod tests {
         assert_eq!((g.fov, g.fov_v, g.boost_s), (0.0, 0.0, 0.0));
     }
 
-    /// Lo opaco que se pinta encima (una valla) borra la emision de lo que
-    /// tapa: la baranda o el cielo que florecian atras ya no florecen.
+    /// Lo opaco que se pinta encima (la manta de la meta) borra la emision
+    /// de lo que tapa: la baranda o el cielo que florecian atras ya no
+    /// florecen.
     #[test]
     fn what_covers_an_emitter_erases_its_emission() {
         let g = game(Kind::Chela);
@@ -3521,15 +5764,242 @@ mod tests {
         for p in row.chunks_exact_mut(4) {
             write_emit(p, Vec3::splat(0.8), 1.0);
         }
-        // La valla a 10 px por metro con el pie 50 px abajo: la fila cae
-        // a 5 m de alto, en medio del panel (de 3 a 8 m, 10 m de ancho).
-        let item = Item { depth: 30.0, kind: ItemKind::Billboard { side: 1.0, motif: 0 }, x: 160.0, y: y as f32 + 0.5 + 50.0, scale: 10.0 };
+        // La torre a 10 px por metro con el pie 108 px abajo: la fila cae
+        // a 10.8 m de alto, en medio de la manta (de 10 a 11.6 m y hasta
+        // `RAIL + 0.8` a cada lado); entre -4 y 4 m no hay focos (el arco
+        // va a 5.7 m).
+        let kind = ItemKind::Tower { lights: 0, t: 0.0, green: f32::MAX, finished: false };
+        let item = Item::new(30.0, kind, 160.0, y as f32 + 0.5 + 108.0, 10.0);
         view.draw_item(&item, y, y as f32 + 0.5, &mut row);
         for x in 120..200 {
             assert_eq!(emission(&row[x * 4..x * 4 + 4]), 0.0, "x = {x}");
         }
         // Afuera de la valla sigue emitiendo.
         assert_eq!(emission(&row[10 * 4..10 * 4 + 4]), 1.0);
+    }
+
+    /// La franja filtrada: de cerca es la franja con su borde, de lejos su
+    /// promedio, y siempre lo mismo que integrar el patron a mano.
+    #[test]
+    fn the_band_is_the_box_filtered_stripe() {
+        // Ventana chica: adentro 1, afuera 0 (rayas de 6 m de cada 12).
+        assert!((band(3.0, 12.0, 6.0, 0.01) - 1.0).abs() < 1e-4);
+        assert!(band(9.0, 12.0, 6.0, 0.01) < 1e-4);
+        // Ventana de varios periodos: el promedio, `on / P`.
+        assert!((band(5.3, 12.0, 6.0, 120.0) - 0.5).abs() < 0.03);
+        // Con miles de metros no pierde el borde.
+        let far = 9000.0 + 12.0 * 7.0;
+        assert!((band(far + 3.0, 12.0, 6.0, 0.02) - 1.0).abs() < 1e-3);
+        assert!(band(far - 3.0, 12.0, 6.0, 0.02) < 1e-3);
+        // Contra la integral numerica, en bordes y ventanas cualquiera.
+        for &(s, w) in &[(5.9f32, 0.5f32), (11.7, 1.3), (-2.4, 3.0), (100.1, 0.2), (31.98, 0.1)] {
+            let n = 4000;
+            let on = (0..n).filter(|&i| (s - 0.5 * w + (i as f32 + 0.5) * w / n as f32).rem_euclid(12.0) < 6.0).count() as f32 / n as f32;
+            assert!((band(s, 12.0, 6.0, w) - on).abs() < 2e-3, "s {s} w {w}: {} {on}", band(s, 12.0, 6.0, w));
+        }
+        // Sin NaN con ventanas nulas o negativas.
+        assert!(band(1.0, 4.0, 1.6, 0.0).is_finite() && band(1.0, 4.0, 1.6, -1.0).is_finite());
+    }
+
+    /// El resplandor filtrado en tienda: con ventana chica es la
+    /// exponencial, con ventana grande reparte su integral `2a` (pico
+    /// `2a / w`), siempre lo mismo que convolucionar a mano, sin NaN con
+    /// ventanas enormes y sin escalones de una `d` a la siguiente.
+    #[test]
+    fn the_glow_tent_keeps_its_light() {
+        for &d in &[0.0f32, 0.1, -0.3, 1.0] {
+            assert!((exp_tent(d, 0.22, 1e-3) - (-d.abs() / 0.22).exp()).abs() < 2e-3, "{d}");
+        }
+        assert!((exp_tent(0.0, 0.22, 20.0) - 0.44 / 20.0).abs() < 1e-3);
+        assert!(exp_tent(5.0, 0.22, 0.1) < 1e-6);
+        // Contra la convolucion numerica con la tienda.
+        for &(d, w) in &[(0.0f32, 0.05f32), (0.03, 0.05), (0.2, 0.3), (-0.5, 0.3), (1.0, 2.0), (3.0, 2.5), (0.4, 0.4), (-7.0, 6.0)] {
+            let n = 20_000;
+            let mut sum = 0.0f64;
+            for i in 0..n {
+                let tt = -w + (i as f32 + 0.5) * 2.0 * w / n as f32;
+                let k = (1.0 - tt.abs() / w) / w;
+                sum += (k * (-(d - tt).abs() / 0.22).exp()) as f64 * (2.0 * w / n as f32) as f64;
+            }
+            let v = exp_tent(d, 0.22, w);
+            assert!((v as f64 - sum).abs() < 2e-3, "d {d} w {w}: {v} {sum}");
+        }
+        // Sin NaN ni infinitos con ventanas grandes y lejos.
+        for &(d, w) in &[(15.9f32, 60.0f32), (0.0, 1e4), (-16.0, 30.0), (16.0, 0.0)] {
+            let v = exp_tent(d, 0.22, w);
+            assert!(v.is_finite() && (0.0..=1.0).contains(&v), "d {d} w {w}: {v}");
+        }
+        // Sin escalones: con la ventana de una fila lejana (2.5 m), entre dos
+        // `d` a 5 cm no cambia mas que la pendiente lo permite.
+        let mut last = exp_tent(-4.0, 0.22, 2.5);
+        for i in 1..=160 {
+            let v = exp_tent(-4.0 + i as f32 * 0.05, 0.22, 2.5);
+            assert!((v - last).abs() < 0.01, "{i}: {last} {v}");
+            last = v;
+        }
+        assert!((0.0..=1.0).contains(&tracer(0.5)) && tracer(0.1) > 0.29 && tracer(0.0) == 0.0);
+    }
+
+    /// El tramo filtrado: adentro 1, afuera 0, y una ventana mas ancha que
+    /// el tramo cubre su fraccion.
+    #[test]
+    fn the_window_cover_is_the_overlap() {
+        assert!((window_cover(0.0, 1.0, 0.5) - 1.0).abs() < 1e-6);
+        assert!(window_cover(3.0, 1.0, 0.5) == 0.0);
+        assert!((window_cover(1.0, 1.0, 0.5) - 0.5).abs() < 1e-6);
+        assert!((window_cover(0.0, 1.0, 8.0) - 0.25).abs() < 1e-6);
+        assert!(window_cover(0.0, 1.0, 0.0).is_finite());
+    }
+
+    /// El asfalto no hierve: dos frames a 70 m/s con `dt` de 1/60 y de
+    /// 1/57 s, a unos 3000 m de la salida, dan casi el mismo grano y las
+    /// mismas manchas (pegados a `s`). Estirarlos dividiendo `s` entre la
+    /// velocidad daba otro ruido en cada frame.
+    #[test]
+    fn the_asphalt_noise_stays_put_when_dt_shakes() {
+        let (b0, b1) = (70.0f32 / 60.0, 70.0f32 / 57.0);
+        let (mut grain, mut patch, mut size) = (0.0f32, 0.0f32, 0.0f32);
+        for k in 0..40 {
+            let s = 3000.0 + k as f32 * 0.37;
+            let (g0, g1) = (NoiseLine::<100>::blurred(-2.0, s * 6.0, b0 * 6.0), NoiseLine::<100>::blurred(-2.0, s * 6.0, b1 * 6.0));
+            let (p0, p1) = (NoiseLine::<8>::blurred(-2.0, s * 0.12, b0 * 0.12), NoiseLine::<8>::blurred(-2.0, s * 0.12, b1 * 0.12));
+            for i in 0..60 {
+                let x = -1.5 + i as f32 * 1.3;
+                grain += (g0.at(x) - g1.at(x)).abs();
+                size += g0.at(x).abs();
+                patch += (p0.at(x * 0.1) - p1.at(x * 0.1)).abs();
+            }
+        }
+        let n = 40.0 * 60.0;
+        assert!(grain / size < 0.3, "grano {}", grain / size);
+        assert!(patch / n < 0.01, "manchas {}", patch / n);
+        // Quieto, lo mismo que sin promediar.
+        let (a, b) = (NoiseLine::<8>::blurred(0.0, 12.3, 0.0), NoiseLine::<8>::new(0.0, 12.3));
+        assert!(a.v == b.v);
+    }
+
+    /// El ruido por fila da lo mismo que el ruido de valor.
+    #[test]
+    fn the_noise_line_matches_the_value_noise() {
+        for &y in &[0.3f32, -7.6, 1234.56] {
+            let line = NoiseLine::<8>::new(-3.1, y);
+            for k in 0..60 {
+                let x = -3.0 + k as f32 * 0.1;
+                assert!((line.at(x) - value_noise(x, y)).abs() < 1e-4, "x {x} y {y}");
+            }
+        }
+        // Fuera de su tramo se queda en la orilla, sin salirse.
+        let line = NoiseLine::<8>::new(0.0, 0.0);
+        assert!(line.at(-50.0).is_finite() && line.at(50.0).is_finite());
+    }
+
+    /// La pista mojada: la fila de pista trae su tabla a lo ancho completa,
+    /// con luz, mojado entre 0.3 y 1 y sombra entre 0.4 y 1, y el pixel de
+    /// pista no da NaN en ninguna columna.
+    #[test]
+    fn the_wet_road_is_finite_and_in_range() {
+        let mut g = game(Kind::Camioneta);
+        g.set_autopilot(true);
+        g.start();
+        run(&mut g, 6.0, Keys::default());
+        let mut rgba = vec![0u8; 320 * 180 * 4];
+        // Dos frames: el segundo ya lee la estela del primero.
+        g.draw(&mut rgba);
+        g.draw(&mut rgba);
+        let view = g.view();
+        let mut rows = 0;
+        for y in 0..g.height {
+            let ctx = view.row_ctx(y, &[], (0.0, 0.0));
+            let Some(st) = &ctx.near else { continue };
+            rows += 1;
+            assert!(st.table.len() >= 2 && st.table.len() == st.n);
+            for e in &st.table {
+                assert!(e.iter().all(|v| v.is_finite()));
+                assert!((0.3..=1.0).contains(&e[1]), "{}", e[1]);
+                assert!((0.0..=1.0).contains(&e[10]), "{}", e[10]);
+                assert!(e[0] >= 0.0);
+            }
+            for x in 0..g.width {
+                let (c, e) = view.road(st, x as f32 + 0.5, &ctx, x);
+                assert!(c.x.is_finite() && c.y.is_finite() && c.z.is_finite() && e.is_finite(), "({x}, {y})");
+            }
+        }
+        assert!(rows > 30);
+    }
+
+    /// No pintar la pista que la nave propia tapa no cambia nada: la fila
+    /// sale igual que pintando todo y pegando la nave encima.
+    #[test]
+    fn skipping_what_the_ship_covers_changes_nothing() {
+        let mut g = game(Kind::Camioneta);
+        g.set_autopilot(true);
+        g.start();
+        run(&mut g, 4.0, Keys::default());
+        let view = g.view();
+        let w = g.width;
+        let mut skipped = 0;
+        // Solo las filas de pista (en las del cielo, las bombas del Fuego
+        // dependen de la lista de la fila).
+        for y in (0..g.height).filter(|&y| view.rows[y].is_some()) {
+            for item in &view.solid_items {
+                let (sa, sb) = view.solid_cols(item, y, y as f32 + 0.5);
+                skipped += sb - sa;
+            }
+            let mut fast = vec![0u8; w * 4];
+            view.row(y, &mut fast);
+            // Todo pintado y despues lo de encima.
+            let mut full = vec![0u8; w * 4];
+            let yf = y as f32 + 0.5;
+            let ctx = view.row_ctx(y, &[], (f32::MAX, f32::MIN));
+            for x in 0..w {
+                let (c, e) = match &ctx.near {
+                    Some(st) => view.road(st, x as f32 + 0.5, &ctx, x),
+                    None => view.background(x, &ctx),
+                };
+                write_emit(&mut full[x * 4..x * 4 + 4], c, e);
+            }
+            view.fireworks_row(y, yf, &ctx, &mut full);
+            for item in &view.items {
+                view.draw_item(item, y, yf, &mut full);
+            }
+            for x in 0..w {
+                for k in 0..4 {
+                    assert!((fast[x * 4 + k] as i32 - full[x * 4 + k] as i32).abs() <= 1, "({x}, {y}) canal {k}: {} {}", fast[x * 4 + k], full[x * 4 + k]);
+                }
+            }
+        }
+        // Y si se salta algo (la caja de prueba es opaca).
+        assert!(skipped > 100, "{skipped}");
+    }
+
+    /// El color del charco de cada nave sale de sus LEDs: con los
+    /// modelos de prueba (sin LEDs) es ambar, y siempre con maximo 1.
+    #[test]
+    fn every_ship_tints_its_pool() {
+        let g = game(Kind::TukTuk);
+        for t in g.tint {
+            let top = t.x.max(t.y).max(t.z);
+            assert!((top - 1.0).abs() < 1e-4 && t.x.min(t.y).min(t.z) >= 0.0, "{t:?}");
+        }
+    }
+
+    /// El tinte de un sprite con LEDs: sale del color de sus LEDs
+    /// normalizado, y las blancas no lo lavan.
+    #[test]
+    fn the_pool_takes_the_color_of_the_leds() {
+        let sprite = |pixels: Vec<[u8; 4]>, emit: Vec<u8>| Sprite { width: pixels.len(), height: 1, pixels, emit, spans: vec![(0, 0)], solid: vec![(0, 0)], anchor: (0.0, 0.0), scale: 1.0 };
+        // Una LED magenta y laca gris que no emite.
+        let t = led_tint(&sprite(vec![[200, 20, 120, 255], [90, 90, 90, 255]], vec![255, 0]));
+        let want = Vec3::new(1.0, 0.1, 0.6);
+        assert!((t - want).length() < 1e-3, "{t:?}");
+        // Magenta y ambar con dos faros blancos: queda entre las dos de
+        // color, no gris.
+        let t = led_tint(&sprite(vec![[255, 0, 160, 255], [255, 150, 20, 255], [250, 250, 250, 255], [250, 250, 250, 255]], vec![255, 255, 255, 255]));
+        let sat = (t.x - t.x.min(t.y).min(t.z)) / t.x;
+        assert!((t.x - 1.0).abs() < 1e-4 && sat > 0.6, "{t:?}");
+        // Sin LEDs, ambar.
+        let t = led_tint(&sprite(vec![[90, 90, 90, 255]], vec![0]));
+        assert!((t - Vec3::new(1.0, 0.68, 0.16)).length() < 1e-4);
     }
 
     #[test]
@@ -3555,5 +6025,369 @@ mod tests {
         let mut sound = vec![0.0; 4410];
         g.audio(&mut sound);
         assert!(sound.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+    }
+
+    /// Los arcos de foquitos: solo en sus tuneles, nunca encima de un poste
+    /// (cada 16 m corridos 8, los postes cada 48 en cada vuelta) ni a menos
+    /// de 20 m de la meta, y la luz que cae es finita, cero lejos y mas
+    /// fuerte bajo el arco.
+    #[test]
+    fn the_arches_light_their_tunnels() {
+        assert!(arches_at(30.0) && arches_at(2300.0) && arches_at(1100.0));
+        assert!(!arches_at(200.0) && !arches_at(0.0) && !arches_at(10.0) && !arches_at(2360.0));
+        let length = Track::new().length();
+        let mut k = 0;
+        while (k as f32) * ARCH_EVERY + ARCH_OFFSET < length {
+            let s = k as f32 * ARCH_EVERY + ARCH_OFFSET;
+            if arches_at(s) {
+                let ds = s.rem_euclid(LAMP_EVERY);
+                assert!(ds.min(LAMP_EVERY - ds) > 4.0, "arco encima del poste en {s}");
+                assert!(s.min(length - s) >= 20.0, "arco junto a la meta en {s}");
+            }
+            k += 1;
+        }
+        let g = game(Kind::Chela);
+        assert_eq!(g.arch_spill(200.0), Vec3::ZERO);
+        let under = g.arch_spill(ARCH_EVERY + ARCH_OFFSET);
+        let between = g.arch_spill(1.5 * ARCH_EVERY + ARCH_OFFSET);
+        assert!(under.x + under.y + under.z > 0.5, "{under:?}");
+        assert!(between.x + between.y + between.z < 0.1 * (under.x + under.y + under.z), "{between:?}");
+        for i in 0..400 {
+            let v = g.arch_spill(-50.0 + i as f32 * 7.3);
+            assert!(v.x.is_finite() && v.y.is_finite() && v.z.is_finite() && v.x >= 0.0 && v.x <= 1.0);
+        }
+        // Los focos de un arco: la semielipse, de orilla a orilla.
+        let bulbs = arch_bulbs();
+        assert!(bulbs[0].0 > 0.99 && bulbs[ARCH_BULBS - 1].0 < -0.99 && bulbs[ARCH_BULBS / 2].1 > 0.99);
+    }
+
+    /// La torre: las patas abren afuera de las barandas y el arco deja
+    /// pasar la pista; arriba es angosta y nunca da NaN.
+    #[test]
+    fn the_tower_stands_over_the_road() {
+        assert!(tower_inner(0.0) > RAIL && tower_outer(0.0) > tower_inner(0.0) + 2.0);
+        assert!((tower_outer(0.0) - (2.2 + RAIL + 2.6)).abs() < 1e-4);
+        assert_eq!(tower_inner(13.0), 0.0);
+        assert!((tower_outer(60.0) - 2.2).abs() < 1e-4);
+        let mut last = f32::MAX;
+        for i in 0..=140 {
+            let my = -2.0 + i as f32 * 0.5;
+            let (o, n) = (tower_outer(my), tower_inner(my));
+            assert!(o.is_finite() && n.is_finite() && n >= 0.0 && o > n);
+            assert!(o <= last + 1e-4);
+            last = o;
+        }
+        assert!(beacon_spread(1.0) >= 6.0 && beacon_spread(20.0) == 30.0 && beacon_spread(400.0) == 40.0);
+    }
+
+    /// Un cohete: sale del centro, se abre hasta ~0.18 rad, cae y se
+    /// apaga; sus chispas no dan NaN y la crepitante destella.
+    #[test]
+    fn a_burst_opens_falls_and_fades() {
+        for kind in 0..5u8 {
+            let b = Burst { yaw: 0.3, pitch: 0.2, born: 10.0, seed: 0xABCD + kind as u32, kind };
+            assert!(b.age(10.0 + RISE).abs() < 1e-5);
+            let (dy, dp) = b.spark(3, 0.0);
+            assert!(dy.abs() < 1e-6 && dp.abs() < 1e-6);
+            let mut sparkle = 0;
+            for i in 0..SPARKS {
+                let (y, p) = b.spark(i, 2.0);
+                assert!(y.is_finite() && p.is_finite());
+                assert!(y.hypot(p + if kind == 0 { 0.12 } else { 0.06 }) < 0.19, "{kind} {i}: {y} {p}");
+                let c = b.color(i);
+                assert!(c.x.is_finite() && c.x.max(c.y).max(c.z) > 0.5);
+                assert!(b.bright(i, 0.5) < b.bright(i, 0.0) * if kind == 4 { 2.0 } else { 1.0 } + 1e-6);
+                sparkle += (b.bright(i, 1.0) > (-1.3f32).exp() * 1.5) as u32;
+            }
+            assert_eq!(sparkle > 0, kind == 4, "{kind}");
+            // Cae: la elevacion promedio baja con el tiempo.
+            let mean = |t: f32| (0..SPARKS).map(|i| b.spark(i, t).1).sum::<f32>() / SPARKS as f32;
+            assert!(mean(3.0) < mean(1.0) - 0.01);
+        }
+    }
+
+    /// Con el verde salen seis cohetes, en la carrera salen de ambiente y
+    /// se van solos; al cruzar la meta salen cuatro mas. El frame no
+    /// queda con huecos y el pum suena sin pasarse.
+    #[test]
+    fn the_rockets_go_up_with_the_green_and_at_each_lap() {
+        let mut g = game(Kind::Colectivo);
+        g.set_autopilot(true);
+        g.start();
+        run(&mut g, 3.05, Keys::default());
+        assert_eq!(g.phase, Phase::Racing);
+        assert_eq!(g.bursts.len(), 6);
+        assert!(g.green_at.is_some());
+        let mut rgba = vec![0u8; 320 * 180 * 4];
+        run(&mut g, 0.6, Keys::default());
+        g.draw(&mut rgba);
+        assert!(rgba.chunks_exact(4).all(|p| p[3] == 255));
+        {
+            let view = g.view();
+            assert!(!view.fw_segs.is_empty());
+            assert!(view.fw_flash.x.max(view.fw_flash.y).max(view.fw_flash.z) <= 0.02 + 1e-6);
+        }
+        let mut sound = vec![0.0; 44_100];
+        g.audio(&mut sound);
+        assert!(sound.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+        run(&mut g, 4.5, Keys::default());
+        assert!(g.bursts.iter().all(|b| b.age(g.wall) < BURST_LIFE));
+        assert!(g.bursts.len() <= MAX_BURSTS);
+        // Al cruzar la meta.
+        let length = g.track.length();
+        g.cars[0].s = length - 0.2;
+        let before = g.burst_count;
+        g.update(1.0 / 60.0, &Keys::default());
+        assert!(g.burst_count >= before + 4, "{} {}", before, g.burst_count);
+    }
+
+    /// Los barriletes: dentro de la vuelta, los del festival de los dos
+    /// lados (las curvas cambian de sentido) y de tres tamanos.
+    #[test]
+    fn the_kites_line_the_lap() {
+        let track = Track::new();
+        let spots = kite_spots(&track);
+        let length = track.length();
+        assert!(spots.iter().all(|k| (0.0..length).contains(&k.s) && k.side.abs() == 1.0 && (k.design as usize) < escenario::KITE_DESIGNS));
+        let festival: Vec<&KiteSpot> = spots.iter().filter(|k| (FESTIVAL.0..FESTIVAL.1).contains(&k.s)).collect();
+        assert!(festival.len() >= 12);
+        assert!(festival.iter().any(|k| k.side > 0.0) && festival.iter().any(|k| k.side < 0.0));
+        let sizes: Vec<f32> = festival.iter().map(|k| k.size).collect();
+        assert!(sizes.contains(&9.0) && sizes.contains(&14.0) && sizes.contains(&18.0));
+        // Los ids no se repiten.
+        let mut ids: Vec<u32> = spots.iter().map(|k| k.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), spots.len());
+        // Todos a medio camino entre dos postes y ninguno en un tunel.
+        for k in &spots {
+            assert!(((k.s - 0.5 * LAMP_EVERY) / LAMP_EVERY).fract().abs() < 1e-4, "{}", k.s);
+            assert!(!ARCH_ZONES.iter().any(|&(a, b)| (a - 6.0..b + 6.0).contains(&k.s)), "{}", k.s);
+        }
+    }
+
+    /// Los postes: se cuentan por vuelta, en orden, ninguno a menos de
+    /// `LAMP_CLEAR` m de la meta, y `lamp_after` da el primero despues.
+    #[test]
+    fn the_lamps_skip_the_finish_line() {
+        let length = Track::new().length();
+        let mut last = f32::MIN;
+        for n in -100i64..300 {
+            let (s, side) = lamp(n, length);
+            assert!(s > last && side.abs() == 1.0);
+            last = s;
+            let lap_s = s.rem_euclid(length);
+            assert!(lap_s.min(length - lap_s) >= LAMP_CLEAR, "{s}");
+            assert_eq!(lamp_after(s - 0.01, length), n);
+            assert_eq!(lamp_after(s, length), n + 1);
+        }
+    }
+
+    /// Lo que se dibuja encima solo cae entre sus filas: fuera de
+    /// `[top, bottom]` no toca nada (asi las filas se lo pueden saltar), en
+    /// la largada (la torre y los arcos), en la carrera y en el festival.
+    #[test]
+    fn the_items_stay_inside_their_rows() {
+        let mut g = game(Kind::TukTuk);
+        g.set_autopilot(true);
+        let mut checked = 0;
+        for (at, start) in [(0.0f32, false), (2.0, true), (12.0, false)] {
+            if start {
+                g.start();
+            }
+            run(&mut g, at, Keys::default());
+            for festival_s in [None, Some(1900.0)] {
+                if let Some(s) = festival_s {
+                    g.cars[0].s = s;
+                }
+                let view = g.view();
+                for item in &view.items {
+                    for y in 0..g.height {
+                        let yf = y as f32 + 0.5;
+                        if yf >= item.top && yf <= item.bottom {
+                            continue;
+                        }
+                        let mut row: Vec<u8> = (0..g.width * 4).map(|i| (i * 37 % 251) as u8).collect();
+                        let before = row.clone();
+                        view.draw_item(item, y, yf, &mut row);
+                        assert!(row == before, "{:?} pinto la fila {y} fuera de [{}, {}]", item.kind, item.top, item.bottom);
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 1000, "{checked}");
+    }
+
+    /// Lo mismo a 1280 x 720 y muy de cerca: en la largada (la torre y el
+    /// primer arco encima), pasando bajo un arco dentro del tunel y un
+    /// barrilete y un arco puestos a mano a 300 px por metro. Ademas lo que
+    /// pintan de cerca no da NaN (que saldria negro).
+    #[test]
+    fn the_close_items_stay_inside_their_rows() {
+        let mesh = box_mesh();
+        let names = ["Gallo", "Tuk-Tuk Elena", "La Mamaneta", "Colectivo Q.5"];
+        let models = std::array::from_fn(|k| Model { mesh: &mesh, finish: Finish::Vehicle, meters: Kind::ALL[k].spec().length / 4.0, name: names[k] });
+        let sky = |d: Vec3| Vec3::new(0.02, 0.03, 0.06) * (1.0 + d.y.max(0.0));
+        let (w, h) = (1280, 720);
+        let mut g = Carrera::new(models, Kind::Chela, &sky, w, h, Records::in_memory());
+        let check = |view: &View, item: &Item| {
+            for y in 0..h {
+                let yf = y as f32 + 0.5;
+                let mut row: Vec<u8> = (0..w * 4).map(|i| 60 + (i * 37 % 131) as u8).collect();
+                let before = row.clone();
+                view.draw_item(item, y, yf, &mut row);
+                if yf < item.top || yf > item.bottom {
+                    assert!(row == before, "{:?} pinto la fila {y} fuera de [{}, {}]", item.kind, item.top, item.bottom);
+                } else {
+                    assert!(row.chunks_exact(4).all(|p| p[0] > 0 || p[1] > 0 || p[2] > 0), "{:?} dejo un pixel negro en la fila {y}", item.kind);
+                }
+            }
+        };
+        // En la largada.
+        {
+            let view = g.view();
+            assert!(view.items.iter().any(|i| matches!(i.kind, ItemKind::Tower { .. })));
+            for item in &view.items {
+                check(&view, item);
+            }
+        }
+        // Bajo un arco del tunel de la primera loma.
+        g.cars[0].s = 72.0 + 4.0;
+        {
+            let view = g.view();
+            let close = view.items.iter().filter(|i| matches!(i.kind, ItemKind::Arch { .. }) && i.scale > 100.0).count();
+            assert!(close > 0);
+            for item in &view.items {
+                check(&view, item);
+            }
+        }
+        // A mano, a 300 px por metro.
+        let view = g.view();
+        for kind in [ItemKind::Kite { design: 2, size: 14.0, id: 3, squash: 0.8, lift: 12.0 }, ItemKind::Arch { id: 1, squash: 0.6, signal: 0 }] {
+            let mut item = Item::new(3.0, kind, 640.0, 4000.0, 300.0);
+            (item.top, item.bottom) = g.item_rows(&item);
+            check(&view, &item);
+        }
+    }
+
+    /// Fotos de la torre en verde y los cohetes, con su tiempo
+    /// (`OCASO_PNG=carpeta cargo test --release fotos_cohetes -- --ignored --nocapture`).
+    #[test]
+    #[ignore = "guarda fotos"]
+    fn fotos_cohetes() {
+        let mesh = box_mesh();
+        let names = ["Gallo", "Tuk-Tuk Elena", "La Mamaneta", "Colectivo Q.5"];
+        let models = std::array::from_fn(|k| Model { mesh: &mesh, finish: Finish::Vehicle, meters: Kind::ALL[k].spec().length / 4.0, name: names[k] });
+        let sky = |d: Vec3| Vec3::new(0.0008, 0.001, 0.0025) * (1.0 + d.y.max(0.0));
+        let (w, h) = (1280, 720);
+        let mut g = Carrera::new(models, Kind::Chela, &sky, w, h, Records::in_memory());
+        g.set_autopilot(true);
+        g.start();
+        let mut rgba = vec![0u8; w * h * 4];
+        let mut at = 0.0;
+        for moment in [2.5f32, 3.1, 3.6, 4.2, 5.0, 14.0, 22.0] {
+            run(&mut g, moment - at, Keys::default());
+            at = moment;
+            let mut times: Vec<f64> = (0..5)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    g.draw(&mut rgba);
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .collect();
+            times.sort_by(f64::total_cmp);
+            // Lo mismo sin el humo de la camioneta (para separar lo que
+            // cuesta cada cosa).
+            let puffs = std::mem::take(&mut g.puffs);
+            let smoke = std::mem::replace(&mut g.smoke_screen, 0.0);
+            let mut clean: Vec<f64> = (0..5)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    g.draw(&mut rgba);
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .collect();
+            clean.sort_by(f64::total_cmp);
+            (g.puffs, g.smoke_screen) = (puffs, smoke);
+            g.draw(&mut rgba);
+            println!("t {moment:5.1}: {:6.2} ms ({:6.2} sin humo)  cohetes {}", times[2], clean[2], g.bursts.len());
+            if let Ok(dir) = std::env::var("OCASO_PNG") {
+                let path = std::path::Path::new(&dir).join(format!("cohetes_{moment:04.1}.png"));
+                crate::render::png::write_rgba(&path, w as u32, h as u32, &rgba).expect("png");
+            }
+        }
+        // La torre de lejos al volver a la meta (la celosia sin moire): dos
+        // frames seguidos a 50, 80 y 120 m.
+        let length = g.track.length();
+        for d in [50.0f32, 80.0, 120.0] {
+            for frame in 0..2 {
+                g.cars[0].s = 2.0 * length - d + frame as f32 * 1.0;
+                g.puffs.clear();
+                g.draw(&mut rgba);
+                if let Ok(dir) = std::env::var("OCASO_PNG") {
+                    let path = std::path::Path::new(&dir).join(format!("torre_{d:03.0}_{frame}.png"));
+                    crate::render::png::write_rgba(&path, w as u32, h as u32, &rgba).expect("png");
+                }
+            }
+        }
+    }
+
+    /// Cuanto se ahorra sin cada clase de cosa (filas en un hilo y en
+    /// paralelo), por omision a los 5 s con la chela, pasando bajo la torre
+    /// (`OCASO_NAVE=9 OCASO_T=7 cargo test --release bench_without --
+    /// --ignored --nocapture` para el colectivo a los 7 s; 7 el tuk-tuk y 8
+    /// la camioneta).
+    #[test]
+    #[ignore = "mide tiempos"]
+    fn bench_without() {
+        let mesh = box_mesh();
+        let names = ["Gallo", "Tuk-Tuk Elena", "La Mamaneta", "Colectivo Q.5"];
+        let models = std::array::from_fn(|k| Model { mesh: &mesh, finish: Finish::Vehicle, meters: Kind::ALL[k].spec().length / 4.0, name: names[k] });
+        let sky = |d: Vec3| Vec3::new(0.02, 0.03, 0.06) * (1.0 + d.y.max(0.0));
+        let (w, h) = (1280, 720);
+        let kind = match std::env::var("OCASO_NAVE").as_deref() {
+            Ok("7") => Kind::TukTuk,
+            Ok("8") => Kind::Camioneta,
+            Ok("9") => Kind::Colectivo,
+            _ => Kind::Chela,
+        };
+        let at: f32 = std::env::var("OCASO_T").ok().and_then(|v| v.parse().ok()).unwrap_or(5.0);
+        let mut g = Carrera::new(models, kind, &sky, w, h, Records::in_memory());
+        g.set_autopilot(true);
+        g.start();
+        run(&mut g, at, Keys::default());
+        let mut rgba = vec![0u8; w * h * 4];
+        g.draw(&mut rgba);
+        let name = |k: &ItemKind| match k { ItemKind::Car { .. } => 0, ItemKind::Lamp { .. } => 1, ItemKind::Kite { .. } => 2, ItemKind::Tower { .. } => 3, ItemKind::Arch { .. } => 4, ItemKind::Puff { .. } => 5 };
+        for (skip, label) in [(99, "todo"), (0, "sin naves"), (1, "sin postes"), (2, "sin barriletes"), (3, "sin torre"), (4, "sin arcos"), (5, "sin humo"), (98, "sin cohetes"), (97, "nada encima")] {
+            let mut view = g.view();
+            view.items.retain(|i| name(&i.kind) != skip && skip != 97);
+            if skip == 98 || skip == 97 {
+                view.fw_segs.clear();
+            }
+            let one = (0..3)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    for (y, row) in rgba.chunks_mut(w * 4).enumerate() {
+                        view.row(y, row);
+                    }
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .fold(f64::MAX, f64::min);
+            let par = (0..5)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    parallel::chunks_mut(&mut rgba, w * 4, 1, |y, row| view.row(y, row));
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .fold(f64::MAX, f64::min);
+            println!("{label:<16} un hilo {one:7.2} ms   en paralelo {par:6.2} ms   ({} cosas)", view.items.len());
+        }
+        let t = std::time::Instant::now();
+        for _ in 0..10 {
+            std::hint::black_box(g.view());
+        }
+        println!("view {:6.2} ms", t.elapsed().as_secs_f64() * 100.0);
     }
 }
