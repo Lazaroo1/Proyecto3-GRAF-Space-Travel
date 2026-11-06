@@ -37,6 +37,15 @@ pub const TERRAIN_FINEST: f64 = 0.35;
 pub const LOD_FACTOR: f64 = 1.8;
 /// Chunks nuevos por frame como maximo.
 pub const LOD_BUDGET: usize = 24;
+/// Resolucion dinamica: mientras la imagen se mueve rapido, el frame se
+/// renderiza a esta fraccion del ancho y del alto (la mitad de los pixeles,
+/// un poco mas) y se amplia. Se baja cuando la imagen se mueve mas de
+/// `DYNAMIC_FAST` rad/s y se sube cuando lleva `DYNAMIC_SETTLE` s por
+/// debajo de `DYNAMIC_SLOW`.
+pub const DYNAMIC_SCALE: f64 = 0.75;
+pub const DYNAMIC_FAST: f64 = 0.15;
+pub const DYNAMIC_SLOW: f64 = 0.06;
+pub const DYNAMIC_SETTLE: f64 = 0.35;
 /// Nivel fijo cuando se apaga el LOD para comparar.
 pub const LOD_FIXED_LEVEL: u8 = 4;
 
@@ -72,6 +81,10 @@ pub const SHIP_LENGTH: f64 = 4.0;
 /// Largo de las naves botella: mas grandes que la OCASO-1 para que se lea
 /// la etiqueta.
 pub const BOTTLE_LENGTH: f64 = SHIP_LENGTH * 1.6;
+/// Cuanto se inclinan las naves botella con la boca hacia arriba (radianes):
+/// desde la camara, que va atras y arriba, se ve la etiqueta y no solo el
+/// fondo.
+pub const BOTTLE_PITCH: f64 = 0.38;
 /// La velocidad maxima crece con la altitud: lejos se cruza el sistema en
 /// segundos y junto a la superficie se vuela con precision. Como la nave
 /// tambien frena con la altitud, nunca llega al suelo a toda velocidad.
@@ -121,7 +134,8 @@ pub const CHASE_HEIGHT: f64 = 2.8;
 pub const CHASE_DISTANCE: f64 = 8.8;
 /// La camara de persecucion con las botellas (a la derecha, arriba y
 /// atras): mas atras y mas baja que con la OCASO-1, asi la botella queda
-/// mas adelante en la imagen y entera, sin cortarse abajo.
+/// mas adelante en la imagen y entera, sin cortarse abajo. Con las otras
+/// naves chapinas se aleja en proporcion a su largo.
 pub const BOTTLE_CHASE: [f64; 3] = [1.7, 2.0, 11.2];
 /// Posicion de la cabina respecto al centro de la nave.
 pub const COCKPIT_OFFSET: [f64; 3] = [0.0, 0.5, -0.6];

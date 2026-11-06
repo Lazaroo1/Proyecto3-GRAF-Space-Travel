@@ -186,7 +186,7 @@ fn groove(distance: f32, width: f32) -> f32 {
     smoothstep(width, 0.0, distance.abs())
 }
 
-/// Placas del casco de las naves naufragas: una grilla de paneles de tamano
+/// Placas del casco de la nave (OCASO-1): una grilla de paneles de tamano
 /// variable con ranuras entre ellos, remaches en las esquinas y abolladuras.
 pub fn hull_panels(size: usize) -> NormalMap {
     let noise = Perlin::new(0x4011);

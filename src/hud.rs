@@ -13,7 +13,8 @@ use std::path::Path;
 
 use raylib::prelude::*;
 
-use crate::app::App;
+use crate::app::{App, FaroReadout, FlarePhase};
+use crate::minijuegos::{Align, Font, Item, Overlay};
 use crate::parallel;
 use crate::player::PlayerView;
 use crate::scene::cycle::Phase;
@@ -36,6 +37,8 @@ pub struct Hud {
     /// Si el titulo del principio ya se quito (al cambiar de version se
     /// quita para que no se encime con el de la transicion).
     pub intro_over: bool,
+    /// El minijuego que se puede abrir aqui (Enter), si hay.
+    pub prompt: Option<&'static str>,
 }
 
 /// Segundos que dura el titulo al empezar.
@@ -46,7 +49,7 @@ const TOAST: f32 = 3.0;
 /// Donde estan las letras de Windows.
 const FONT_DIR: &str = "C:/Windows/Fonts";
 /// Lo que se carga de cada letra: ASCII y lo del espanol.
-const GLYPHS: &str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~áéíóúÁÉÍÓÚñÑüÜäöÄÖ¿¡°·–—−…’";
+pub(crate) const GLYPHS: &str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~áéíóúÁÉÍÓÚñÑüÜäöÄÖ¿¡°·–—−…’×√πψτ⁰¹²³⁴⁵⁶⁷⁸⁹⁻»←↑→↓º";
 
 /// Los estilos de letra: archivo y tamano en pixeles. Cada uno se dibuja a
 /// su tamano, sin escalar.
@@ -173,6 +176,7 @@ fn pretty(name: &str) -> &str {
         "San Andres Xecul" => "San Andrés Xecul",
         "Jagermeister" => "Jägermeister",
         "Gargantua" => "Gargantúa",
+        "El Periferico" => "El Periférico",
         other => other,
     }
 }
@@ -267,7 +271,7 @@ pub fn draw(
     if hud.hidden {
         return;
     }
-    let chapin = app.bottle_name();
+    let chapin = app.ship_name();
 
     // Intro: el titulo aparece y se desvanece en los primeros segundos.
     if hud.age < INTRO && !hud.intro_over {
@@ -309,7 +313,20 @@ pub fn draw(
         };
         let p = &app.prop_stats;
         let lines = [
-            format!("FPS {fps}   ·   frame {:.1} ms   ·   {} hilos", s.ms_total, parallel::workers()),
+            format!(
+                "FPS {fps}   ·   frame {:.1} ms   ·   {} hilos   ·   {}×{}{}",
+                s.ms_total,
+                parallel::workers(),
+                app.renderer.width(),
+                app.renderer.height(),
+                if app.dynamic.is_low() {
+                    "  (en movimiento)"
+                } else if app.dynamic.enabled {
+                    ""
+                } else {
+                    "  (resolución dinámica apagada)"
+                }
+            ),
             format!(
                 "vértices {:.1}   triángulos {:.1}   raster {:.1}   shading {:.1}   post {:.1} ms",
                 s.ms_vertex, s.ms_triangles, s.ms_raster, s.ms_shade, s.ms_post
@@ -366,6 +383,11 @@ pub fn draw(
         fonts.draw(d, &distance, rect.x + 18.0 + nw, rect.y + 5.0, Style::Small, DIM);
     }
 
+    if let Some(readout) = app.faro_readout() {
+        let top = if hud.stats { 12.0 + 7.0 * LINE + 22.0 + 10.0 } else { 12.0 };
+        lines_panel(d, fonts, 12.0, top, &faro_lines(&readout), None);
+    }
+
     if tweaks.open {
         let lines = tweaks.lines(app);
         let h = lines.len() as f32 * LINE + 22.0;
@@ -381,12 +403,14 @@ pub fn draw(
             "W / S: adelante / atrás   ·   A / D: lados   ·   Espacio / Ctrl: subir / bajar".to_string(),
             "Q / E: alabeo   ·   Shift: turbo   ·   C: cámara   ·   P: foto   ·   Tab: soltar el mouse".to_string(),
             "X: freno de emergencia   ·   H (o Inicio): volver al principio sin reiniciar el tiempo".to_string(),
-            "L: modo local   ·   O: crucero (rodea el planeta)   ·   N: ir al siguiente lugar".to_string(),
+            "L: modo local   ·   O: crucero (rodea el planeta)   ·   N: ir al siguiente lugar (también a Faro)".to_string(),
             "Y: ruta predicha, la línea de a dónde te lleva la gravedad (auto / siempre / nunca)".to_string(),
-            "V: versión chapina / OCASO   ·   B o 1 a 6: nave botella (en la chapina)".to_string(),
+            "V: versión chapina / OCASO   ·   B o 1 a 9: nave (6 botellas, el tuk-tuk, la camioneta y el colectivo)".to_string(),
+            "Enter: el minijuego del planeta, cuando el aviso de abajo lo ofrece (la marimba en la Luna de Xelajú)".to_string(),
             "K: pausa   ·   U / I: canción anterior / siguiente   ·   − / +: volumen (en la chapina)".to_string(),
-            "T: ajustes en vivo   ·   M: sonido   ·   J: final / renacer   ·   R: rebobinar   ·   [ ]: −30 / +30 s".to_string(),
-            "RePág / AvPág: vistas fijas   ·   F3: wireframe   ·   F4: colores de LOD   ·   F5: LOD".to_string(),
+            "T: ajustes en vivo   ·   M: sonido   ·   J: final / renacer   ·   F: gran llamarada de Faro".to_string(),
+            "R: rebobinar   ·   [ ]: −30 / +30 s".to_string(),
+            "RePág / AvPág o , / .: vistas fijas   ·   F3: wireframe   ·   F4: colores de LOD   ·   F5: LOD".to_string(),
             "F6: otra semilla   ·   F7: congelar frustum   ·   F1: ayuda   ·   F2: estadísticas   ·   F9: ocultar todo".to_string(),
         ];
         let top = lines_panel(d, fonts, 12.0, 12.0, &lines, Some(height));
@@ -401,8 +425,19 @@ pub fn draw(
         draw_player(d, fonts, view, (width as i32, height as i32), hud.age);
     }
 
-    // Los avisos: el del juego y el de la vista fija.
+    // Los avisos: el del minijuego de aqui, el del juego y el de la vista
+    // fija.
     let mut slot = 0.0;
+    if let Some(text) = hud.prompt {
+        // Siempre visible mientras se este cerca, con el borde que respira.
+        let w = fonts.width(text, Style::Heading) + 44.0;
+        let h = 46.0;
+        let rect = Rectangle::new((width - w) * 0.5, bottom - h, w, h);
+        let breath = (0.5 + 0.5 * (hud.age * 3.0).sin()) * 0.6 + 0.4;
+        pill(d, rect, PANEL, Some(Color::new(255, 204, 120, (200.0 * breath) as u8)));
+        fonts.draw(d, text, rect.x + 22.0, rect.y + 9.0, Style::Heading, ACCENT);
+        slot += 1.0;
+    }
     if let Some((text, since)) = hud.banner {
         if hud.age - since < TOAST {
             let text = match hud.banner_where {
@@ -432,6 +467,87 @@ pub fn draw(
     }
 }
 
+/// Lo que pone encima un minijuego: texto con sombra (para que se lea sobre
+/// lo que sea), paneles como los del HUD y barras.
+pub fn minigame(d: &mut RaylibDrawHandle, fonts: &Fonts, overlay: &Overlay) {
+    let rgba = |c: [u8; 4]| Color::new(c[0], c[1], c[2], c[3]);
+    for item in &overlay.items {
+        match item {
+            Item::Panel { x, y, w, h } => panel(d, Rectangle::new(*x, *y, *w, *h)),
+            Item::Bar { x, y, w, h, fill, color, vertical } => {
+                let rect = Rectangle::new(*x, *y, *w, *h);
+                let round = (12.0 / rect.width.min(rect.height)).min(1.0);
+                let fill = fill.clamp(0.0, 1.0);
+                if fill < 1.0 {
+                    d.draw_rectangle_rounded(rect, round, 8, Color::new(255, 255, 255, 34));
+                }
+                if fill > 0.0 {
+                    let part = if *vertical {
+                        let fh = (rect.height * fill).max(rect.width);
+                        Rectangle::new(rect.x, rect.y + rect.height - fh, rect.width, fh)
+                    } else {
+                        Rectangle::new(rect.x, rect.y, (rect.width * fill).max(rect.height), rect.height)
+                    };
+                    d.draw_rectangle_rounded(part, round, 8, rgba(*color));
+                }
+            }
+            Item::Text { text, x, y, font, color, align } => {
+                let (style, size) = match font {
+                    Font::Small => (Style::Small, 15.0),
+                    Font::Body => (Style::Body, 18.0),
+                    Font::Bold => (Style::Bold, 18.0),
+                    Font::Heading => (Style::Heading, 24.0),
+                    Font::Big(size) => (Style::Title, *size),
+                };
+                let w = fonts.width_at(text, style, size);
+                let x = match align {
+                    Align::Left => *x,
+                    Align::Center => x - w * 0.5,
+                    Align::Right => x - w,
+                };
+                let shadow = Color::new(0, 0, 0, (color[3] as f32 * 0.55) as u8);
+                let drop = (size / 18.0).clamp(1.0, 3.0);
+                fonts.draw_at(d, text, x + drop, y + drop, style, size, shadow);
+                fonts.draw_at(d, text, x, *y, style, size, rgba(*color));
+            }
+        }
+    }
+}
+
+/// `x` en notacion cientifica con exponente en superindice: 4.8×10⁻¹¹.
+fn scientific(x: f64, digits: usize) -> String {
+    let exponent = x.abs().log10().floor() as i32;
+    let mantissa = x / 10f64.powi(exponent);
+    let sup: String = exponent
+        .to_string()
+        .chars()
+        .map(|c| match c {
+            '-' => '⁻',
+            d => "⁰¹²³⁴⁵⁶⁷⁸⁹".chars().nth(d.to_digit(10).unwrap() as usize).unwrap(),
+        })
+        .collect();
+    format!("{mantissa:.digits$}×10{sup}")
+}
+
+/// El panel de Faro: las ecuaciones del modelo con sus numeros y lo que
+/// esta pasando.
+fn faro_lines(r: &FaroReadout) -> Vec<String> {
+    let flare = match r.flare {
+        FlarePhase::Ready => "lista".to_string(),
+        FlarePhase::Twisting => format!("la corteza tuerce: ψ {:.2} de {:.1} rad", r.twist, r.critical_twist),
+        FlarePhase::Fireball => format!("bola de fuego al {:.0} %, L = L0 (1 − t/380 s)³", r.fireball * 100.0),
+    };
+    vec![
+        format!("Faro · púlsar y magnetar (1E 1547.0−5408) · a {:.0} km", r.distance),
+        format!("P = {:.5} s   ·   dP/dt = {} s/s", r.period, scientific(r.pdot, 2)),
+        format!("B = 3.2×10¹⁹ √(P dP/dt) = {} G (el límite cuántico es 4.4×10¹³)", scientific(r.field, 1)),
+        format!("τ = P / 2(dP/dt) = {:.0} años   ·   dE/dt = 4π²I(dP/dt)/P³ = {} erg/s", r.age_years, scientific(r.edot, 1)),
+        format!("cilindro de luz cP/2π = {:.0} km   ·   rs/R = {:.3}: se ve el {:.0} % de la estrella", r.light_cylinder_km, r.compactness, 50.0 / (1.0 - r.compactness)),
+        format!("torsión ψ = {:.2} rad   ·   casquete {:.1}° a {:.1} MK   ·   corteza {:.1} MK", r.twist, r.cap_degrees, r.cap_temperature / 1e6, r.crust_temperature / 1e6),
+        format!("estallidos: {}   ·   gran llamarada [F]: {flare}", if r.storm > 0.3 { "tormenta" } else { "sueltos" }),
+    ]
+}
+
 /// El panel de vuelo, arriba a la derecha: un encabezado con la fase o la
 /// version, las filas (etiqueta, tecla, valor) y una linea con las teclas
 /// de emergencia. Devuelve el rectangulo que ocupa.
@@ -439,7 +555,7 @@ fn flight_panel(d: &mut RaylibDrawHandle, fonts: &Fonts, app: &App, width: f32) 
     let f = &app.flight;
     let c = &app.cycle;
     let clock = |seconds: f64| format!("{:02}:{:02}", (seconds / 60.0) as u32, (seconds % 60.0) as u32);
-    let (title, hint) = match (app.bottle_name(), c.phase) {
+    let (title, hint) = match (app.ship_name(), c.phase) {
         (Some(_), _) => ("Versión chapina".to_string(), "V: volver a OCASO"),
         (None, Phase::Agony) => (Phase::Agony.name().to_string(), "J: desatar el final"),
         (None, phase) => (format!("{}   {}", phase.name(), clock(c.tau)), "J: renacer"),
@@ -475,8 +591,8 @@ fn flight_panel(d: &mut RaylibDrawHandle, fonts: &Fonts, app: &App, width: f32) 
         last.value.push_str("   ·   choque");
         last.color = WARN;
     }
-    rows.push(match app.bottle_name() {
-        Some(name) => row("Nave", "B / 1-6", pretty(name)),
+    rows.push(match app.ship_name() {
+        Some(name) => row("Nave", "B / 1-9", pretty(name)),
         None => row("Guatemala", "V", "versión chapina"),
     });
     let (footer, footer_color) = if f.braking {
@@ -675,4 +791,38 @@ fn draw_player(d: &mut RaylibDrawHandle, fonts: &Fonts, view: &PlayerView, scree
     let keys = "K pausa   ·   U / I canción   ·   − / + volumen";
     let kw = fonts.width(keys, Style::Small);
     fonts.draw(d, keys, x + (PLAYER_SIZE.0 as f32 - kw) * 0.5, y + PLAYER_SIZE.1 as f32 - 24.0, Style::Small, FAINT);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// El panel de Faro solo usa letras que se cargan de Segoe UI.
+    #[test]
+    fn the_faro_panel_only_uses_loaded_glyphs() {
+        let readout = FaroReadout {
+            distance: 812.0,
+            period: 2.0698,
+            pdot: 4.83e-11,
+            field: 3.2e14,
+            age_years: 679.0,
+            edot: 2.14e35,
+            light_cylinder_km: 98_760.0,
+            compactness: 0.345,
+            twist: 1.05,
+            critical_twist: 3.0,
+            cap_degrees: 10.0,
+            cap_temperature: 5.4e6,
+            crust_temperature: 1.8e6,
+            storm: 0.0,
+            flare: FlarePhase::Fireball,
+            fireball: 0.64,
+        };
+        for line in faro_lines(&readout) {
+            for c in line.chars() {
+                assert!(GLYPHS.contains(c), "falta {c:?} en: {line}");
+            }
+        }
+        assert_eq!(scientific(4.83e-11, 2), "4.83×10⁻¹¹");
+    }
 }

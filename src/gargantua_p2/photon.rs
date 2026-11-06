@@ -104,17 +104,28 @@ impl Photon {
     /// El muestreo del volumen agrega su propio limite en raymarch::volume_step.
     #[inline(always)]
     pub fn step_length(&self) -> f32 {
+        self.step_length_with(config::STEP_RADIUS_FRACTION)
+    }
+
+    /// `step_length` con otra fraccion del radio como tope.
+    #[inline(always)]
+    pub fn step_length_with(&self, radius_fraction: f32) -> f32 {
         let acceleration = relativity::geodesic_acceleration(self.pos, self.h_sq).length();
         let curvature = if acceleration > 1.0e-9 {
             config::STEP_ANGLE_TOLERANCE * self.vel.length() / acceleration
         } else {
             config::MAX_STEP
         };
-        let radial = self.pos.length() * config::STEP_RADIUS_FRACTION;
+        let radial = self.pos.length() * radius_fraction;
 
         curvature
             .min(radial)
             .clamp(config::MIN_STEP, config::MAX_STEP)
+    }
+
+    /// Parametro de impacto `b = h / E`, conservado.
+    pub fn impact_parameter(&self) -> f32 {
+        self.h_sq.sqrt() / relativity::photon_energy(self.pos, self.vel, self.h_sq)
     }
 
     /// Si el foton ya no puede volver a salir.

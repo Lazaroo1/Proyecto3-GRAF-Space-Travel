@@ -262,65 +262,6 @@ impl HeightField for JardinField {
     }
 }
 
-/// Cementerio: roca muerta marcada por impactos. Los crateres son de los
-/// restos del exodo que cayeron, y las zanjas largas, de naves que se
-/// arrastraron al estrellarse.
-///
-/// Atributos: `x` borde de crater, `y` zanja, `z` base del terreno.
-pub struct CementerioField {
-    noise: Perlin,
-    craters: Craters,
-    small: Craters,
-}
-
-impl CementerioField {
-    pub fn new(seed: u32) -> Self {
-        Self {
-            noise: Perlin::new(seed),
-            craters: Craters {
-                frequency: 6.0,
-                chance: 0.45,
-                min_radius: 0.25,
-                max_radius: 0.6,
-                depth: 5.0,
-                seed: seed ^ 0xA11,
-            },
-            small: Craters {
-                frequency: 18.0,
-                chance: 0.4,
-                min_radius: 0.15,
-                max_radius: 0.55,
-                depth: 1.6,
-                seed: seed ^ 0xB22,
-            },
-        }
-    }
-}
-
-impl HeightField for CementerioField {
-    fn sample(&self, dir: Vec3) -> TerrainSample {
-        let n = &self.noise;
-        let base = n.fbm(dir * 1.8 + Vec3::new(5.0, -2.0, 7.5), 5);
-        let (big, big_rim) = self.craters.sample(dir);
-        let (small, small_rim) = self.small.sample(dir);
-        let gouge = smoothstep(
-            0.93,
-            0.99,
-            n.ridged(dir * 3.0 + Vec3::new(-8.0, 1.0, 2.0), 2),
-        );
-        TerrainSample {
-            height: base * 4.0 + big + small - gouge * 2.5,
-            attrs: Vec3::new(big_rim.max(small_rim), gouge, base * 0.5 + 0.5),
-        }
-    }
-
-    fn height_range(&self) -> (f32, f32) {
-        let (lo_a, hi_a) = self.craters.range();
-        let (lo_b, hi_b) = self.small.range();
-        (-4.0 + lo_a + lo_b - 2.5, 4.0 + hi_a + hi_b)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,10 +288,6 @@ mod tests {
             (
                 Box::new(JardinField::new(7, 1)),
                 Box::new(JardinField::new(7, 1)),
-            ),
-            (
-                Box::new(CementerioField::new(7)),
-                Box::new(CementerioField::new(7)),
             ),
         ];
         for (index, (a, b)) in fields.iter().enumerate() {

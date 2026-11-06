@@ -13,6 +13,8 @@ mod hud;
 mod marimba;
 #[allow(dead_code)]
 mod math;
+mod minijuegos;
+mod muestra;
 mod parallel;
 mod player;
 mod render;
@@ -31,12 +33,24 @@ use math::DVec3;
 
 /// Muestras por bloque de audio (unos 46 ms a 44.1 kHz).
 const AUDIO_BLOCK: usize = 2048;
+/// Los minijuegos tienen su propio stream con bloques chicos (unos 12 ms):
+/// el golpe de una tecla tiene que sonar enseguida. Mientras se juega los
+/// frames son rapidos (el mundo esta congelado) y alcanzan a llenarlos.
+const GAME_BLOCK: usize = 512;
 
 enum Mode {
     Window,
     Capture(PathBuf),
     Bench(usize),
     Tour(PathBuf),
+    /// Fotos del minijuego de la marimba, sin ventana.
+    GameCapture(PathBuf),
+    /// Fotos de la carrera del Periferico, sin ventana.
+    RaceCapture(PathBuf),
+    /// Fotos de los shucos del Reformador, sin ventana.
+    ShucosCapture(PathBuf),
+    /// Fotos de Talega Surfers, sin ventana.
+    SurfersCapture(PathBuf),
 }
 
 struct Options {
@@ -47,6 +61,17 @@ struct Options {
     lod_colors: bool,
     fog_only: bool,
     preset: Option<usize>,
+    /// Abrir la marimba de la Luna (o la carrera) al arrancar.
+    marimba: bool,
+    race: bool,
+    shucos: bool,
+    surfers: bool,
+    /// La nave chapina con que se empieza (1 a 9).
+    ship: Option<usize>,
+    /// Empezar (o grabar el recorrido) en la version chapina.
+    chapina: bool,
+    /// Grabar el video de muestra (la ventana manejada por un guion).
+    reel: Option<PathBuf>,
 }
 
 const USAGE: &str = "\
@@ -55,6 +80,19 @@ uso: ocaso [opciones]
   --captura CARPETA     guarda vistas fijas como PNG sin abrir ventana
   --vista NOMBRE       inicia o captura solo la vista elegida
   --recorrido MP4      graba vuelo, acercamiento, vuelta y alejamiento (ffmpeg)
+  --chapina             empieza (o graba el recorrido) en la version chapina
+  --muestra MP4         graba la ventana con un guion: cada lugar con N en las
+                        dos versiones y los minijuegos jugandose solos (ffmpeg)
+  --marimba             arranca en la Luna de Xelaju con la marimba abierta
+  --carrera             arranca en la capital con la carrera del Periferico abierta
+  --shucos              arranca en El Reformador con la carretilla de shucos abierta
+  --surfers             arranca en Antigua con Talega Surfers abierta
+  --nave N              la nave de la version chapina (1-6 botellas, 7 tuk-tuk,
+                        8 camioneta, 9 colectivo)
+  --captura-marimba DIR guarda fotos del minijuego de la marimba sin ventana
+  --captura-carrera DIR guarda fotos de la carrera del Periferico sin ventana
+  --captura-shucos DIR  guarda fotos de los shucos del Reformador sin ventana
+  --captura-surfers DIR guarda fotos de Talega Surfers sin ventana
   --bench FRAMES        mide cada vista fija FRAMES veces sin abrir ventana
   --wire                empieza con el wireframe encendido (F3)
   --lod                 empieza con los colores de LOD encendidos (F4)
@@ -69,6 +107,13 @@ fn parse_args() -> Result<Options, String> {
         lod_colors: false,
         fog_only: false,
         preset: None,
+        marimba: false,
+        race: false,
+        shucos: false,
+        surfers: false,
+        ship: None,
+        chapina: false,
+        reel: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -86,6 +131,10 @@ fn parse_args() -> Result<Options, String> {
                 let dir = args.next().ok_or("--captura espera una carpeta")?;
                 options.mode = Mode::Capture(PathBuf::from(dir));
             }
+            "--chapina" => options.chapina = true,
+            "--muestra" => {
+                options.reel = Some(PathBuf::from(args.next().ok_or("--muestra espera un archivo .mp4")?));
+            }
             "--recorrido" => {
                 options.mode = Mode::Tour(PathBuf::from(
                     args.next().ok_or("--recorrido espera un archivo .mp4")?,
@@ -97,6 +146,33 @@ fn parse_args() -> Result<Options, String> {
                 options.mode = Mode::Bench(frames);
             }
             "--wire" => options.wireframe = true,
+            "--marimba" => options.marimba = true,
+            "--carrera" => options.race = true,
+            "--shucos" => options.shucos = true,
+            "--surfers" => options.surfers = true,
+            "--nave" => {
+                let n: usize = args.next().ok_or("--nave espera un numero")?.parse().map_err(|_| "nave invalida")?;
+                if !(1..=9).contains(&n) {
+                    return Err("--nave va de 1 a 9".into());
+                }
+                options.ship = Some(n - 1);
+            }
+            "--captura-carrera" => {
+                let dir = args.next().ok_or("--captura-carrera espera una carpeta")?;
+                options.mode = Mode::RaceCapture(PathBuf::from(dir));
+            }
+            "--captura-surfers" => {
+                let dir = args.next().ok_or("--captura-surfers espera una carpeta")?;
+                options.mode = Mode::SurfersCapture(PathBuf::from(dir));
+            }
+            "--captura-shucos" => {
+                let dir = args.next().ok_or("--captura-shucos espera una carpeta")?;
+                options.mode = Mode::ShucosCapture(PathBuf::from(dir));
+            }
+            "--captura-marimba" => {
+                let dir = args.next().ok_or("--captura-marimba espera una carpeta")?;
+                options.mode = Mode::GameCapture(PathBuf::from(dir));
+            }
             "--vista" => {
                 let name = args.next().ok_or("--vista espera el nombre de una vista")?;
                 options.preset = Some(
@@ -133,6 +209,10 @@ fn main() {
         Mode::Capture(dir) => run_capture(&options, dir),
         Mode::Bench(frames) => run_bench(&options, *frames),
         Mode::Tour(path) => run_tour(&options, path),
+        Mode::GameCapture(dir) => run_game_capture(&options, dir),
+        Mode::RaceCapture(dir) => run_race_capture(&options, dir),
+        Mode::ShucosCapture(dir) => run_shucos_capture(&options, dir),
+        Mode::SurfersCapture(dir) => run_surfers_capture(&options, dir),
     };
     if let Err(error) = result {
         eprintln!("error: {error}");
@@ -146,6 +226,13 @@ fn new_app(options: &Options) -> Result<App, String> {
     app.debug.wireframe = options.wireframe;
     app.debug.lod_colors = options.lod_colors;
     app.debug.fog_only = options.fog_only;
+    if let Some(ship) = options.ship {
+        // Se pone al entrar a la version chapina.
+        app.chapin_ship = ship;
+    }
+    if options.chapina {
+        app.use_chapin();
+    }
     if let Some(i) = options.preset {
         app.apply_preset(&PRESETS[i]);
     }
@@ -154,7 +241,25 @@ fn new_app(options: &Options) -> Result<App, String> {
 
 fn run_window(options: &Options) -> Result<(), String> {
     let mut app = new_app(options)?;
-    if options.preset.is_none() {
+    // El video de muestra: la ventana la maneja un guion, a tiempo fijo.
+    let mut reel = match &options.reel {
+        Some(path) => Some(muestra::Reel::new(path, options.width, options.height)?),
+        None => None,
+    };
+    // En la ventana, la resolucion dinamica (F8 la apaga); en el video,
+    // siempre completa.
+    app.dynamic.enabled = reel.is_none();
+    if options.marimba {
+        app.apply_preset(xela_preset());
+    } else if options.race {
+        app.apply_preset(capital_preset());
+    } else if options.shucos {
+        app.apply_preset(reformador_preset());
+    } else if options.surfers {
+        app.apply_preset(PRESETS.iter().find(|p| p.name == "42_antigua").expect("la vista de Antigua"));
+    } else if options.chapina && options.preset.is_none() {
+        app.apply_preset(PRESETS.iter().find(|p| p.name == "40_chapin").expect("la vista chapina"));
+    } else if options.preset.is_none() {
         app.apply_preset(&PRESETS[21]);
     }
     let (mut rl, thread) = raylib::init()
@@ -163,6 +268,8 @@ fn run_window(options: &Options) -> Result<(), String> {
         .build();
     rl.set_target_fps(144);
     rl.disable_cursor();
+    // Esc cierra el juego solo fuera de un minijuego (adentro, sale de el).
+    rl.set_exit_key(None);
     let mut captured = true;
     // Al capturar el mouse, el primer movimiento trae el salto desde donde
     // estaba el cursor: se descarta para que la mira no pegue un brinco.
@@ -183,13 +290,15 @@ fn run_window(options: &Options) -> Result<(), String> {
         banner: None,
         banner_where: None,
         intro_over: false,
+        prompt: None,
     };
     let mut preset_index: Option<usize> = None;
     let mut tweaks = tweaks::Tweaks::default();
 
     // Sonido: raylib solo reproduce lo que el sintetizador genera. Si no hay
     // dispositivo de audio, el juego sigue sin sonido.
-    let audio_device = RaylibAudio::init_audio_device().ok();
+    // El video genera su sonido aparte: sin dispositivo, no suena dos veces.
+    let audio_device = if reel.is_none() { RaylibAudio::init_audio_device().ok() } else { None };
     let mut stream = audio_device.as_ref().map(|device| {
         device.set_audio_stream_buffer_size_default(AUDIO_BLOCK as i32);
         let stream = device.new_audio_stream(audio::SAMPLE_RATE, 32, 1);
@@ -197,11 +306,159 @@ fn run_window(options: &Options) -> Result<(), String> {
         stream
     });
     let mut synth = audio::Synth::new();
+    let mut game_stream = audio_device.as_ref().map(|device| {
+        device.set_audio_stream_buffer_size_default(GAME_BLOCK as i32);
+        let stream = device.new_audio_stream(audio::SAMPLE_RATE, 32, 1);
+        // Las canciones del reproductor se crean despues con el tamano por
+        // defecto: con bloques chicos se cortarian en los frames lentos.
+        device.set_audio_stream_buffer_size_default(AUDIO_BLOCK as i32);
+        stream.play();
+        stream
+    });
+    let mut game_block = vec![0.0f32; GAME_BLOCK];
+    let mut minigame: Option<Box<dyn minijuegos::Minigame>> = None;
+    let mut opening: Option<minijuegos::Kind> = None;
+    let mut game_frame = vec![0u8; options.width * options.height * 4];
+    if options.marimba || options.race || options.shucos || options.surfers {
+        app.render();
+        let kind = if options.race {
+            minijuegos::Kind::Carrera
+        } else if options.shucos {
+            minijuegos::Kind::Shucos
+        } else if options.surfers {
+            minijuegos::Kind::Surfers
+        } else {
+            minijuegos::Kind::Marimba
+        };
+        minigame = Some(minijuegos::start(kind, &app));
+        hud.intro_over = true;
+    }
     // Las canciones de la version chapina.
     let mut player = player::Player::new(audio_device.as_ref(), &music_dir());
     let mut block = vec![0.0f32; AUDIO_BLOCK];
 
     while !rl.window_should_close() {
+        let dt = if reel.is_some() { muestra::DT } else { rl.get_frame_time() };
+        if let Some(r) = reel.as_mut() {
+            let Some(action) = r.advance() else { break };
+            use muestra::Action;
+            match action {
+                Action::Wait => {}
+                Action::Next(site) => {
+                    if !app.visit_site(site) {
+                        println!("muestra: no hay un lugar \"{site}\"");
+                    }
+                    app.settings.cruise = true;
+                }
+                Action::Flare => app.press_flare(),
+                Action::View(name) => match PRESETS.iter().find(|p| p.name == name) {
+                    Some(preset) => {
+                        app.apply_preset(preset);
+                        app.settings.cruise = false;
+                    }
+                    None => println!("muestra: no hay una vista \"{name}\""),
+                },
+                Action::Version => {
+                    app.toggle_version();
+                    hud.intro_over = true;
+                }
+                Action::Open(kind) => {
+                    if minijuegos::available(&app) != Some(kind) {
+                        println!("muestra: aqui no se ofrece {kind:?}");
+                    }
+                    opening = Some(kind);
+                    hud.prompt = None;
+                    if kind == minijuegos::Kind::Carrera {
+                        hud.banner = Some(("Horneando las naves…", hud.age - 0.3));
+                        hud.banner_where = None;
+                    }
+                }
+                Action::Play => {
+                    if let Some(game) = minigame.as_mut() {
+                        game.demo_start();
+                    }
+                }
+                Action::Close => {
+                    minigame = None;
+                    skip_mouse = true;
+                }
+            }
+            if let Some(text) = app.banner.take() {
+                hud.banner = Some((text, hud.age));
+                hud.banner_where = app.banner_where.take();
+            }
+        }
+        // Un minijuego abierto: el mundo se queda quieto y el juego tiene la
+        // pantalla, el teclado y su propio audio.
+        if let Some(game) = minigame.as_mut() {
+            hud.age += dt;
+            let keys = if reel.is_some() { game.demo_input(dt as f64) } else { read_game_keys(&rl) };
+            game.update(dt as f64, &keys);
+            match game_stream.as_mut() {
+                _ if reel.is_some() => {
+                    let r = reel.as_mut().unwrap();
+                    let mut samples = vec![0.0f32; r.samples()];
+                    game.audio(&mut samples);
+                    r.push_audio(&samples);
+                }
+                Some(stream) => {
+                    while stream.is_processed() {
+                        game.audio(&mut game_block);
+                        let _ = stream.update(&game_block);
+                    }
+                }
+                // Sin audio, su reloj igual tiene que avanzar.
+                None => game.audio(&mut vec![0.0; (dt * audio::SAMPLE_RATE as f32) as usize]),
+            }
+            if let Some(stream) = stream.as_mut() {
+                synth.set(audio::AudioParams { master: 0.0, ..audio::AudioParams::default() });
+                while stream.is_processed() {
+                    synth.fill(&mut block);
+                    let _ = stream.update(&block);
+                }
+            }
+            player.set_active(false);
+            game.draw(&mut game_frame);
+            texture
+                .update_texture(&game_frame)
+                .map_err(|e| format!("no se pudo actualizar la textura: {e:?}"))?;
+            let overlay = game.overlay();
+            let done = game.done();
+            let mut d = rl.begin_drawing(&thread);
+            d.clear_background(Color::BLACK);
+            d.draw_texture(&texture, 0, 0, Color::WHITE);
+            hud::minigame(&mut d, &fonts, &overlay);
+            if let Some(r) = reel.as_mut() {
+                r.grab()?;
+            }
+            drop(d);
+            if done {
+                minigame = None;
+                skip_mouse = true;
+            }
+            continue;
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
+            break;
+        }
+        // Un minijuego pedido el frame pasado: ya se vio el aviso, se abre
+        // (la carrera tarda un par de segundos en hornear las naves).
+        if let Some(kind) = opening.take() {
+            minigame = Some(minijuegos::start(kind, &app));
+            continue;
+        }
+        hud.prompt = minijuegos::available(&app).map(minijuegos::Kind::prompt);
+        if rl.is_key_pressed(KeyboardKey::KEY_ENTER) || rl.is_key_pressed(KeyboardKey::KEY_KP_ENTER) {
+            if let Some(kind) = minijuegos::available(&app) {
+                opening = Some(kind);
+                hud.prompt = None;
+                if kind == minijuegos::Kind::Carrera {
+                    // Ya visible en este frame (los avisos entran en 0.15 s).
+                    hud.banner = Some(("Horneando las naves…", hud.age - 0.3));
+                    hud.banner_where = None;
+                }
+            }
+        }
         if rl.is_key_pressed(KeyboardKey::KEY_TAB) {
             captured = !captured;
             if captured {
@@ -221,9 +478,10 @@ fn run_window(options: &Options) -> Result<(), String> {
             hud.hidden = !hud.hidden;
         }
         // Vistas fijas en orden, para mostrar algo rapido en la demostracion.
-        let step = if rl.is_key_pressed(KeyboardKey::KEY_PAGE_DOWN) {
+        // En las laptops sin RePag/AvPag, la coma y el punto.
+        let step = if rl.is_key_pressed(KeyboardKey::KEY_PAGE_DOWN) || rl.is_key_pressed(KeyboardKey::KEY_PERIOD) {
             1
-        } else if rl.is_key_pressed(KeyboardKey::KEY_PAGE_UP) {
+        } else if rl.is_key_pressed(KeyboardKey::KEY_PAGE_UP) || rl.is_key_pressed(KeyboardKey::KEY_COMMA) {
             -1
         } else {
             0
@@ -290,7 +548,7 @@ fn run_window(options: &Options) -> Result<(), String> {
                 }
             }
         }
-        player.update(rl.get_frame_time());
+        player.update(dt);
         app.marimba_on = player.marimba();
         if rl.is_key_pressed(KeyboardKey::KEY_F3) {
             app.debug.wireframe = !app.debug.wireframe;
@@ -307,6 +565,10 @@ fn run_window(options: &Options) -> Result<(), String> {
         if rl.is_key_pressed(KeyboardKey::KEY_F7) {
             app.toggle_freeze();
         }
+        if rl.is_key_pressed(KeyboardKey::KEY_F8) {
+            app.dynamic.enabled = !app.dynamic.enabled;
+            app.banner = Some(if app.dynamic.enabled { "Resolución dinámica: sí" } else { "Resolución dinámica: no" });
+        }
         if rl.is_key_pressed(KeyboardKey::KEY_L) {
             app.settings.local = !app.settings.local;
         }
@@ -321,6 +583,9 @@ fn run_window(options: &Options) -> Result<(), String> {
         }
         if rl.is_key_pressed(KeyboardKey::KEY_J) {
             app.press_ending();
+        }
+        if rl.is_key_pressed(KeyboardKey::KEY_F) {
+            app.press_flare();
         }
         if rl.is_key_pressed(KeyboardKey::KEY_M) {
             app.muted = !app.muted;
@@ -356,7 +621,7 @@ fn run_window(options: &Options) -> Result<(), String> {
             hud.intro_over = true;
         }
         if rl.is_key_pressed(KeyboardKey::KEY_B) {
-            app.next_bottle();
+            app.next_ship();
         }
         let digits = [
             KeyboardKey::KEY_ONE,
@@ -365,10 +630,13 @@ fn run_window(options: &Options) -> Result<(), String> {
             KeyboardKey::KEY_FOUR,
             KeyboardKey::KEY_FIVE,
             KeyboardKey::KEY_SIX,
+            KeyboardKey::KEY_SEVEN,
+            KeyboardKey::KEY_EIGHT,
+            KeyboardKey::KEY_NINE,
         ];
         for (index, key) in digits.into_iter().enumerate() {
             if rl.is_key_pressed(key) {
-                app.select_bottle(index);
+                app.select_ship(index);
             }
         }
         if rl.is_key_pressed(KeyboardKey::KEY_Y) {
@@ -380,13 +648,20 @@ fn run_window(options: &Options) -> Result<(), String> {
             };
         }
         let photo = rl.is_key_pressed(KeyboardKey::KEY_P);
+        // La foto, siempre a resolucion completa.
+        app.dynamic.force_full |= photo;
 
-        let input = read_input(&rl, captured && !skip_mouse);
+        let input = if reel.is_some() { FrameInput::default() } else { read_input(&rl, captured && !skip_mouse) };
         skip_mouse = false;
-        hud.age += rl.get_frame_time();
-        app.update(rl.get_frame_time() as f64, &input);
+        hud.age += dt;
+        app.update(dt as f64, &input);
         app.render();
-        if let Some(stream) = stream.as_mut() {
+        if let Some(r) = reel.as_mut() {
+            synth.set(app.audio_params());
+            let mut samples = vec![0.0f32; r.samples()];
+            synth.fill(&mut samples);
+            r.push_audio(&samples);
+        } else if let Some(stream) = stream.as_mut() {
             synth.set(app.audio_params());
             while stream.is_processed() {
                 synth.fill(&mut block);
@@ -397,7 +672,7 @@ fn run_window(options: &Options) -> Result<(), String> {
             save_photo(&app);
         }
         texture
-            .update_texture(app.renderer.rgba())
+            .update_texture(app.frame())
             .map_err(|e| format!("no se pudo actualizar la textura: {e:?}"))?;
 
         let fps = rl.get_fps();
@@ -406,6 +681,311 @@ fn run_window(options: &Options) -> Result<(), String> {
         d.draw_texture(&texture, 0, 0, Color::WHITE);
         let view = chapin.then(|| player.view());
         hud::draw(&mut d, &app, fps, &hud, &tweaks, &fonts, view.as_ref());
+        if let Some(r) = reel.as_mut() {
+            r.grab()?;
+        }
+    }
+    if let Some(r) = reel {
+        r.finish()?;
+    }
+    Ok(())
+}
+
+/// Las teclas de un minijuego: D F J K, las flechas (y W A S D), Enter, Esc,
+/// Shift y H.
+fn read_game_keys(rl: &RaylibHandle) -> minijuegos::Keys {
+    use KeyboardKey::*;
+    let lanes = [KEY_D, KEY_F, KEY_J, KEY_K];
+    let pressed = |keys: &[KeyboardKey]| keys.iter().any(|&k| rl.is_key_pressed(k));
+    let down = |keys: &[KeyboardKey]| keys.iter().any(|&k| rl.is_key_down(k));
+    minijuegos::Keys {
+        lane_pressed: lanes.map(|k| rl.is_key_pressed(k)),
+        lane_down: lanes.map(|k| rl.is_key_down(k)),
+        up: pressed(&[KEY_UP, KEY_W]),
+        down: pressed(&[KEY_DOWN, KEY_S]),
+        left: pressed(&[KEY_LEFT]),
+        right: pressed(&[KEY_RIGHT]),
+        enter: pressed(&[KEY_ENTER, KEY_KP_ENTER]),
+        escape: pressed(&[KEY_ESCAPE, KEY_BACKSPACE]),
+        steer: f32::from(i8::from(down(&[KEY_RIGHT, KEY_D])) - i8::from(down(&[KEY_LEFT, KEY_A]))),
+        throttle: down(&[KEY_UP, KEY_W]),
+        brake: down(&[KEY_DOWN, KEY_S]),
+        boost: pressed(&[KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT, KEY_SPACE]),
+        horn: pressed(&[KEY_H]),
+        typed: typed_keys(rl),
+    }
+}
+
+/// Las letras y los numeros apretados en este frame, como los marca
+/// `minijuegos::Keys::press` (los numeros tambien del teclado numerico).
+fn typed_keys(rl: &RaylibHandle) -> u64 {
+    use KeyboardKey::*;
+    let letters = [
+        KEY_A, KEY_B, KEY_C, KEY_D, KEY_E, KEY_F, KEY_G, KEY_H, KEY_I, KEY_J, KEY_K, KEY_L, KEY_M, KEY_N, KEY_O, KEY_P, KEY_Q, KEY_R, KEY_S, KEY_T, KEY_U, KEY_V, KEY_W, KEY_X, KEY_Y, KEY_Z,
+    ];
+    let digits = [KEY_ZERO, KEY_ONE, KEY_TWO, KEY_THREE, KEY_FOUR, KEY_FIVE, KEY_SIX, KEY_SEVEN, KEY_EIGHT, KEY_NINE];
+    let pad = [KEY_KP_0, KEY_KP_1, KEY_KP_2, KEY_KP_3, KEY_KP_4, KEY_KP_5, KEY_KP_6, KEY_KP_7, KEY_KP_8, KEY_KP_9];
+    let mut keys = minijuegos::Keys::default();
+    for (k, key) in letters.into_iter().enumerate() {
+        if rl.is_key_pressed(key) {
+            keys.press((b'a' + k as u8) as char);
+        }
+    }
+    for k in 0..10 {
+        if rl.is_key_pressed(digits[k]) || rl.is_key_pressed(pad[k]) {
+            keys.press((b'0' + k as u8) as char);
+        }
+    }
+    keys.typed
+}
+
+/// La capital de lejos, con su anillo (version chapina): ahi se ofrece la
+/// carrera.
+fn capital_preset() -> &'static app::Preset {
+    PRESETS.iter().find(|p| p.name == "51_capital").expect("la vista de la capital")
+}
+
+/// El Reformador, en el suelo de la capital (version chapina): ahi esta la
+/// carretilla de shucos.
+fn reformador_preset() -> &'static app::Preset {
+    PRESETS.iter().find(|p| p.name == "52_reformador").expect("la vista del Reformador")
+}
+
+/// Fotos de los shucos del Reformador: el menu, la noche con el piloto
+/// automatico (al abrir, en la salida de la U, en la del estadio y con los
+/// bolos) y los resultados. Solo lo que dibuja la CPU.
+fn run_shucos_capture(options: &Options, dir: &Path) -> Result<(), String> {
+    use minijuegos::Minigame;
+    use minijuegos::shucos::Shucos;
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let (w, h) = (options.width, options.height);
+    let start = std::time::Instant::now();
+    let mut game = Shucos::new(w, h, minijuegos::Records::in_memory());
+    println!("fondo horneado en {:.0} ms", start.elapsed().as_secs_f64() * 1000.0);
+    let mut frame = vec![0u8; w * h * 4];
+    let mut save = |game: &mut Shucos, name: &str| -> Result<(), String> {
+        let mut times: Vec<f64> = (0..9)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                game.draw(&mut frame);
+                start.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        times.sort_by(f64::total_cmp);
+        let path = dir.join(format!("{name}.png"));
+        render::png::write_rgba(&path, w as u32, h as u32, &frame).map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("{name:<24} {:6.2} ms   -> {}", times[4], path.display());
+        Ok(())
+    };
+    save(&mut game, "shucos_1_menu")?;
+    game.open();
+    game.set_autopilot(true);
+    let dt = 1.0 / 60.0;
+    let mut elapsed = 0.0;
+    for (at, name) in [(7.0, "shucos_2_abriendo"), (0.0, "shucos_3_don_meyer"), (46.0, "shucos_4_salida_de_la_u"), (76.0, "shucos_5_salida_del_estadio"), (128.0, "shucos_6_bolos")] {
+        // Don Meyer: hasta que este esperando (llega a eso de las 8 y cuarto).
+        let wait_meyer = at == 0.0;
+        while (wait_meyer && !game.meyer_waiting() && elapsed < 90.0) || (!wait_meyer && elapsed < at) {
+            game.update(dt, &minijuegos::Keys::default());
+            elapsed += dt;
+        }
+        if wait_meyer {
+            for _ in 0..30 {
+                game.update(dt, &minijuegos::Keys::default());
+                elapsed += dt;
+            }
+        }
+        save(&mut game, name)?;
+    }
+    while !game.in_results() && elapsed < 400.0 {
+        game.update(dt, &minijuegos::Keys::default());
+        elapsed += dt;
+    }
+    save(&mut game, "shucos_7_resultados")?;
+    let (sold, returned, angry, money) = game.tally();
+    println!("vendidos {sold}, devueltos {returned}, enojados {angry}, ganancia Q{money}");
+    Ok(())
+}
+
+/// Fotos de Talega Surfers: el menu, la corrida con el piloto
+/// automatico (al salir, con las camionetas, con la ceniza y las bombas) y
+/// el final. Solo lo que dibuja la CPU.
+fn run_surfers_capture(options: &Options, dir: &Path) -> Result<(), String> {
+    use minijuegos::Minigame;
+    use minijuegos::surfers::TalegaSurfers;
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let (w, h) = (options.width, options.height);
+    let mut game = TalegaSurfers::new(w, h, minijuegos::Records::in_memory());
+    let mut frame = vec![0u8; w * h * 4];
+    let mut save = |game: &mut TalegaSurfers, name: &str| -> Result<(), String> {
+        let mut times: Vec<f64> = (0..9)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                game.draw(&mut frame);
+                start.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        times.sort_by(f64::total_cmp);
+        let path = dir.join(format!("{name}.png"));
+        render::png::write_rgba(&path, w as u32, h as u32, &frame).map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("{name:<24} {:6.2} ms   -> {}", times[4], path.display());
+        Ok(())
+    };
+    save(&mut game, "surfers_1_menu")?;
+    game.start();
+    game.set_autopilot(true);
+    let dt = 1.0 / 60.0;
+    let mut elapsed = 0.0;
+    for (at, name) in [(3.0, "surfers_2_salida"), (14.0, "surfers_3_calle"), (30.0, "surfers_4_ceniza"), (55.0, "surfers_5_bombas")] {
+        while elapsed < at && game.running() {
+            game.update(dt, &minijuegos::Keys::default());
+            elapsed += dt;
+        }
+        save(&mut game, name)?;
+    }
+    while game.running() && elapsed < 240.0 {
+        game.update(dt, &minijuegos::Keys::default());
+        elapsed += dt;
+    }
+    save(&mut game, "surfers_6_final")?;
+    let (meters, lenes, score) = game.tally();
+    println!("corrio {meters:.0} m, {lenes} lenes, {score} puntos: {}", game.reason());
+    Ok(())
+}
+
+/// El lugar de la marimba en la Luna de Xelaju (version chapina): al
+/// salir del minijuego se queda junto a ella.
+fn xela_preset() -> &'static app::Preset {
+    PRESETS.iter().find(|p| p.name == "64_la_marimba").expect("la vista de la marimba")
+}
+
+/// Fotos del minijuego de la marimba: el menu, la entrada, el juego en cada
+/// parte (con algunas fallas a proposito) y los resultados. Solo lo que
+/// dibuja la CPU: el texto del HUD lo pone raylib en la ventana.
+fn run_game_capture(options: &Options, dir: &Path) -> Result<(), String> {
+    use minijuegos::Minigame;
+    use minijuegos::marimba::{Level, MarimbaTiles};
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut app = new_app(options)?;
+    app.apply_preset(xela_preset());
+    settle(&mut app);
+    app.render();
+    let (w, h) = (options.width, options.height);
+    let background = app.renderer.rgba().to_vec();
+    let mut frame = vec![0u8; w * h * 4];
+    let save = |game: &mut MarimbaTiles, frame: &mut Vec<u8>, name: &str| -> Result<(), String> {
+        let start = std::time::Instant::now();
+        game.draw(frame);
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        let path = dir.join(format!("{name}.png"));
+        render::png::write_rgba(&path, w as u32, h as u32, frame).map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("{name:<26} {ms:6.2} ms   -> {}", path.display());
+        Ok(())
+    };
+    // A 120 fps, con el audio llevando el reloj como en la ventana.
+    let dt = 1.0 / 120.0;
+    let mut block = vec![0.0f32; (dt * audio::SAMPLE_RATE as f64).round() as usize];
+    let step = |game: &mut MarimbaTiles, block: &mut Vec<f32>, keys: minijuegos::Keys| {
+        game.update(dt, &keys);
+        game.audio(block);
+    };
+
+    let mut game = MarimbaTiles::new(&background, w, h, minijuegos::Records::in_memory());
+    let mut keys = minijuegos::Keys::default();
+    keys.lane_pressed[1] = true;
+    step(&mut game, &mut block, keys);
+    for _ in 0..6 {
+        step(&mut game, &mut block, minijuegos::Keys::default());
+    }
+    save(&mut game, &mut frame, "marimba_1_menu")?;
+
+    let shots: [(Level, &[(f64, &str)]); 3] = [
+        (Level::Bajo, &[(4.4, "marimba_2_bajo")]),
+        (Level::Tiple, &[(1.6, "marimba_3_entrada"), (7.3, "marimba_4_tiple"), (33.0, "marimba_5_segunda_vuelta")]),
+        (Level::Redoble, &[(9.65, "marimba_6_redoble")]),
+    ];
+    for (level, moments) in shots {
+        game.play(level);
+        let mut elapsed = 0.0;
+        for &(at, name) in moments {
+            while elapsed < at {
+                let keys = game.demo_keys(dt, 9);
+                step(&mut game, &mut block, keys);
+                elapsed += dt;
+            }
+            save(&mut game, &mut frame, name)?;
+        }
+    }
+    // Hasta el final de la cancion, para los resultados.
+    for _ in 0..(120.0 / dt) as usize {
+        let keys = game.demo_keys(dt, 9);
+        step(&mut game, &mut block, keys);
+    }
+    save(&mut game, &mut frame, "marimba_7_resultados")?;
+    Ok(())
+}
+
+/// Fotos de la carrera del Periferico con el piloto automatico: la largada,
+/// el semaforo, la carrera en varios momentos y la meta.
+fn run_race_capture(options: &Options, dir: &Path) -> Result<(), String> {
+    use minijuegos::Minigame;
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut app = new_app(options)?;
+    app.apply_preset(capital_preset());
+    let start = std::time::Instant::now();
+    let mut race = minijuegos::race(&app, minijuegos::Records::in_memory());
+    println!("naves horneadas en {:.0} ms", start.elapsed().as_secs_f64() * 1000.0);
+    let (w, h) = (options.width, options.height);
+    let mut frame = vec![0u8; w * h * 4];
+    let mut save = |race: &mut minijuegos::carrera::Carrera, name: &str| -> Result<(), String> {
+        // La mediana de nueve: un solo frame en frio no dice mucho.
+        let mut times: Vec<f64> = (0..9)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                race.draw(&mut frame);
+                start.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        times.sort_by(f64::total_cmp);
+        let ms = times[4];
+        let path = dir.join(format!("{name}.png"));
+        render::png::write_rgba(&path, w as u32, h as u32, &frame).map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("{name:<26} {ms:6.2} ms   -> {}", path.display());
+        Ok(())
+    };
+    save(&mut race, "carrera_1_largada")?;
+    race.set_autopilot(true);
+    race.start();
+    let dt = 1.0 / 60.0;
+    let mut elapsed = 0.0;
+    for (at, name) in [(1.6, "carrera_2_semaforo"), (7.0, "carrera_3_arranque"), (16.0, "carrera_4_curva"), (27.0, "carrera_5_loma"), (30.0, "carrera_6_tumulos"), (70.0, "carrera_7_segunda_vuelta"), (260.0, "carrera_8_meta")] {
+        while elapsed < at {
+            race.update(dt, &minijuegos::Keys::default());
+            elapsed += dt;
+        }
+        // La de los tumulos: cuando la nave va a unos 30 m del proximo
+        // (cada nave llega a otra hora), hasta 20 s despues.
+        if name == "carrera_6_tumulos" {
+            while elapsed < at + 20.0 && !race.bump_ahead().is_some_and(|d| (25.0..=35.0).contains(&d)) {
+                race.update(dt, &minijuegos::Keys::default());
+                elapsed += dt;
+            }
+        }
+        // La de la loma, adentro de un tunel de arcos, y la de la meta, en
+        // el festival de barriletes (hasta 20 y 60 s despues).
+        if name == "carrera_5_loma" {
+            while elapsed < at + 20.0 && !race.in_tunnel() {
+                race.update(dt, &minijuegos::Keys::default());
+                elapsed += dt;
+            }
+        }
+        if name == "carrera_8_meta" {
+            while elapsed < at + 60.0 && !race.in_festival() {
+                race.update(dt, &minijuegos::Keys::default());
+                elapsed += dt;
+            }
+        }
+        save(&mut race, name)?;
     }
     Ok(())
 }
@@ -442,12 +1022,8 @@ fn save_photo(app: &App) {
         .map_or(0, |d| d.as_secs());
     let path = dir.join(format!("foto_{stamp}.png"));
     let result = std::fs::create_dir_all(dir).and_then(|_| {
-        render::png::write_rgba(
-            &path,
-            app.renderer.width() as u32,
-            app.renderer.height() as u32,
-            app.renderer.rgba(),
-        )
+        let (width, height) = app.frame_size();
+        render::png::write_rgba(&path, width as u32, height as u32, app.frame())
     });
     match result {
         Ok(()) => println!("foto guardada en {}", path.display()),
