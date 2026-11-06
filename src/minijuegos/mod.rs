@@ -13,7 +13,7 @@
 //! | Luna de Xelaju | chapina | La marimba de la Luna ([marimba.rs]) |
 //! | La capital | chapina | La carrera del Periferico ([carrera.rs]) |
 //! | La capital (en el suelo) | chapina | Shucos del Reformador ([shucos.rs]) |
-//! | El volcan de Fuego (Antigua) | chapina | Camioneta Surfers ([surfers.rs]) |
+//! | El volcan de Fuego (Antigua) | chapina | Talega Surfers ([surfers.rs]) |
 //!
 //! Cada minijuego cumple `Minigame`: recibe las teclas del frame, llena su
 //! propio audio (un stream aparte con bloques chicos, para que el golpe
@@ -31,6 +31,7 @@ pub mod marimba;
 pub mod personaje;
 pub mod posproceso;
 pub mod shucos;
+pub mod sonido;
 pub mod surfers;
 
 use std::path::PathBuf;
@@ -117,7 +118,7 @@ impl Kind {
             Kind::Marimba => "Enter · tocar la marimba de la Luna",
             Kind::Carrera => "Enter · correr en el Periférico",
             Kind::Shucos => "Enter · vender shucos al pie del Reformador",
-            Kind::Surfers => "Enter · correr por la calle del Arco",
+            Kind::Surfers => "Enter · Talega Surfers: correr por la calle del Arco",
         }
     }
 }
@@ -157,7 +158,7 @@ pub fn start(kind: Kind, app: &App) -> Box<dyn Minigame> {
         Kind::Marimba => Box::new(marimba::MarimbaTiles::new(app.frame(), width, height, records)),
         Kind::Carrera => Box::new(race(app, records)),
         Kind::Shucos => Box::new(shucos::Shucos::new(width, height, records)),
-        Kind::Surfers => Box::new(surfers::CamionetaSurfers::new(width, height, records)),
+        Kind::Surfers => Box::new(surfers::TalegaSurfers::new(width, height, records)),
     }
 }
 
@@ -379,7 +380,22 @@ mod tests {
         assert_eq!(available(&app), Some(Kind::Carrera));
     }
 
-    /// En Antigua (con N) se ofrece la Camioneta Surfers.
+    /// Con N tambien se llega a la carrera: El Periferico, en el aire sobre
+    /// la capital.
+    #[test]
+    fn n_takes_you_to_the_race() {
+        let mut app = App::new(64, 36).unwrap();
+        let chapin = PRESETS.iter().find(|p| p.name == "40_chapin").unwrap();
+        app.apply_preset(chapin);
+        let at = app.system.sites.iter().position(|s| s.name == "El Periferico").expect("el lugar del Periferico");
+        for _ in 0..=at {
+            app.visit_next_site();
+        }
+        app.update(1.0 / 60.0, &FrameInput::default());
+        assert_eq!(available(&app), Some(Kind::Carrera), "altura {}", app.flight.altitude);
+    }
+
+    /// En Antigua (con N) se ofrece Talega Surfers.
     #[test]
     fn the_surfers_are_offered_in_antigua() {
         let mut app = App::new(64, 36).unwrap();

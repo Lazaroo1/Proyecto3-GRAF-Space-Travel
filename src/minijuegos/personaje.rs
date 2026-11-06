@@ -1,4 +1,4 @@
-//! Meyer, el personaje de Blender que corre en la Camioneta Surfers.
+//! Meyer, el personaje de Blender que corre en Talega Surfers.
 //!
 //! El modelo viene en una sola pose (saludando con la mano derecha), sin
 //! esqueleto. Para que corra se le arman las poses aqui, girando sus piezas:
@@ -27,7 +27,10 @@
 //! color por vertice conserva el detalle a los tamanos en que se ve Meyer.
 //!
 //! Con cada pose se hornea un sprite (`hornear`) desde atras y desde la
-//! altura de la camara del juego: ocho de la carrera y uno del salto. Se
+//! altura de la camara del juego: ocho de la carrera, uno del salto y uno
+//! agachado (en cuclillas: las rodillas dobladas, todo el cuerpo inclinado
+//! hacia adelante por la cadera y la mano de abajo hacia adelante; la otra
+//! sigue saludando). Se
 //! hornean una vez por tamano de pantalla y se guardan.
 //!
 //! En los shucos llega de cliente (`customer`): un cuadro de frente,
@@ -333,7 +336,24 @@ impl Character {
     /// espaldas a la camara (girado media vuelta: el frente a -z, como las
     /// naves).
     fn pose(&self, hips: [f32; 2], knees: [f32; 2], arm: f32) -> Mesh {
+        self.pose_leaning(hips, knees, arm, 0.0)
+    }
+
+    /// Agachado: en cuclillas (los muslos adelante, las rodillas dobladas) y
+    /// todo el cuerpo inclinado hacia adelante por la cadera, la mano de
+    /// abajo hacia adelante; la otra sigue saludando.
+    fn crouch(&self) -> Mesh {
+        // (Con el modelo volteado al cargarlo, adelante es el giro negativo
+        // de las piernas y el positivo del cuerpo.)
+        self.pose_leaning([-1.7, -1.7], [2.3, 2.3], -1.0, 0.45)
+    }
+
+    /// `pose` con todo el cuerpo inclinado `lean` rad por la cadera (negativo
+    /// hacia adelante).
+    fn pose_leaning(&self, hips: [f32; 2], knees: [f32; 2], arm: f32, lean: f32) -> Mesh {
         let mut out = self.mesh.clone();
+        let middle = (self.legs[0].1 + self.legs[1].1) * 0.5;
+        let waist = Vec3::new(0.0, self.hip, middle);
         let turn = |p: Vec3, pivot: Vec3, a: f32| {
             let (dy, dz) = (p.y - pivot.y, p.z - pivot.z);
             let (s, c) = a.sin_cos();
@@ -376,6 +396,10 @@ impl Character {
                 }
                 Part::Body => {}
             }
+            if lean != 0.0 {
+                p = turn(p, waist, lean);
+                n = spin(n, lean);
+            }
             // Media vuelta: la espalda hacia la camara.
             out.positions[i] = Vec3::new(-p.x, p.y, -p.z);
             out.normals[i] = Vec3::new(-n.x, n.y, -n.z);
@@ -400,6 +424,8 @@ impl Character {
         }
         // El salto: las rodillas arriba y el brazo adelante.
         meshes.push(self.pose([0.9, 0.5], [1.5, 1.2], 1.0));
+        // Agachado (abajo).
+        meshes.push(self.crouch());
         let meters = HEIGHT / self.height.max(1e-6);
         let jobs: Vec<hornear::Job> = meshes.iter().map(|mesh| hornear::Job { mesh, finish: Finish::Vehicle, yaw: 0.0, elevation, meters, pixels_per_meter: ppm, eye: 0.0, rise: 0.0 }).collect();
         hornear::bake_all(&jobs)
@@ -431,6 +457,28 @@ impl Character {
             .collect();
         hornear::bake_all(&jobs)
     }
+}
+
+/// Meyer de frente y saludando, solo ese cuadro, a `ppm` pixeles por metro
+/// (la bienvenida de Talega Surfers), una vez por tamano.
+pub fn greeter(ppm: f32) -> Option<Arc<Sprite>> {
+    static CACHE: OnceLock<Mutex<HashMap<u32, Option<Arc<Sprite>>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = cache.lock().ok()?;
+    map.entry(ppm.to_bits())
+        .or_insert_with(|| match Character::load(&assets().join("personajes").join("meyer.obj")) {
+            Ok(c) => {
+                let mesh = c.pose([0.0, 0.0], [0.0, 0.0], 0.05);
+                let meters = HEIGHT / c.height.max(1e-6);
+                let job = hornear::Job { mesh: &mesh, finish: Finish::Vehicle, yaw: PI, elevation: 0.02, meters, pixels_per_meter: ppm, eye: 0.0, rise: 0.0 };
+                hornear::bake_all(&[job]).pop().map(Arc::new)
+            }
+            Err(e) => {
+                eprintln!("sin el personaje: {e}");
+                None
+            }
+        })
+        .clone()
 }
 
 /// Meyer de cliente para los shucos (ver `Character::bake_customer`), una
@@ -508,9 +556,14 @@ mod tests {
             let mut sprites = c.bake(0.37, 160.0);
             if yaw != 0.0 {
                 let meters = HEIGHT / c.height;
-                let meshes: Vec<Mesh> = (0..RUN_FRAMES + 1).map(|f| {
+                let meshes: Vec<Mesh> = (0..RUN_FRAMES + 2).map(|f| {
                     let phi = TAU * f as f32 / RUN_FRAMES as f32;
-                    c.pose([0.6 * phi.sin(), -0.6 * phi.sin()], [0.0, 0.0], 0.0)
+                    if f == RUN_FRAMES + 1 {
+                        return c.crouch();
+                    }
+                    let leg = |psi: f32| (0.6 * psi.sin(), 1.1 * (0.5 - 0.5 * (psi + 0.6).cos()).powf(1.5) * if psi.cos() < 0.3 { 1.0 } else { 0.5 });
+                    let ((hl, kl), (hr, kr)) = (leg(phi), leg(phi + PI));
+                    c.pose([hl, hr], [kl, kr], 0.0)
                 }).collect();
                 let jobs: Vec<hornear::Job> = meshes.iter().map(|mesh| hornear::Job { mesh, finish: Finish::Vehicle, yaw, elevation: 0.1, meters, pixels_per_meter: 160.0, eye: 0.0, rise: 0.0 }).collect();
                 sprites = hornear::bake_all(&jobs);
@@ -580,7 +633,10 @@ mod tests {
     #[test]
     fn meyer_bakes_his_frames() {
         let sprites = meyer(0.37, 60.0).expect("los sprites");
-        assert_eq!(sprites.len(), RUN_FRAMES + 1);
+        assert_eq!(sprites.len(), RUN_FRAMES + 2);
+        // Agachado es mas bajito que corriendo.
+        let tall = |s: &Sprite| s.anchor.1 / s.scale;
+        assert!(tall(&sprites[RUN_FRAMES + 1]) < 0.75 * tall(&sprites[0]), "{} {}", tall(&sprites[RUN_FRAMES + 1]), tall(&sprites[0]));
         for s in sprites.iter() {
             let tall = s.height as f32 / s.scale;
             assert!(tall > 1.2 && tall < 2.6, "{tall} m");

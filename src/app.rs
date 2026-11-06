@@ -169,7 +169,7 @@ pub struct Preset {
     pub flare: Option<f64>,
 }
 
-pub const PRESETS: [Preset; 57] = [
+pub const PRESETS: [Preset; 58] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
@@ -823,6 +823,20 @@ pub const PRESETS: [Preset; 57] = [
             altitude: crate::chapin::xela::SITE_VIEW.0,
             back: crate::chapin::xela::SITE_VIEW.1,
             lift: crate::chapin::xela::SITE_VIEW.2,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+        flare: None,
+    },
+    // La parada de N donde se ofrece la carrera (ver `System::chapin_sites`).
+    Preset {
+        name: "65_el_periferico",
+        shot: Shot::Site {
+            body: "Cementerio",
+            altitude: 120.0,
+            back: 90.0,
+            lift: 30.0,
         },
         time: 40.0,
         act: None,

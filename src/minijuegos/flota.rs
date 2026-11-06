@@ -1,11 +1,12 @@
-//! Las naves chapinas como trafico de la Camioneta Surfers: La Mamaneta (las
+//! Las naves chapinas como trafico de Talega Surfers: La Mamaneta (las
 //! camionetas, paradas de espaldas o viniendo de frente) y el Tuk-Tuk Elena,
 //! los mismos modelos de Blender con que se vuela.
 //!
-//! Se hornean una vez (`hornear`), como en la carrera, desde siete rumbos
-//! (de -30 a 30 grados cada 10): en la calle cada una usa el del angulo con
-//! que la ve la camara, `-atan(dx / dz)`. Las de frente se hornean con media
-//! vuelta mas. Los tres colores de las camionetas salen al pegarlas,
+//! Se hornean una vez (`hornear`), derechas en su carril (de espaldas, y
+//! las de frente con media vuelta mas), desde cuatro alturas de vista: de
+//! casi de lado a casi desde arriba. En la calle cada una usa la de la altura
+//! con que la ve la camara, `atan(alto / distancia)`: de cerca y desde los
+//! techos se ve su techo. Los tres colores de las camionetas salen al pegarlas,
 //! permutando los canales del color (rojo, verde, azul -> verde, azul, rojo
 //! -> azul, rojo, verde): un solo horneado da tres pinturas.
 //!
@@ -21,11 +22,8 @@ use super::hornear::{self, Finish, Sprite};
 use crate::math::Vec3;
 use crate::scene::{Mesh, load_vehicle};
 
-/// Los rumbos horneados y cada cuanto.
-pub const YAWS: usize = 7;
-pub const YAW_STEP: f32 = 10.0 * PI / 180.0;
-/// Desde que altura se ven (rad): la camara va a 3 m y las ve de 5 a 60 m.
-pub const ELEVATION: f32 = 0.12;
+/// Las alturas de vista horneadas (rad sobre el horizonte).
+pub const TILTS: [f32; 4] = [0.14, 0.32, 0.55, 0.85];
 /// Lo alto de una camioneta hasta su techo (sin la parrilla) y del tuk-tuk.
 pub const BUS_HEIGHT: f32 = 3.3;
 pub const TUK_HEIGHT: f32 = 2.0;
@@ -40,9 +38,9 @@ pub struct Fleet {
 }
 
 impl Fleet {
-    /// El rumbo horneado mas cercano a `view` (rad).
-    pub fn yaw_index(view: f32) -> usize {
-        ((view / YAW_STEP).round() as i32 + (YAWS / 2) as i32).clamp(0, YAWS as i32 - 1) as usize
+    /// La altura de vista horneada mas cercana a `angle` (rad).
+    pub fn tilt_index(angle: f32) -> usize {
+        (0..TILTS.len()).min_by(|&a, &b| (TILTS[a] - angle).abs().total_cmp(&(TILTS[b] - angle).abs())).unwrap_or(0)
     }
 }
 
@@ -119,16 +117,16 @@ pub fn side(ppm: f32) -> Option<Arc<Side>> {
 fn bake(ppm: f32) -> Result<Fleet, String> {
     let (bus, bus_size) = load("02-la-mamaneta", BUS_HEIGHT)?;
     let (tuk, tuk_size) = load("01-tuk-tuk-elena", TUK_HEIGHT)?;
-    let yaw = |k: usize| (k as f32 - (YAWS / 2) as f32) * YAW_STEP;
     let mut jobs = Vec::new();
     for (mesh, turn) in [(&bus, 0.0), (&bus, PI), (&tuk, 0.0)] {
-        for k in 0..YAWS {
-            jobs.push(hornear::Job { mesh, finish: Finish::Vehicle, yaw: turn + yaw(k), elevation: ELEVATION, meters: 1.0, pixels_per_meter: ppm, eye: 0.0, rise: 0.0 });
+        for tilt in TILTS {
+            jobs.push(hornear::Job { mesh, finish: Finish::Vehicle, yaw: turn, elevation: tilt, meters: 1.0, pixels_per_meter: ppm, eye: 0.0, rise: 0.0 });
         }
     }
+    let n = TILTS.len();
     let mut baked = hornear::bake_all(&jobs);
-    let tuk_back = baked.split_off(2 * YAWS);
-    let bus_front = baked.split_off(YAWS);
+    let tuk_back = baked.split_off(2 * n);
+    let bus_front = baked.split_off(n);
     Ok(Fleet { bus_back: baked, bus_front, tuk_back, bus: bus_size, tuk: tuk_size })
 }
 
@@ -139,16 +137,18 @@ mod tests {
     #[test]
     fn the_fleet_bakes_with_its_sizes() {
         let f = fleet(20.0).expect("la flota");
-        assert_eq!(f.bus_back.len(), YAWS);
-        assert_eq!(f.bus_front.len(), YAWS);
-        assert_eq!(f.tuk_back.len(), YAWS);
+        assert_eq!(f.bus_back.len(), TILTS.len());
+        assert_eq!(f.bus_front.len(), TILTS.len());
+        assert_eq!(f.tuk_back.len(), TILTS.len());
         assert!((f.bus.y - BUS_HEIGHT).abs() < 1e-3);
         assert!(f.bus.z > 7.0 && f.bus.z < 14.0, "largo {}", f.bus.z);
         assert!(f.bus.x > 1.8 && f.bus.x < 3.6, "ancho {}", f.bus.x);
         assert!(f.tuk.z > 2.0 && f.tuk.z < 4.5, "tuk {:?}", f.tuk);
-        assert_eq!(Fleet::yaw_index(0.0), 3);
-        assert_eq!(Fleet::yaw_index(-1.0), 0);
-        assert_eq!(Fleet::yaw_index(0.12), 4);
+        assert_eq!(Fleet::tilt_index(0.0), 0);
+        assert_eq!(Fleet::tilt_index(0.5), 2);
+        assert_eq!(Fleet::tilt_index(1.4), 3);
+        // Desde arriba se ve mas techo: la de arriba es mas alta en la imagen.
+        assert!(f.bus_back[3].height > f.bus_back[0].height);
     }
 
     /// De lado una camioneta es mucho mas larga que alta.

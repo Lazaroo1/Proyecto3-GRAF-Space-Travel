@@ -6,7 +6,7 @@
 //! afuera puede ir un resplandor `exp(-d / alcance)`. Una `Canvas` junta las
 //! figuras de un frame y `paint` las pinta fila por fila (en paralelo, desde
 //! quien la llama), en orden; con profundidad, detras de lo que este mas
-//! cerca. La usan los shucos y la Camioneta Surfers.
+//! cerca. La usan los shucos y Talega Surfers.
 //!
 //! **Volumen**: una figura con `vol` se sombrea como si fuera de barro: su
 //! distancia al borde dice que tan inclinada esta la superficie. A `e`

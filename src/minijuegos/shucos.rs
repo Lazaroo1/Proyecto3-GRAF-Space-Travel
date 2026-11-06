@@ -20,7 +20,7 @@
 //! - **Los ahorros**: lo que se gana en la noche se guarda y alcanza para
 //!   mejoras de la carretilla (plancha de hierro, toldo, ayudante).
 //!
-//! - **Don Meyer** (el personaje de Blender de la Camioneta Surfers) llega
+//! - **Don Meyer** (el personaje de Blender de Talega Surfers) llega
 //!   cada noche a eso de las 8 y cuarto a pedir su shuco, saludando.
 //!
 //! Todo se pinta en CPU. La escena quieta se hornea una vez: lo de lejos (el
@@ -309,7 +309,7 @@ enum Who {
     Senora,
     Bolo,
     Aficionado,
-    /// Don Meyer, el de la Camioneta Surfers.
+    /// Don Meyer, el de Talega Surfers.
     Meyer,
 }
 
@@ -2004,6 +2004,56 @@ impl Shucos {
         self.night.selected = waiting[next];
     }
 
+    /// La guia de abajo: el siguiente paso para el cliente elegido, en
+    /// palabras (lo mismo que haria el piloto automatico, pero diciendolo).
+    fn guide(&self) -> Option<String> {
+        let night = &self.night;
+        let c = night.customers.iter().find(|c| c.slot == night.selected && c.waiting())?;
+        let order = &c.order;
+        let who = c.who.name();
+        let article = |m: Meat| if m.feminine() { "la" } else { "el" };
+        if night.plancha.iter().enumerate().any(|(i, t)| t.is_some_and(|t| doneness(Meat::ALL[i], t) == Done::Burnt)) {
+            return Some("¡Se quemó algo en la plancha! X para tirarlo".to_string());
+        }
+        let Some(bun) = &night.bun else {
+            return Some(format!("Para {who}: apachá 1 para poner el pan en la tabla"));
+        };
+        let mut have = [0u8; 4];
+        for (m, t) in &bun.meats {
+            have[m.index()] += 1;
+            if doneness(*m, *t) != Done::Ready {
+                return Some("Ese shuco tiene carne cruda o quemada: X para tirarlo y empezar otra vez".to_string());
+            }
+        }
+        if (0..4).any(|i| have[i] > order.meats[i]) {
+            return Some("Le pusiste carne de más: X para tirarlo y empezar otra vez".to_string());
+        }
+        for m in Meat::ALL {
+            let i = m.index();
+            if have[i] < order.meats[i] {
+                let k = m.key();
+                return Some(match night.plancha[i] {
+                    None => format!("Apachá {k} para poner {} {} en la plancha", article(m), m.name()),
+                    Some(t) if doneness(m, t) == Done::Raw => format!("Esperá a que la barrita de {} {} se ponga verde…", article(m), m.name()),
+                    Some(_) => format!("¡Lista! Apachá {k} otra vez para pasar {} {} al pan", article(m), m.name()),
+                });
+            }
+        }
+        let missing: Vec<String> = Top::ALL
+            .iter()
+            .filter(|t| bun.tops[t.index()] < order.want[t.index()])
+            .map(|t| {
+                let n = order.want[t.index()] - bun.tops[t.index()];
+                let times = if n > 1 { format!(" ({n} veces)") } else { String::new() };
+                format!("{} {}{times}", t.key().to_ascii_uppercase(), t.name())
+            })
+            .collect();
+        if !missing.is_empty() {
+            return Some(format!("Ahora lo de encima: {}", missing.join(", ")));
+        }
+        Some(format!("¡Ya está! Enter para dárselo a {} (← → para elegir a otro)", who.to_lowercase()))
+    }
+
     /// Lo que haria quien sabe: atender primero al que menos aguanta, poner
     /// a la plancha lo que piden todos, pasar al pan lo que ya esta listo,
     /// echarle lo de encima y entregar.
@@ -2700,6 +2750,7 @@ impl Minigame for Shucos {
                 o.panel(px, py, pw, ph);
                 o.text("Shucos del Reformador", w * 0.5, py + 14.0 * s, Font::Big(50.0 * s), accent, Align::Center);
                 o.text("Una carretilla al pie de la torre, de 7 de la noche a 3 de la mañana", w * 0.5, py + 78.0 * s, Font::Body, dim, Align::Center);
+                o.text("Arriba del mostrador te va diciendo qué apachar en cada paso", w * 0.5, py + 100.0 * s, Font::Small, accent, Align::Center);
                 for i in 0..=SHOP.len() {
                     let y = py + 122.0 * s + i as f32 * 58.0 * s;
                     let chosen = i == self.choice;
@@ -2783,6 +2834,15 @@ impl Minigame for Shucos {
                 }
                 let (tx, ty, _, thy) = lay.board();
                 o.text("X · tirar     ← → · cliente     Enter · entregar", tx, ty + thy + 24.0 * s, Font::Small, cream, Align::Center);
+                // El siguiente paso, en grande, justo arriba del mostrador.
+                if self.screen == Screen::Playing
+                    && let Some(step) = self.guide()
+                {
+                    let gw = 720.0 * s;
+                    let gx = 0.44 * w - 0.5 * gw;
+                    o.panel(gx, lay.counter + 4.0 * s, gw, 34.0 * s);
+                    o.text(step, 0.44 * w, lay.counter + 9.0 * s, Font::Bold, accent, Align::Center);
+                }
                 let (jx, jy) = lay.jar();
                 o.text(format!("Propinas Q{}", self.night.tips), jx, jy + 42.0 * s, Font::Small, dim, Align::Center);
                 for f in &self.night.floaters {

@@ -813,6 +813,12 @@ impl System {
                 });
             }
         }
+        // La carrera del Periferico se ofrece en el aire sobre la capital
+        // (los shucos, abajo en el Reformador): una parada mas de N, arriba
+        // del Reformador y mirando hacia el horizonte, donde pasa el anillo.
+        if let Some(reformador) = sites.iter().find(|s| s.name == "El Reformador").copied() {
+            sites.push(Site { name: "El Periferico", view: (120.0, 90.0, 30.0), ..reformador });
+        }
         sites
     }
 

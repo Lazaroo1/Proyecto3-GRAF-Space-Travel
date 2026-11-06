@@ -1,10 +1,12 @@
-//! Camioneta Surfers (Antigua Guatemala, version chapina): el patojo se baja
+//! Talega Surfers (Antigua Guatemala, version chapina): el patojo se baja
 //! de la nave y corre por la calle del Arco, sobre el empedrado, en tres
 //! carriles.
 //!
-//! - **Lo que hay en la calle**: camionetas paradas (con la escalera de
-//!   atras se sube a la parrilla del techo y se corre encima), camionetas que
-//!   vienen de frente (esas no perdonan), tuk-tuks parados, carretas de
+//! - **Lo que hay en la calle**: camionetas en fila, derechas en su carril
+//!   como un convoy: paradas (por la rampa de tablones que tienen adelante se
+//!   sube corriendo y se corre por los techos de toda la fila, de uno al
+//!   otro; sin rampa, se esquivan) o que vienen de frente (esas no perdonan,
+//!   salvo que se vaya por los techos), tuk-tuks parados, carretas de
 //!   helados (se saltan), lazos de papel picado (se pasan rodando) y
 //!   alfombras de aserrin: si se pisa una, salen los cucuruchos a
 //!   perseguirlo, y si se pisa otra mientras tanto, lo agarran. Los lenes son
@@ -32,6 +34,7 @@ use super::hornear::{Lut, Pick, Sprite};
 use super::lienzo;
 use super::lienzo::{emission, write_emit};
 use super::personaje::{self, RUN_FRAMES};
+use super::sonido;
 use super::posproceso::{self, Posproceso};
 use std::sync::Arc;
 use super::{Align, Font, Keys, Minigame, Overlay, Records};
@@ -45,8 +48,8 @@ const LANE: f32 = 2.2;
 const STREET: f32 = 3.4;
 const WALL: f32 = 4.4;
 /// La camara: cuanto atras y cuanto arriba del patojo.
-const CAM_BACK: f32 = 5.6;
-const CAM_UP: f32 = 3.1;
+const CAM_BACK: f32 = 6.0;
+const CAM_UP: f32 = 4.2;
 /// Gravedad, velocidad del salto y lo que dura una rodada.
 const GRAVITY: f32 = 26.0;
 const JUMP: f32 = 8.6;
@@ -55,6 +58,10 @@ const ROLL: f32 = 0.62;
 /// largo de una camioneta y de un tuk-tuk.
 const ROOF: f32 = flota::BUS_HEIGHT - 0.1;
 const BUS_LEN: f32 = 8.0;
+/// Lo que queda entre dos camionetas de una fila (se pasa corriendo por los
+/// techos) y lo largo de la rampa de tablones que sube al primer techo.
+const BUS_GAP: f32 = 0.5;
+const RAMP_LEN: f32 = 5.0;
 const TUK_LEN: f32 = 2.6;
 /// El sol de la tarde: hacia donde esta (bajo, de la derecha y un poco de
 /// atras, normalizado), su color y el de la luz del cielo (la sombra).
@@ -110,6 +117,9 @@ enum Thing {
     Banner,
     /// Alfombra de aserrin en el suelo (`lanes` dice en que carriles).
     Carpet,
+    /// Rampa de tablones que sube del suelo al techo de una fila de
+    /// camionetas paradas: se sube corriendo.
+    Ramp,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -138,12 +148,18 @@ impl Obstacle {
             Thing::TukTuk => (0.78, 0.0, 1.95),
             Thing::Banner => return (Vec3::new(-WALL, 1.05, self.z), Vec3::new(WALL, 1.65, self.z + 0.12)),
             Thing::Carpet => (1.1, 0.0, 0.0),
+            Thing::Ramp => (1.05, 0.0, ROOF),
         };
         (Vec3::new(x0 - half, y0, self.z), Vec3::new(x1 + half, y1, self.z + self.len))
     }
 
     fn solid(&self) -> bool {
-        self.thing != Thing::Carpet
+        !matches!(self.thing, Thing::Carpet | Thing::Ramp)
+    }
+
+    /// Lo alto de la rampa a la distancia `z` (0 al pie, el techo arriba).
+    fn ramp_height(&self, z: f32) -> f32 {
+        ROOF * ((z - self.z) / self.len).clamp(0.0, 1.0)
     }
 }
 
@@ -257,6 +273,8 @@ enum Sfx {
     Boom,
     Climb,
     Flap,
+    /// El claxon de don Meyer (H).
+    Meyer,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -307,7 +325,7 @@ impl SkyBuf {
     }
 }
 
-/// Lo del suelo de una fila (ver `CamionetaSurfers::ground_row`).
+/// Lo del suelo de una fila (ver `TalegaSurfers::ground_row`).
 struct GroundRow<'a> {
     carpets: Vec<&'a Obstacle>,
     shadows: Vec<(f32, f32)>,
@@ -359,9 +377,13 @@ struct BoxHit {
     x1: f32,
 }
 
-pub struct CamionetaSurfers {
+pub struct TalegaSurfers {
     width: usize,
     height: usize,
+    /// Meyer de frente saludando, para la bienvenida.
+    greeter: Option<Arc<Sprite>>,
+    /// El claxon de don Meyer (las muestras, a la frecuencia del juego).
+    claxon: Arc<Vec<f32>>,
     s: f32,
     focal: f32,
     horizon: f32,
@@ -374,6 +396,9 @@ pub struct CamionetaSurfers {
     bombs: Vec<Bomb>,
     particles: Vec<Particle>,
     gen_z: f32,
+    /// Hasta donde ya hay una fila de camionetas en cada carril: lo que se
+    /// genere despues ahi empieza mas adelante.
+    lane_busy: [f32; 3],
     time: f32,
     lenes: u32,
     chase: f32,
@@ -406,12 +431,14 @@ pub struct CamionetaSurfers {
     step_at: f32,
 }
 
-impl CamionetaSurfers {
+impl TalegaSurfers {
     pub fn new(width: usize, height: usize, records: Records) -> Self {
         let best = records.get(RECORD);
         let mut game = Self {
             width,
             height,
+            greeter: None,
+            claxon: Arc::new(Vec::new()),
             s: height as f32 / 720.0,
             focal: 0.95 * height as f32,
             horizon: 0.36 * height as f32,
@@ -424,6 +451,7 @@ impl CamionetaSurfers {
             bombs: Vec::new(),
             particles: Vec::new(),
             gen_z: 26.0,
+            lane_busy: [0.0; 3],
             time: 0.0,
             lenes: 0,
             chase: 0.0,
@@ -453,6 +481,9 @@ impl CamionetaSurfers {
         // metro de donde corre.
         let elevation = ((CAM_UP - 0.9) / CAM_BACK).atan();
         game.meyer = personaje::meyer(elevation, game.focal / CAM_BACK);
+        // La bienvenida: Meyer de frente, de casi todo el alto de la pantalla.
+        game.greeter = personaje::greeter((0.8 * height as f32 / personaje::HEIGHT).round());
+        game.claxon = Arc::new(claxon());
         // Las naves, a un decimo de la escala de la camara (de cerca se
         // agrandan poco; de lejos van los mips).
         game.fleet = flota::fleet((game.focal / 10.0).round());
@@ -480,6 +511,7 @@ impl CamionetaSurfers {
         self.bombs.clear();
         self.particles.clear();
         self.gen_z = 26.0;
+        self.lane_busy = [0.0; 3];
         self.time = 0.0;
         self.lenes = 0;
         self.chase = 0.0;
@@ -552,7 +584,13 @@ impl CamionetaSurfers {
             }
         }
         let difficulty = (z0 / 1800.0).clamp(0.0, 1.0);
-        let free = (self.random() * 3.0) as usize % 3;
+        let mut free = (self.random() * 3.0) as usize % 3;
+        // El carril libre, de los que no tiene encima una fila de antes.
+        let busy = self.lane_busy;
+        if busy[free] > z0 {
+            free = (0..3).min_by(|&a, &b| busy[a].total_cmp(&busy[b])).unwrap_or(free);
+        }
+        let (first_obstacle, first_coin) = (self.obstacles.len(), self.coins.len());
         let pattern = (self.random() * 5.0) as usize % 5;
         let seed = hash_u32(z0 as u32 ^ 0x5EED);
         let push = |obs: &mut Vec<Obstacle>, thing: Thing, lanes: u8, z: f32, len: f32, v: f32, k: u32| {
@@ -560,21 +598,39 @@ impl CamionetaSurfers {
         };
         match pattern {
             0 => {
-                // Camionetas: paradas (se suben) o de frente.
+                // Camionetas en fila, derechas en su carril: paradas (casi
+                // siempre con su rampa adelante, para subirse corriendo y
+                // seguir por los techos) o de frente (de dos en dos).
                 let mut k = 0;
                 for lane in 0..3 {
-                    if lane == free {
+                    if lane == free || busy[lane] > z0 {
                         continue;
                     }
                     if self.random() < 0.55 + 0.35 * difficulty {
-                        let parked = self.random() < 0.6;
-                        let at = z0 + 2.0 + self.random() * 8.0;
-                        let (thing, v) = if parked { (Thing::Parked, 0.0) } else { (Thing::Bus, 7.0) };
-                        push(&mut self.obstacles, thing, 1 << lane, at, BUS_LEN, v, k);
-                        if parked && self.random() < 0.7 {
-                            self.coin_line(lane_x(lane), ROOF + 0.9, at + 1.5, 6, 1.4);
+                        let parked = self.random() < 0.65;
+                        let count = if parked { 2 + (self.random() * 2.99) as usize } else { 2 };
+                        let mut at = z0 + 2.0 + self.random() * 4.0;
+                        let ramp = parked && self.random() < 0.75;
+                        if ramp {
+                            push(&mut self.obstacles, Thing::Ramp, 1 << lane, at, RAMP_LEN, 0.0, k);
+                            k += 1;
+                            // Lenes subiendo por la rampa.
+                            for i in 0..4 {
+                                let u = (i as f32 + 0.5) / 4.0;
+                                self.coins.push(Coin { x: lane_x(lane), y: 0.9 + ROOF * u, z: at + RAMP_LEN * u, taken: false });
+                            }
+                            at += RAMP_LEN;
                         }
-                        k += 1;
+                        let (thing, v) = if parked { (Thing::Parked, 0.0) } else { (Thing::Bus, 7.0) };
+                        for b in 0..count {
+                            push(&mut self.obstacles, thing, 1 << lane, at + b as f32 * (BUS_LEN + BUS_GAP), BUS_LEN, v, k);
+                            k += 1;
+                        }
+                        let end = at + count as f32 * (BUS_LEN + BUS_GAP);
+                        if parked && (ramp || self.random() < 0.4) {
+                            self.coin_line(lane_x(lane), ROOF + 0.9, at + 1.0, count * 4, 2.1);
+                        }
+                        self.lane_busy[lane] = self.lane_busy[lane].max(end + 2.0);
                     }
                 }
                 self.coin_line(lane_x(free), 0.9, z0 + 4.0, 7, 2.0);
@@ -636,6 +692,35 @@ impl CamionetaSurfers {
                 }
             }
         }
+        self.clear_under(busy, first_obstacle, first_coin);
+    }
+
+    /// Lo de este tramo que cayo encima de una fila de camionetas de antes
+    /// (en su carril y antes de que termine) se quita: lo que va en el suelo
+    /// y los lenes de abajo. Los lazos de papel picado se quedan (pasan
+    /// arriba de los que van por el suelo y abajo de los que van por los
+    /// techos).
+    fn clear_under(&mut self, busy: [f32; 3], first_obstacle: usize, first_coin: usize) {
+        let blocked = |lanes: u8, z: f32| (0..3).any(|l| lanes & (1 << l) != 0 && z < busy[l]);
+        let mut i = first_obstacle;
+        while i < self.obstacles.len() {
+            let o = self.obstacles[i];
+            if o.thing != Thing::Banner && blocked(o.lanes, o.z) {
+                self.obstacles.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+        let mut i = first_coin;
+        while i < self.coins.len() {
+            let c = self.coins[i];
+            let lane = (0..3).min_by(|&a, &b| (lane_x(a) - c.x).abs().total_cmp(&(lane_x(b) - c.x).abs())).unwrap_or(1);
+            if c.y < ROOF && c.z < busy[lane] {
+                self.coins.remove(i);
+            } else {
+                i += 1;
+            }
+        }
     }
 
     fn coin_line(&mut self, x: f32, y: f32, z: f32, n: usize, gap: f32) {
@@ -652,7 +737,7 @@ impl CamionetaSurfers {
         // aire ni rodando).
         let r = &self.run;
         let bob = if r.grounded() && r.roll <= 0.0 && self.screen == Screen::Running { 0.045 * (2.0 * r.phase).sin().abs() } else { 0.0 };
-        Camera { pos: Vec3::new(r.x * 0.6, CAM_UP + bob + r.support * 0.75 + (r.y - r.support) * 0.3, r.z - CAM_BACK), focal: self.focal, cx: w * 0.5, horizon: self.horizon }
+        Camera { pos: Vec3::new(r.x * 0.6, CAM_UP + bob + r.support * 0.6 + (r.y - r.support) * 0.3, r.z - CAM_BACK), focal: self.focal, cx: w * 0.5, horizon: self.horizon }
     }
 
     /// Lo que haria quien sabe: ir por el carril mas libre, saltar las
@@ -662,11 +747,23 @@ impl CamionetaSurfers {
         let mut k = Keys::default();
         let r = &self.run;
         let reach = 14.0 + r.v * 0.6;
+        let high = r.y >= ROOF - 0.45;
+        // Si la fila de la camioneta `bus` tiene su rampa y todavia se puede
+        // tomar desde el carril `lane` (esta adelante, o ya se va en ella).
+        let ramp_for = |lane: usize, bus: &Obstacle| -> bool {
+            let mut start = bus.z;
+            while let Some(p) = self.obstacles.iter().find(|p| p.thing == Thing::Parked && p.lanes == bus.lanes && (p.z + p.len + BUS_GAP - start).abs() < 0.05) {
+                start = p.z;
+            }
+            self.obstacles.iter().any(|p| {
+                p.thing == Thing::Ramp && p.lanes == bus.lanes && (p.z + p.len - start).abs() < 0.05 && (p.z > r.z + 0.5 || (lane == r.lane && r.z >= p.z - 0.5))
+            })
+        };
         // Que tan lejos esta lo primero que mata en cada carril.
         let danger = |lane: usize| -> f32 {
             let mut near = f32::MAX;
             for o in &self.obstacles {
-                if o.lanes & (1 << lane) == 0 || !o.solid() || o.thing == Thing::Banner {
+                if o.lanes & (1 << lane) == 0 || (!o.solid() && o.thing != Thing::Ramp) || o.thing == Thing::Banner {
                     continue;
                 }
                 let ahead = o.z - r.z;
@@ -674,9 +771,12 @@ impl CamionetaSurfers {
                     continue;
                 }
                 let deadly = match o.thing {
-                    // Una parada se sube por atras si se llega de frente a su
-                    // escalera.
-                    Thing::Parked => lane != r.lane || r.y < ROOF - 0.4 && ahead < 0.5,
+                    // Por los techos se sigue; a una fila parada se sube por
+                    // su rampa.
+                    Thing::Parked => !high && !ramp_for(lane, o),
+                    Thing::Bus => !high,
+                    // Meterse de lado a media rampa.
+                    Thing::Ramp => lane != r.lane && !high && o.z < r.z + 1.0,
                     Thing::Cart => ahead < 0.18 * r.v + 0.6,
                     _ => true,
                 };
@@ -784,7 +884,6 @@ impl CamionetaSurfers {
             }
         }
         r.roll = (r.roll - dt).max(0.0);
-        let before_z = r.z;
         r.z += r.v * dt;
         r.phase += dt * r.v * 0.75;
         // Lo que viene de frente avanza hacia atras.
@@ -795,11 +894,27 @@ impl CamionetaSurfers {
         let r = &mut self.run;
         let mut support = 0.0f32;
         for o in &self.obstacles {
-            if matches!(o.thing, Thing::Parked | Thing::Bus) {
-                let (min, max) = o.bounds();
-                if r.x > min.x - 0.2 && r.x < max.x + 0.2 && r.z > min.z && r.z < max.z && r.y >= ROOF - 0.45 {
-                    support = ROOF;
+            let (min, max) = o.bounds();
+            if r.x <= min.x - 0.2 || r.x >= max.x + 0.2 {
+                continue;
+            }
+            match o.thing {
+                // El techo, y el hueco con la que sigue en la fila.
+                Thing::Parked | Thing::Bus => {
+                    if r.z > min.z - BUS_GAP && r.z < max.z + BUS_GAP && r.y >= ROOF - 0.45 {
+                        support = ROOF;
+                    }
                 }
+                // La rampa sube con la distancia.
+                Thing::Ramp => {
+                    if r.z >= min.z && r.z <= max.z {
+                        let h = o.ramp_height(r.z);
+                        if r.y >= h - 0.8 {
+                            support = support.max(h);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         r.support = support;
@@ -835,7 +950,7 @@ impl CamionetaSurfers {
         let r = self.run;
         let (top, bottom) = (r.y + r.height(), r.y);
         let mut hit: Option<&'static str> = None;
-        let mut climb = false;
+        let mut boards = false;
         let mut chased = false;
         for o in &mut self.obstacles {
             let (min, max) = o.bounds();
@@ -860,11 +975,15 @@ impl CamionetaSurfers {
                     if bottom >= ROOF - 0.45 || r.climb > 0.0 {
                         continue;
                     }
-                    let from_back = before_z + 0.3 <= min.z + 0.6 && (r.x - (min.x + max.x) * 0.5).abs() < 0.9;
-                    if o.thing == Thing::Parked && from_back {
-                        climb = true;
-                    } else {
-                        hit = Some(if o.thing == Thing::Bus { "¡Te llevó la camioneta!" } else { "¡Te estrellaste con la camioneta!" });
+                    hit = Some(if o.thing == Thing::Bus { "¡Te llevó la camioneta!" } else { "¡Te estrellaste con la camioneta!" });
+                }
+                Thing::Ramp => {
+                    // Se sube por el pie; de lado, a media rampa, se choca.
+                    if bottom < o.ramp_height(r.z) - 0.8 {
+                        hit = Some("¡Te diste contra la rampa!");
+                    } else if !o.stepped {
+                        o.stepped = true;
+                        boards = true;
                     }
                 }
                 Thing::Cart => {
@@ -879,9 +998,8 @@ impl CamionetaSurfers {
                 }
             }
         }
-        if climb && self.run.climb <= 0.0 && self.run.y < ROOF - 0.45 {
-            self.run.climb = 0.25;
-            self.run.roll = 0.0;
+        // Los tablones suenan al pisar la rampa.
+        if boards {
             self.pending.push(Sfx::Climb);
         }
         if chased {
@@ -1578,10 +1696,69 @@ impl CamionetaSurfers {
                     palette[(k.rem_euclid(5)) as usize]
                 }
             }
-            Thing::Carpet => Vec3::ZERO,
+            Thing::Carpet | Thing::Ramp => Vec3::ZERO,
         };
         (c, glow)
     }
+}
+
+/// La fila `yf` de la bienvenida: la luz calida detras de Meyer y Meyer de
+/// frente (premultiplicado) con los pies en `at`, sobre la imagen ya
+/// terminada.
+fn greet_row(sprite: &Sprite, at: (f32, f32), height: f32, yf: f32, row: &mut [u8], width: usize) {
+    let center = (at.0, at.1 - 0.45 * sprite.height as f32);
+    let reach = 0.42 * height;
+    for x in 0..width {
+        let (dx, dy) = ((x as f32 + 0.5 - center.0) / reach, (yf - center.1) / (1.2 * reach));
+        let glow = (-(dx * dx + dy * dy) * 1.6).exp() * 0.22;
+        if glow > 0.004 {
+            let p = &mut row[x * 4..x * 4 + 4];
+            let c = lienzo::read(p) + Vec3::new(1.0, 0.72, 0.42) * glow;
+            lienzo::write(p, c);
+        }
+    }
+    let v = sprite.anchor.1 + (yf - at.1);
+    if v < 0.0 || v >= sprite.height as f32 {
+        return;
+    }
+    let x0 = ((at.0 - sprite.anchor.0).floor().max(0.0) as usize).min(width);
+    let x1 = ((at.0 + sprite.width as f32 - sprite.anchor.0).ceil().max(0.0) as usize).min(width);
+    for x in x0..x1 {
+        let u = sprite.anchor.0 + (x as f32 + 0.5 - at.0);
+        let s = sprite.sample(u, v);
+        if s[3] <= 0.002 {
+            continue;
+        }
+        let p = &mut row[x * 4..x * 4 + 4];
+        let c = lienzo::read(p) * (1.0 - s[3]) + Vec3::new(s[0], s[1], s[2]) * Vec3::new(1.25, 1.12, 1.0);
+        lienzo::write(p, c);
+    }
+}
+
+/// El claxon de don Meyer: `assets/sonidos/claxon_meyer.wav` si esta; si
+/// no, uno de corneta militar sintetizado (dos notas de cuadrada suavizada,
+/// la segunda mas larga).
+fn claxon() -> Vec<f32> {
+    let dir = {
+        let local = std::path::PathBuf::from("assets");
+        if local.exists() { local } else { std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets") }
+    };
+    if let Some(samples) = sonido::load_wav(&dir.join("sonidos").join("claxon_meyer.wav"), SAMPLE_RATE) {
+        return samples;
+    }
+    let rate = SAMPLE_RATE as f32;
+    (0..(1.4 * rate) as usize)
+        .map(|i| {
+            let t = i as f32 / rate;
+            let (f, start, end) = if t < 0.38 { (392.0, 0.0, 0.38) } else { (523.25, 0.42, 1.4) };
+            if t < start {
+                return 0.0;
+            }
+            let env = ((t - start) / 0.02).min(1.0) * ((end - t) / 0.08).clamp(0.0, 1.0);
+            let wave = (TAU * f * t).sin() + 0.4 * (TAU * 2.0 * f * t).sin() + 0.2 * (TAU * 3.0 * f * t).sin();
+            0.22 * env * wave
+        })
+        .collect()
 }
 
 /// Pega en la fila `yf` un sprite horneado (premultiplicado) con su ancla
@@ -1695,7 +1872,7 @@ fn ray_box(o: Vec3, rx: f32, ry: f32, min: Vec3, max: Vec3) -> Option<(f32, u8)>
     if t0 <= t1 && t0 > 0.05 { Some((t0, face)) } else { None }
 }
 
-impl CamionetaSurfers {
+impl TalegaSurfers {
     /// Si el punto `p` le da el sol: el rayo hacia el sol no choca con las
     /// casas de la derecha (pasa arriba del frente de su alero). Con un poco
     /// de penumbra.
@@ -2190,6 +2367,7 @@ impl CamionetaSurfers {
                 match o.thing {
                     Thing::Cart => items.push((near, 3, i)),
                     Thing::Banner => items.push((near, 4, i)),
+                    Thing::Ramp => items.push((near, 8, i)),
                     _ => {}
                 }
             }
@@ -2221,6 +2399,7 @@ impl CamionetaSurfers {
                     c.disc(x, y, 0.25 * k, Vec3::new(1.0, 0.9, 0.6));
                 }
                 3 => self.cart(&mut c, cam, &self.obstacles[i]),
+                8 => self.ramp(&mut c, cam, &self.obstacles[i]),
                 4 => self.banner(&mut c, cam, self.obstacles[i].z, 0.0, self.obstacles[i].seed),
                 5 => self.walker(&mut c, cam, &self.walkers[i]),
                 7 => self.pigeon(&mut c, cam, &self.pigeons[i]),
@@ -2263,8 +2442,8 @@ impl CamionetaSurfers {
         let m = |v: f32| v * k;
         // Con Meyer, rueda con su guerrera beige y su gorra.
         let (jersey, cap) = if self.meyer.is_some() { (Vec3::new(0.66, 0.6, 0.45), Vec3::new(0.85, 0.82, 0.72)) } else { (jersey, Vec3::new(0.85, 0.12, 0.12)) };
-        if r.roll > 0.0 && r.climb <= 0.0 {
-            // Rodando: hecho bolita.
+        if r.roll > 0.0 && r.climb <= 0.0 && self.meyer.is_none() {
+            // Sin Meyer, el patojo rueda hecho bolita.
             let cy = ground - m(0.42);
             c.disc(x, cy, m(0.42), jersey);
             let a = r.phase * 2.0;
@@ -2335,6 +2514,123 @@ impl CamionetaSurfers {
     /// La carreta de helados: el cajon blanco con sus franjas y su helado
     /// pintado, las llantas, la tapa de lamina, la sombrilla de gajos de
     /// colores y las campanitas.
+    /// La rampa de tablones, de abajo hacia arriba en el orden en que se
+    /// tapan: su sombra en el empedrado (proyectada con la direccion del
+    /// sol), los caballetes que la sostienen (postes y una cruz, del lado que
+    /// da a la camara), los dos largueros pintados de turquesa con su grueso,
+    /// los tablones con sus rendijas, la veta y dos clavos en cada punta (cada
+    /// uno de un tono de madera), la placa de metal del pie con franjas
+    /// amarillas y negras en diagonal y el canto de metal de arriba. Todo con
+    /// la luz del cielo y la del sol segun hacia donde mira cada cara y si le
+    /// da.
+    fn ramp(&self, c: &mut Canvas, cam: &Camera, o: &Obstacle) {
+        let (min, max) = o.bounds();
+        let x = (min.x + max.x) * 0.5;
+        let hw = 1.0;
+        // Lo que queda detras de la camara no se dibuja.
+        let t0 = ((cam.pos.z + 0.4 - o.z) / o.len).clamp(0.0, 1.0);
+        if t0 >= 1.0 {
+            return;
+        }
+        let p = |side: f32, t: f32, dy: f32| cam.project(Vec3::new(x + side * hw, ROOF * t + dy, o.z + o.len * t));
+        let ground = |gx: f32, gz: f32| cam.project(Vec3::new(gx, 0.0, gz));
+        let Some((_, _, k0, d0)) = p(0.0, t0, 0.0) else { return };
+        c.depth = d0;
+        let quad = |c: &mut Canvas, q: [Option<(f32, f32, f32, f32)>; 4], col: Vec3| -> bool {
+            let [Some(a), Some(b), Some(cc), Some(d)] = q else { return false };
+            c.poly(&[(a.0, a.1), (b.0, b.1), (cc.0, cc.1), (d.0, d.1)], col);
+            true
+        };
+        // La luz: el cielo y el sol segun la normal de cada cara.
+        let sun = Self::sunlit(Vec3::new(x, 1.6, o.z + 0.5 * o.len));
+        let lit = |n: Vec3| SKY_LIGHT * 1.15 + SUN * (0.8 * n.dot(SUN_DIR).max(0.0) * sun);
+        let slope = (ROOF / o.len).atan();
+        let top_light = lit(Vec3::new(0.0, slope.cos(), -slope.sin()));
+        let side = if x > cam.pos.x { -1.0f32 } else { 1.0 };
+        let side_light = lit(Vec3::new(side, 0.0, 0.0));
+        // La sombra: cada punto alto cae `h / L.y` corrido contra el sol.
+        let (sx, sz) = (-SUN_DIR.x / SUN_DIR.y, -SUN_DIR.z / SUN_DIR.y);
+        let z1 = o.z + o.len;
+        let foot_z = o.z.max(cam.pos.z + 0.4);
+        let shadow = [ground(x - hw, foot_z), ground(x + hw, foot_z), ground(x + hw + sx * ROOF, z1 + sz * ROOF), ground(x - hw + sx * ROOF, z1 + sz * ROOF)];
+        if let [Some(a), Some(b), Some(cc), Some(d)] = shadow {
+            c.poly(&[(a.0, a.1), (b.0, b.1), (cc.0, cc.1), (d.0, d.1)], Vec3::ZERO).alpha(0.38 * sun).soft(0.15 * k0);
+        }
+        // Los caballetes: dos postes a cada lado y una cruz entre ellos.
+        let post = Vec3::new(0.3, 0.2, 0.12) * side_light;
+        for t in [0.48f32, 0.97] {
+            if t <= t0 {
+                continue;
+            }
+            for s in [-1.0f32, 1.0] {
+                if let (Some(a), Some(b)) = (ground(x + s * (hw - 0.12), o.z + o.len * t), p(s * 0.88, t, -0.12)) {
+                    c.line(a.0, a.1, b.0, b.1, (0.06 * a.2).max(0.7), post * if s == side { 1.0 } else { 0.6 });
+                }
+            }
+        }
+        if 0.48 > t0 {
+            let near = |t: f32, dy: f32| cam.project(Vec3::new(x + side * (hw - 0.1), ROOF * t + dy, o.z + o.len * t));
+            if let (Some(a), Some(b), Some(cc), Some(d)) = (near(0.48, -ROOF * 0.48 + 0.05), near(0.97, -0.15), near(0.48, -0.15), near(0.97, -ROOF * 0.97 + 0.05)) {
+                c.line(a.0, a.1, b.0, b.1, (0.035 * a.2).max(0.6), post * 0.9);
+                c.line(cc.0, cc.1, d.0, d.1, (0.035 * cc.2).max(0.6), post * 0.9);
+            }
+        }
+        // Los largueros: la cara de lado (con su grueso) y la de arriba.
+        let paint = Vec3::new(0.07, 0.42, 0.45);
+        quad(c, [p(side, t0, 0.04), p(side, 1.0, 0.04), p(side, 1.0, -0.26), p(side, t0, -0.26)], paint * side_light * 0.9);
+        // Debajo de los tablones, la sombra que se ve por las rendijas.
+        quad(c, [p(-0.95, t0, -0.03), p(0.95, t0, -0.03), p(0.95, 1.0, -0.03), p(-0.95, 1.0, -0.03)], Vec3::new(0.06, 0.04, 0.03));
+        // Los tablones, con rendijas entre ellos.
+        let planks = 12;
+        let tones = [Vec3::new(0.62, 0.42, 0.24), Vec3::new(0.55, 0.36, 0.2), Vec3::new(0.68, 0.48, 0.28), Vec3::new(0.5, 0.33, 0.19)];
+        for i in 0..planks {
+            let (ta, tb) = (i as f32 / planks as f32, (i as f32 + 0.86) / planks as f32);
+            if tb <= t0 {
+                continue;
+            }
+            let ta = ta.max(t0);
+            let h = hash_u32(o.seed ^ (i as u32).wrapping_mul(0x9E37));
+            let wood = tones[(h % 4) as usize] * (0.92 + 0.16 * ((h >> 4) % 64) as f32 / 64.0) * top_light;
+            if !quad(c, [p(-0.92, ta, 0.0), p(0.92, ta, 0.0), p(0.92, tb, 0.0), p(-0.92, tb, 0.0)], wood) {
+                continue;
+            }
+            // La veta y los clavos.
+            let tm = 0.5 * (ta + tb);
+            for (u, dv) in [(-0.6f32, 0.25f32), (0.15, 0.6), (0.55, 0.35)] {
+                let tv = ta + (tb - ta) * dv;
+                if let (Some(a), Some(b)) = (p(u - 0.3, tv, 0.0), p(u + 0.3, tv, 0.0)) {
+                    c.line(a.0, a.1, b.0, b.1, (0.008 * a.2).max(0.4), wood * 0.72).alpha(0.6);
+                }
+            }
+            for s in [-0.82f32, 0.82] {
+                if let Some(nail) = p(s, tm, 0.005) {
+                    c.disc(nail.0, nail.1, (0.025 * nail.2).max(0.6), Vec3::new(0.2, 0.2, 0.22) * top_light).gloss(0.6);
+                }
+            }
+        }
+        // Los largueros por arriba (encima de las puntas de los tablones).
+        for s in [-1.0f32, 1.0] {
+            quad(c, [p(s * 0.9, t0, 0.04), p(s * 1.02, t0, 0.04), p(s * 1.02, 1.0, 0.04), p(s * 0.9, 1.0, 0.04)], paint * top_light * if s == side { 1.0 } else { 0.85 });
+        }
+        // La placa del pie: franjas amarillas y negras en diagonal.
+        if t0 < 0.04 {
+            let n = 7;
+            for s in 0..n {
+                let (u0, u1) = (-0.98 + 1.96 * s as f32 / n as f32, -0.98 + 1.96 * (s + 1) as f32 / n as f32);
+                let lean = 0.12;
+                let col = if s % 2 == 0 { Vec3::new(0.98, 0.76, 0.08) } else { Vec3::new(0.05, 0.05, 0.05) };
+                quad(c, [p(u0, 0.0, 0.0), p(u1, 0.0, 0.0), p(u1 + lean, 0.07, 0.0), p(u0 + lean, 0.07, 0.0)], col * top_light);
+            }
+            if let (Some(a), Some(b)) = (p(-0.98, 0.0, 0.0), p(0.98, 0.0, 0.0)) {
+                c.line(a.0, a.1, b.0, b.1, (0.02 * a.2).max(0.6), Vec3::new(0.75, 0.76, 0.78) * top_light).gloss(0.8);
+            }
+        }
+        // El canto de metal de arriba, donde empieza el techo.
+        if let (Some(a), Some(b)) = (p(-0.98, 1.0, 0.0), p(0.98, 1.0, 0.0)) {
+            c.line(a.0, a.1, b.0, b.1, (0.03 * a.2).max(0.6), Vec3::new(0.7, 0.72, 0.75) * top_light).gloss(0.8);
+        }
+    }
+
     fn cart(&self, c: &mut Canvas, cam: &Camera, o: &Obstacle) {
         let (min, max) = o.bounds();
         let x = (min.x + max.x) * 0.5;
@@ -2552,7 +2848,7 @@ impl CamionetaSurfers {
     }
 }
 
-impl Minigame for CamionetaSurfers {
+impl Minigame for TalegaSurfers {
     fn update(&mut self, dt: f64, keys: &Keys) {
         let dt = (dt as f32).min(0.05);
         self.wall += dt;
@@ -2567,6 +2863,12 @@ impl Minigame for CamionetaSurfers {
         } else {
             *keys
         };
+        // H: el claxon de don Meyer (vuelve a empezar si ya sonaba).
+        if keys.horn {
+            self.voices.retain(|v| v.sfx != Sfx::Meyer);
+            self.pending.retain(|s| *s != Sfx::Meyer);
+            self.pending.push(Sfx::Meyer);
+        }
         match self.screen {
             Screen::Menu => {
                 if keys.escape {
@@ -2610,6 +2912,7 @@ impl Minigame for CamionetaSurfers {
 
     fn audio(&mut self, out: &mut [f32]) {
         let rate = SAMPLE_RATE as f32;
+        let claxon = Arc::clone(&self.claxon);
         for sfx in self.pending.drain(..) {
             self.voices.push(Voice { sfx, n: 0 });
         }
@@ -2652,11 +2955,13 @@ impl Minigame for CamionetaSurfers {
                     Sfx::Boom => (n * 0.5 + 0.6 * (TAU * (50.0 - 20.0 * t) * t).sin()) * (-t * 3.0).exp(),
                     Sfx::Climb => n * 0.1 * ((t * 30.0).fract() < 0.3) as u8 as f32 * (t < 0.25) as u8 as f32,
                     Sfx::Flap => n * 0.16 * (0.5 + 0.5 * (TAU * 14.0 * t).sin()).powi(3) * (1.0 - t / 0.9).max(0.0),
+                    Sfx::Meyer => claxon.get(v.n as usize - 1).copied().unwrap_or(0.0) * 0.9,
                 };
             }
-            self.voices.retain(|v| {
-                let t = v.n as f32 / rate;
-                t < if v.sfx == Sfx::Whistle { WARNING } else { 1.2 }
+            self.voices.retain(|v| match v.sfx {
+                Sfx::Meyer => (v.n as usize) < claxon.len(),
+                Sfx::Whistle => (v.n as f32 / rate) < WARNING,
+                _ => (v.n as f32 / rate) < 1.2,
             });
             *sample = x / (1.0 + 0.5 * x.abs());
         }
@@ -2696,9 +3001,16 @@ impl Minigame for CamionetaSurfers {
         // pantalla, su escala y su profundidad.
         let r = self.run;
         let runner = match (&self.meyer, cam.project(Vec3::new(r.x, r.y, r.z))) {
-            (Some(sprites), Some((x, ground, k, d))) if r.roll <= 0.0 || r.climb > 0.0 => {
+            (Some(sprites), Some((x, ground, k, d))) => {
                 let air = r.y > r.support + 0.05 || r.climb > 0.0;
-                let frame = if air { RUN_FRAMES } else { ((r.phase / TAU).rem_euclid(1.0) * RUN_FRAMES as f32) as usize % RUN_FRAMES };
+                // Agachado (abajo), en el aire (el salto) o corriendo.
+                let frame = if r.roll > 0.0 && r.climb <= 0.0 {
+                    RUN_FRAMES + 1
+                } else if air {
+                    RUN_FRAMES
+                } else {
+                    ((r.phase / TAU).rem_euclid(1.0) * RUN_FRAMES as f32) as usize % RUN_FRAMES
+                };
                 sprites.get(frame).map(|s| (s, (x, ground), k / s.scale, d))
                     .map(|(s, at, scale, d)| (s, at, scale, d, Self::sunlit(Vec3::new(r.x, r.y + 1.0, r.z))))
             }
@@ -2724,8 +3036,10 @@ impl Minigame for CamionetaSurfers {
                 if d > AHEAD + 30.0 || o.z + o.len < cam.pos.z + 0.5 {
                     continue;
                 }
-                let view = -((x - cam.pos.x) / d).atan();
-                let Some(sprite) = set.get(Fleet::yaw_index(view)) else { continue };
+                // Derechas en su carril, vistas desde la altura con que las
+                // ve la camara (de cerca y desde los techos, el techo).
+                let tilt = ((cam.pos.y - 1.6).max(0.0) / d.max(0.5)).atan();
+                let Some(sprite) = set.get(Fleet::tilt_index(tilt)) else { continue };
                 let scale = k / sprite.scale;
                 let lod = ((1.0 / scale).log2() - 0.5).max(0.0);
                 let near = (d - len * 0.5).max(0.3);
@@ -2796,7 +3110,18 @@ impl Minigame for CamionetaSurfers {
             ..Default::default()
         };
         self.post.prepare(sums, &params);
-        self.post.compose(rgba, &params, |_, _| {});
+        // La bienvenida: Meyer de frente saludando, encima de la calle
+        // oscurecida, con una luz calida detras.
+        let greet = match (&self.greeter, self.screen) {
+            (Some(sprite), Screen::Menu) => Some((sprite.as_ref(), 0.27 * width as f32, 0.99 * self.height as f32 + 3.0 * self.s * (self.wall * 1.7).sin())),
+            _ => None,
+        };
+        let height = self.height as f32;
+        self.post.compose(rgba, &params, |y, row| {
+            if let Some((sprite, x, feet)) = greet {
+                greet_row(sprite, (x, feet), height, y as f32 + 0.5, row, width);
+            }
+        });
     }
 
     fn overlay(&self) -> Overlay {
@@ -2808,28 +3133,34 @@ impl Minigame for CamionetaSurfers {
         let accent = [255, 204, 120, 255];
         match self.screen {
             Screen::Menu => {
-                let (pw, ph) = (640.0 * s, 390.0 * s);
-                let (px, py) = ((w - pw) * 0.5, 80.0 * s);
+                // La bienvenida: Meyer a la izquierda (se dibuja con el
+                // frame) y el panel a la derecha.
+                let (pw, ph) = (600.0 * s, 470.0 * s);
+                let (px, py) = (w - pw - 40.0 * s, 60.0 * s);
+                let cx = px + pw * 0.5;
                 o.panel(px, py, pw, ph);
-                o.text("Camioneta Surfers", w * 0.5, py + 14.0 * s, Font::Big(50.0 * s), accent, Align::Center);
-                o.text("Antigua Guatemala  ·  la calle del Arco, con el Fuego explotando", w * 0.5, py + 78.0 * s, Font::Body, dim, Align::Center);
+                o.text("¡Bienvenido a", cx, py + 16.0 * s, Font::Heading, dim, Align::Center);
+                o.text("Talega Surfers!", cx, py + 46.0 * s, Font::Big(52.0 * s), accent, Align::Center);
+                o.text("Don Meyer te saluda. Antigua Guatemala, la calle del Arco,", cx, py + 112.0 * s, Font::Body, dim, Align::Center);
+                o.text("y el Fuego explotando atrás.", cx, py + 136.0 * s, Font::Body, dim, Align::Center);
                 let lines = [
-                    "← →: carril   ·   ↑: saltar   ·   ↓: rodar (en el aire, baja de golpe)",
-                    "Subite a las camionetas paradas por la escalera de atrás",
+                    "← →: carril   ·   ↑: saltar   ·   ↓: rodar",
+                    "H: el claxon de don Meyer",
+                    "Subite por las rampas y corré por los techos de las camionetas",
                     "Las que vienen de frente no perdonan; las carretas se saltan",
                     "Los lazos de papel picado se pasan rodando",
                     "No pisés las alfombras de aserrín: te persiguen los cucuruchos",
                     "Mirá la sombra de las bombas del Fuego antes de que caigan",
                 ];
                 for (i, line) in lines.iter().enumerate() {
-                    o.text(*line, w * 0.5, py + 120.0 * s + i as f32 * 30.0 * s, Font::Body, cream, Align::Center);
+                    o.text(*line, cx, py + 178.0 * s + i as f32 * 30.0 * s, Font::Body, cream, Align::Center);
                 }
                 let best = match self.best {
                     Some(b) => format!("Récord: {b} puntos"),
                     None => "Todavía no hay récord".to_string(),
                 };
-                o.text(best, w * 0.5, py + ph - 66.0 * s, Font::Bold, accent, Align::Center);
-                o.text("Enter: correr   ·   Esc: salir", w * 0.5, py + ph - 34.0 * s, Font::Small, cream, Align::Center);
+                o.text(best, cx, py + ph - 66.0 * s, Font::Bold, accent, Align::Center);
+                o.text("Enter: correr   ·   Esc: salir", cx, py + ph - 34.0 * s, Font::Small, cream, Align::Center);
             }
             Screen::Running | Screen::Over => {
                 o.panel(16.0 * s, 16.0 * s, 210.0 * s, 92.0 * s);
@@ -2873,7 +3204,7 @@ impl Minigame for CamionetaSurfers {
 mod tests {
     use super::*;
 
-    fn run_for(g: &mut CamionetaSurfers, seconds: f32) {
+    fn run_for(g: &mut TalegaSurfers, seconds: f32) {
         let mut t = 0.0;
         while t < seconds && g.running() {
             g.update(1.0 / 60.0, &Keys::default());
@@ -2887,19 +3218,37 @@ mod tests {
     #[ignore = "guarda una foto"]
     fn dump_street() {
         let (w, h) = (1280, 720);
-        let mut g = CamionetaSurfers::new(w, h, Records::in_memory());
+        let mut g = TalegaSurfers::new(w, h, Records::in_memory());
         g.start();
         g.obstacles.clear();
         g.coins.clear();
         g.gen_z = 1e9;
         let mut put = |thing: Thing, lane: usize, z: f32, len: f32, seed: u32| g.obstacles.push(Obstacle { thing, lanes: 1 << lane, z, len, v: 0.0, seed, stepped: false });
-        put(Thing::Parked, 1, 9.0, 11.0, 7);
-        put(Thing::Bus, 0, 22.0, 11.0, 12);
+        // Una fila parada con su rampa en medio, una que viene de frente a la
+        // izquierda y un tuk-tuk y una carreta a la derecha.
+        put(Thing::Ramp, 1, 7.0, RAMP_LEN, 7);
+        for b in 0..3 {
+            put(Thing::Parked, 1, 7.0 + RAMP_LEN + b as f32 * (BUS_LEN + BUS_GAP), BUS_LEN, 7 + b);
+        }
+        for b in 0..2 {
+            put(Thing::Bus, 0, 26.0 + b as f32 * (BUS_LEN + BUS_GAP), BUS_LEN, 12 + b);
+        }
         put(Thing::TukTuk, 2, 12.0, 2.6, 3);
         put(Thing::Cart, 2, 30.0, 1.0, 5);
         g.obstacles.push(Obstacle { thing: Thing::Banner, lanes: 0b111, z: 40.0, len: 0.12, v: 0.0, seed: 9, stepped: false });
         let mut rgba = vec![0u8; w * h * 4];
         g.draw(&mut rgba);
+        // Tambien subiendo la rampa y corriendo por los techos.
+        for (name, until) in [("surfers_rampa.png", 7.5f32), ("surfers_techos.png", 16.0)] {
+            while g.run.z < until && g.running() {
+                g.update(1.0 / 60.0, &Keys::default());
+            }
+            let mut frame = vec![0u8; w * h * 4];
+            g.draw(&mut frame);
+            let path = std::env::temp_dir().join(name);
+            crate::render::png::write_rgba(&path, w as u32, h as u32, &frame).expect("png");
+            println!("{} y {:.2}", path.display(), g.run.y);
+        }
         let path = std::env::temp_dir().join("surfers_calle.png");
         crate::render::png::write_rgba(&path, w as u32, h as u32, &rgba).expect("png");
         println!("{}", path.display());
@@ -2911,7 +3260,7 @@ mod tests {
     #[ignore = "mide tiempos"]
     fn bench_surfers() {
         let (w, h) = (1280, 720);
-        let mut g = CamionetaSurfers::new(w, h, Records::in_memory());
+        let mut g = TalegaSurfers::new(w, h, Records::in_memory());
         g.start();
         g.set_autopilot(true);
         run_for(&mut g, 14.0);
@@ -2984,7 +3333,7 @@ mod tests {
 
     #[test]
     fn every_chunk_leaves_a_lane_free() {
-        let mut g = CamionetaSurfers::new(160, 90, Records::in_memory());
+        let mut g = TalegaSurfers::new(160, 90, Records::in_memory());
         for _ in 0..40 {
             g.gen_z += CHUNK;
             let z0 = g.gen_z;
@@ -3000,7 +3349,7 @@ mod tests {
     /// a una camioneta parada deja al patojo en el techo.
     #[test]
     fn jumping_clears_the_cart_and_parked_buses_are_climbed() {
-        let mut g = CamionetaSurfers::new(160, 90, Records::in_memory());
+        let mut g = TalegaSurfers::new(160, 90, Records::in_memory());
         g.start();
         g.obstacles.clear();
         g.gen_z = 1e9;
@@ -3024,18 +3373,33 @@ mod tests {
         }
         assert!(g.running(), "saltando pasa: {}", g.reason);
 
+        // Sin rampa, una parada choca; por la rampa se sube y se corre por
+        // los techos de toda la fila.
         g.start();
         g.obstacles.clear();
         g.gen_z = 1e9;
-        g.obstacles.push(Obstacle { thing: Thing::Parked, lanes: 0b010, z: 6.0, len: 11.0, v: 0.0, seed: 3, stepped: false });
-        run_for(&mut g, 0.9);
+        g.obstacles.push(Obstacle { thing: Thing::Parked, lanes: 0b010, z: 6.0, len: BUS_LEN, v: 0.0, seed: 3, stepped: false });
+        run_for(&mut g, 1.0);
+        assert!(!g.running(), "sin rampa choca");
+
+        g.start();
+        g.obstacles.clear();
+        g.gen_z = 1e9;
+        g.obstacles.push(Obstacle { thing: Thing::Ramp, lanes: 0b010, z: 6.0, len: RAMP_LEN, v: 0.0, seed: 3, stepped: false });
+        for b in 0..3 {
+            g.obstacles.push(Obstacle { thing: Thing::Parked, lanes: 0b010, z: 6.0 + RAMP_LEN + b as f32 * (BUS_LEN + BUS_GAP), len: BUS_LEN, v: 0.0, seed: 3, stepped: false });
+        }
+        run_for(&mut g, 1.0);
         assert!(g.running(), "{}", g.reason);
         assert!((g.run.y - ROOF).abs() < 0.05, "en el techo: {}", g.run.y);
+        run_for(&mut g, 1.2);
+        assert!(g.running(), "{}", g.reason);
+        assert!((g.run.y - ROOF).abs() < 0.05, "sigue por los techos: {} en z {}", g.run.y, g.run.z);
     }
 
     #[test]
     fn a_second_carpet_while_chased_gets_you_caught() {
-        let mut g = CamionetaSurfers::new(160, 90, Records::in_memory());
+        let mut g = TalegaSurfers::new(160, 90, Records::in_memory());
         g.start();
         g.obstacles.clear();
         g.gen_z = 1e9;
@@ -3051,7 +3415,7 @@ mod tests {
     /// Con el piloto automatico corre un buen rato y junta lenes.
     #[test]
     fn the_autopilot_runs_far() {
-        let mut g = CamionetaSurfers::new(160, 90, Records::in_memory());
+        let mut g = TalegaSurfers::new(160, 90, Records::in_memory());
         g.start();
         g.set_autopilot(true);
         run_for(&mut g, 60.0);
@@ -3063,9 +3427,9 @@ mod tests {
     #[test]
     fn every_screen_draws_and_its_text_has_glyphs() {
         let (w, h) = (320, 180);
-        let mut g = CamionetaSurfers::new(w, h, Records::in_memory());
+        let mut g = TalegaSurfers::new(w, h, Records::in_memory());
         let mut rgba = vec![0u8; w * h * 4];
-        let mut check = |g: &mut CamionetaSurfers| {
+        let mut check = |g: &mut TalegaSurfers| {
             rgba.fill(0);
             g.draw(&mut rgba);
             assert!(rgba.chunks_exact(4).all(|p| p[3] == 255));
