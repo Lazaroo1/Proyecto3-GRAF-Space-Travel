@@ -11,6 +11,7 @@ use crate::audio::AudioParams;
 use crate::config;
 use crate::math::blackbody::planckian_rgb;
 use crate::math::geodesic::LensTable;
+use crate::math::neutron::NeutronLens;
 use crate::math::{DMat3, DMat4, DQuat, DVec3, Vec3, hash_u32, smoothing, smoothstep};
 use crate::render::shadow::ShadowMap;
 use crate::render::transition::{self, Toward};
@@ -18,6 +19,7 @@ use crate::render::{Draw, Particle, Renderer, Ripple, Stats, View};
 use crate::scene::camera::{Camera, CameraMode};
 use crate::scene::cycle::{self, CycleState, Timeline};
 use crate::scene::effects::{self, EXHAUST_COUNT, SPORE_COUNT};
+use crate::scene::faro;
 use crate::scene::props::{self, Instance, PropKind, PropSet, PropStats, PropView};
 use crate::scene::ship::{self, Controls, FlightInfo, FlightSettings, ShipState};
 use crate::scene::trajectory::{self, Prediction};
@@ -122,6 +124,35 @@ pub enum Shot {
     },
 }
 
+/// En que va la gran llamarada de Faro.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlarePhase {
+    Ready,
+    Twisting,
+    Fireball,
+}
+
+/// Los numeros de Faro para el HUD.
+#[derive(Clone, Copy, Debug)]
+pub struct FaroReadout {
+    pub distance: f64,
+    pub period: f64,
+    pub pdot: f64,
+    pub field: f64,
+    pub age_years: f64,
+    pub edot: f64,
+    pub light_cylinder_km: f64,
+    pub compactness: f64,
+    pub twist: f64,
+    pub critical_twist: f64,
+    pub cap_degrees: f64,
+    pub cap_temperature: f64,
+    pub crust_temperature: f64,
+    pub storm: f64,
+    pub flare: FlarePhase,
+    pub fireball: f64,
+}
+
 /// Una vista fija con nombre, para capturas y para el benchmark, en un
 /// instante del ciclo.
 #[derive(Clone, Copy, Debug)]
@@ -133,15 +164,19 @@ pub struct Preset {
     pub act: Option<f64>,
     /// Si se ve en la version chapina.
     pub chapin: bool,
+    /// Segundos desde que se pidio la gran llamarada de Faro (`None`: no se
+    /// ha pedido).
+    pub flare: Option<f64>,
 }
 
-pub const PRESETS: [Preset; 52] = [
+pub const PRESETS: [Preset; 58] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "02_pira",
@@ -154,6 +189,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "03_pira_noche",
@@ -166,6 +202,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "04_jardin",
@@ -178,6 +215,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "05_jardin_superficie",
@@ -190,6 +228,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "06_vigia",
@@ -202,6 +241,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "07_argos",
@@ -214,18 +254,20 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
-        name: "08_cementerio",
+        name: "08_faro",
         shot: Shot::Orbit {
-            body: "Cementerio",
-            distance: 4.2,
+            body: "Faro",
+            distance: 45.0,
             azimuth: 0.9,
-            elevation: 0.7,
+            elevation: 0.35,
         },
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "09_nave",
@@ -233,6 +275,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "10_ojos",
@@ -245,6 +288,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "11_hongos",
@@ -257,6 +301,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "12_espinas",
@@ -269,18 +314,20 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
-        name: "13_naufragio",
-        shot: Shot::Landmark {
-            body: "Cementerio",
-            kind: PropKind::Wreck,
-            distance: 40.0,
-            sun: 0.35,
+        name: "13_estrella_de_neutrones",
+        shot: Shot::Orbit {
+            body: "Faro",
+            distance: 3.2,
+            azimuth: 2.2,
+            elevation: 0.25,
         },
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "14_cola",
@@ -288,6 +335,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "15_trayectoria",
@@ -299,18 +347,20 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "16_arritmia",
         shot: Shot::Orbit {
             body: "Pira",
-            distance: 3.4,
-            azimuth: 0.3,
+            distance: 3.0,
+            azimuth: 0.6,
             elevation: 0.25,
         },
         time: 700.0,
         act: Some(16.0),
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "17_colapso",
@@ -318,6 +368,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 725.2,
         act: Some(25.2),
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "17_onda_gravitacional",
@@ -325,6 +376,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 726.6,
         act: Some(30.6),
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "18_gargantua",
@@ -332,6 +384,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 830.0,
         act: Some(134.0),
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "19_gargantua_jardin",
@@ -339,6 +392,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 830.0,
         act: Some(134.0),
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "20_jardin_noche_eterna",
@@ -351,6 +405,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 850.0,
         act: Some(154.0),
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "22_agonia",
@@ -358,6 +413,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "23_jardin_biopunk",
@@ -365,6 +421,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "25_estertor",
@@ -372,18 +429,20 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: Some(17.0),
         chapin: false,
+        flare: None,
     },
     Preset {
-        name: "26_baliza",
-        shot: Shot::Site {
-            body: "Cementerio",
-            altitude: 18.0,
-            back: 70.0,
-            lift: 0.0,
+        name: "26_haces",
+        shot: Shot::Orbit {
+            body: "Faro",
+            distance: 140.0,
+            azimuth: 1.6,
+            elevation: 0.5,
         },
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "27_geiseres",
@@ -396,6 +455,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "28_nido",
@@ -408,6 +468,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "33_iris",
@@ -420,6 +481,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "32_espejo",
@@ -432,6 +494,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "29_ojo_cerca",
@@ -444,6 +507,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "30_comida",
@@ -451,6 +515,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 830.0,
         act: Some(44.0),
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "31_digestion",
@@ -458,6 +523,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 830.0,
         act: Some(62.0),
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "24_el_ojo",
@@ -465,6 +531,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 835.0,
         act: Some(139.0),
         chapin: false,
+        flare: None,
     },
     Preset {
         name: "40_chapin",
@@ -472,6 +539,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "41_fuego",
@@ -484,6 +552,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "42_antigua",
@@ -496,6 +565,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "43_peten",
@@ -508,6 +578,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "44_tikal",
@@ -520,6 +591,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "45_atitlan",
@@ -532,6 +604,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "46_panajachel",
@@ -544,6 +617,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "47_semuc",
@@ -556,6 +630,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "48_cuchumatanes",
@@ -568,6 +643,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "49_xecul",
@@ -580,6 +656,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "50_xela",
@@ -592,6 +669,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "51_capital",
@@ -604,6 +682,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "52_reformador",
@@ -616,6 +695,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "53_kinich",
@@ -623,6 +703,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "55_botella",
@@ -630,6 +711,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "56_columna_de_ceniza",
@@ -642,6 +724,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "57_mercado_de_xecul",
@@ -654,6 +737,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "58_torres_de_la_capital",
@@ -666,6 +750,7 @@ pub const PRESETS: [Preset; 52] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
     },
     Preset {
         name: "59_vigia_de_noche",
@@ -678,12 +763,97 @@ pub const PRESETS: [Preset; 52] = [
         time: 41.3,
         act: None,
         chapin: false,
+        flare: None,
+    },
+    Preset {
+        name: "60_faro_torsion",
+        shot: Shot::Orbit {
+            body: "Faro",
+            distance: 140.0,
+            azimuth: 1.6,
+            elevation: 0.5,
+        },
+        time: 40.0,
+        act: None,
+        chapin: false,
+        flare: Some(7.0),
+    },
+    Preset {
+        name: "61_faro_llamarada",
+        shot: Shot::Orbit {
+            body: "Faro",
+            distance: 140.0,
+            azimuth: 1.6,
+            elevation: 0.5,
+        },
+        time: 40.0,
+        act: None,
+        chapin: false,
+        flare: Some(8.12),
+    },
+    Preset {
+        name: "62_faro_bola_de_fuego",
+        shot: Shot::Orbit {
+            body: "Faro",
+            distance: 9.0,
+            azimuth: 2.2,
+            elevation: 0.3,
+        },
+        time: 40.0,
+        act: None,
+        chapin: false,
+        flare: Some(30.0),
+    },
+    Preset {
+        name: "63_el_faro",
+        shot: Shot::Site {
+            body: "Faro",
+            altitude: 384.0,
+            back: 216.0,
+            lift: -120.0,
+        },
+        time: 40.0,
+        act: None,
+        chapin: false,
+        flare: None,
+    },    Preset {
+        name: "64_la_marimba",
+        shot: Shot::Site {
+            body: "Xela",
+            altitude: crate::chapin::xela::SITE_VIEW.0,
+            back: crate::chapin::xela::SITE_VIEW.1,
+            lift: crate::chapin::xela::SITE_VIEW.2,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+        flare: None,
+    },
+    // La parada de N donde se ofrece la carrera (ver `System::chapin_sites`).
+    Preset {
+        name: "65_el_periferico",
+        shot: Shot::Site {
+            body: "Cementerio",
+            altitude: 120.0,
+            back: 90.0,
+            lift: 30.0,
+        },
+        time: 40.0,
+        act: None,
+        chapin: true,
+        flare: None,
     },
 ];
 
 pub struct App {
     pub system: System,
+    /// El renderer del frame. Con la resolucion dinamica, mientras la imagen
+    /// se mueve, es uno mas chico (y el de tamano completo espera en
+    /// `spare`): ver `Dynamic`.
     pub renderer: Renderer,
+    /// Resolucion dinamica (F8). Encendida en la ventana; las fotos de
+    /// `--captura`, el `--bench` y el video siempre van completas.
+    pub dynamic: Dynamic,
     pub settings: FlightSettings,
     pub flight: FlightInfo,
     pub stats: Stats,
@@ -712,6 +882,12 @@ pub struct App {
     dying: Option<f64>,
     /// Tabla de geodesicas de Gargantua: se rehace al cambiar la distancia.
     lens: Option<LensTable>,
+    /// Tabla de geodesicas de Faro, la estrella de neutrones.
+    faro_lens: Option<NeutronLens>,
+    /// Cuando se pidio la gran llamarada de Faro (F).
+    pub faro_flare: Option<f64>,
+    /// Duracion del ultimo frame: la exposicion con la que barren los haces.
+    shutter: f64,
     /// Camara congelada (F7): el culling y el LOD se calculan desde ella
     /// mientras se vuela por fuera para ver que se descarta.
     pub freeze: Option<Camera>,
@@ -753,8 +929,8 @@ pub struct App {
     accumulator: f64,
     /// Hacia donde mira el ojo de Vigia, en el espacio de Vigia.
     eye: DVec3,
-    /// La nave botella elegida para la version chapina (B la cambia).
-    pub bottle: usize,
+    /// La nave elegida para la version chapina (B la cambia).
+    pub chapin_ship: usize,
     /// El final de OCASO mientras se ve la version chapina (ahi no hay
     /// final: Kinich Ajaw no se apaga).
     ocaso_timeline: Timeline,
@@ -794,6 +970,7 @@ impl App {
             time: 40.0,
             act: None,
             chapin: self.system.version == Version::Chapin,
+            flare: None,
         });
         self.settings.local = false;
         DemoTour::default()
@@ -812,7 +989,10 @@ impl App {
             0 => {
                 self.aim = DQuat::look_rotation(-normal, DVec3::Y);
                 input.thrust.z = -1.0;
-                if altitude < 27.0 {
+                // En la chapina (Peten) las ceibas pasan de 27: mas arriba,
+                // para no atravesarlas.
+                let floor = if self.system.version == Version::Chapin { 48.0 } else { 27.0 };
+                if altitude < floor {
                     tour.phase = 1;
                     tour.phase_time = 0.0;
                 }
@@ -870,7 +1050,8 @@ impl App {
         let center = planet.position(t);
         let to_star = (system.bodies[0].position(t) - center).normalize();
         let side = to_star.cross(DVec3::Y).normalize();
-        let start = center + (to_star * 0.8 + side * 0.6).normalize() * (planet.radius * 4.5);
+        // De lado, no entre Pira y la estrella (tan cerca, adentro de ella).
+        let start = center + (to_star * 0.35 + side * 0.94).normalize() * (planet.radius * 4.5);
         let aim = DQuat::look_rotation(center - start, DVec3::Y);
         let ship = ShipState::new(&system.bodies, start, aim, t);
         let eye = eye_target(&system, start, t);
@@ -879,7 +1060,7 @@ impl App {
             eye,
             stare,
             fixation: stare,
-            bottle: 0,
+            chapin_ship: 0,
             ocaso_timeline: Timeline::default(),
             marimba_on: false,
             transition: None,
@@ -887,6 +1068,7 @@ impl App {
             saccades: 0,
             system,
             renderer: Renderer::new(width, height),
+            dynamic: Dynamic::new(width, height),
             settings: FlightSettings::default(),
             flight: FlightInfo::default(),
             stats: Stats::default(),
@@ -909,6 +1091,9 @@ impl App {
             history: std::collections::VecDeque::new(),
             dying: None,
             lens: None,
+            faro_lens: None,
+            faro_flare: None,
+            shutter: 1.0 / 30.0,
             freeze: None,
             markers: Vec::new(),
             frustum_mesh: Mesh::default(),
@@ -974,6 +1159,18 @@ impl App {
 
     /// N: viaja al siguiente lugar para visitar (instantaneo), conservando
     /// el tiempo y el ciclo.
+    /// Como N, pero hasta el lugar llamado `name` (el video de muestra los
+    /// pide por nombre). `false` si no hay uno asi en esta version.
+    pub fn visit_site(&mut self, name: &str) -> bool {
+        let count = self.system.sites.len();
+        let Some(i) = self.system.sites.iter().position(|s| s.name == name) else {
+            return false;
+        };
+        self.next_site = (i + count - 1) % count;
+        self.visit_next_site();
+        true
+    }
+
     pub fn visit_next_site(&mut self) {
         if self.system.sites.is_empty() {
             return;
@@ -998,6 +1195,7 @@ impl App {
             time,
             act: self.timeline.since(time),
             chapin: self.system.version == Version::Chapin,
+            flare: self.faro_flare.map(|f| time - f),
         });
         self.banner = Some(site.name);
         self.banner_where = Some(self.system.bodies[site.body].label);
@@ -1052,6 +1250,22 @@ impl App {
     }
 
     /// J: desata el final de la estrella o, si ya empezo, su renacer.
+    /// La gran llamarada de Faro (F): si no hay otra en curso, la corteza
+    /// empieza a torcer la magnetosfera hasta que revienta.
+    pub fn press_flare(&mut self) {
+        if self.system.find("Faro").is_none_or(|i| self.system.bodies[i].hidden) {
+            return;
+        }
+        let busy = self
+            .faro_flare
+            .is_some_and(|f| (f..f + faro::WIND_UP + 30.0).contains(&self.sim_time));
+        if !busy {
+            self.faro_flare = Some(self.sim_time);
+            self.banner = Some("Faro: la corteza se rompe");
+            self.banner_where = None;
+        }
+    }
+
     pub fn press_ending(&mut self) {
         if self.system.version == Version::Chapin {
             self.banner = Some("Kinich Ajaw no se apaga");
@@ -1087,7 +1301,7 @@ impl App {
             "Jardin" => 73.4,
             "Vigia" => 41.2,
             "Argos" => 49.0,
-            "Cementerio" => 61.7,
+            "Faro" => 61.7,
             "Parpado" => 46.2,
             _ => 36.7,
         };
@@ -1105,7 +1319,91 @@ impl App {
             drone: if ocaso { 0.6 } else { 0.0 },
             marimba: if !ocaso && self.marimba_on { 0.55 } else { 0.0 },
             master: if self.muted { 0.0 } else { 0.8 },
+            ..self.faro_sound(t)
         }
+    }
+
+    /// Lo que suena de Faro desde la nave: sus pulsos, sus estallidos y su
+    /// gran llamarada.
+    fn faro_sound(&self, t: f64) -> AudioParams {
+        let quiet = AudioParams::default();
+        let Some(i) = self.system.find("Faro").filter(|&i| !self.system.bodies[i].hidden) else {
+            return quiet;
+        };
+        let body = &self.system.bodies[i];
+        let model = faro::model();
+        let state = faro::state(t, self.faro_flare);
+        let offset = self.ship.world_pos - body.position(t);
+        let distance = offset.length();
+        let near = (1.0 / (1.0 + (distance / 2500.0).powi(2))) as f32;
+        // La nave en el marco inclinado del eje de giro: su azimut dice en que
+        // fraccion de la vuelta la barre el haz norte y su angulo con el eje
+        // (zeta) si cae en el cono de cada haz.
+        let tilted = crate::math::DQuat::from_axis_angle(DVec3::Z, -body.axial_tilt).rotate(offset / distance);
+        let azimuth = (-tilted.z).atan2(tilted.x);
+        let zeta = tilted.y.clamp(-1.0, 1.0).acos();
+        let width = model.outer_cone * 1.4;
+        let hear = |miss: f64| ((-(miss / width).powi(2)).exp() as f32) * near * state.radio as f32;
+        AudioParams {
+            pulsar_phase: faro::turn_at(body, t, self.faro_flare),
+            pulsar_rate: 1.0 / faro::period_at(t, self.faro_flare),
+            pulse_at: (azimuth / (2.0 * PI)).rem_euclid(1.0) as f32,
+            pulse_north: hear(zeta - faro::INCLINATION),
+            pulse_south: hear(zeta - (PI - faro::INCLINATION)),
+            bursts: ((state.burst / 20.0).min(1.0) as f32) * near.sqrt(),
+            spike: state.spike as f32 * near.sqrt(),
+            tail: state.fireball as f32 * near.sqrt(),
+            ..quiet
+        }
+    }
+
+    /// Lo que el HUD muestra de Faro cuando la nave esta cerca: los numeros
+    /// del modelo y su estado en este momento.
+    pub fn faro_readout(&self) -> Option<FaroReadout> {
+        let i = self.system.find("Faro").filter(|&i| !self.system.bodies[i].hidden)?;
+        let t = self.sim_time;
+        let body = &self.system.bodies[i];
+        let distance = (self.ship.world_pos - body.position(t)).length();
+        if distance > 8000.0 {
+            return None;
+        }
+        let model = faro::model();
+        let state = faro::state(t, self.faro_flare);
+        let period = faro::period_at(t, self.faro_flare);
+        let flare = match self.faro_flare.map(|f| t - f) {
+            Some(age) if (0.0..faro::WIND_UP).contains(&age) => FlarePhase::Twisting,
+            Some(_) if state.fireball > 0.0 => FlarePhase::Fireball,
+            _ => FlarePhase::Ready,
+        };
+        Some(FaroReadout {
+            distance: distance / faro::SCALE,
+            period,
+            pdot: model.pdot,
+            field: faro::braking_field(faro::PERIOD, model.pdot),
+            age_years: model.age_years,
+            edot: model.edot,
+            light_cylinder_km: model.light_cylinder_km,
+            compactness: model.compactness,
+            twist: state.twist,
+            critical_twist: faro::CRITICAL_TWIST,
+            cap_degrees: state.spot_radius.to_degrees(),
+            cap_temperature: state.spot_temperature,
+            crust_temperature: state.pole_temperature,
+            storm: state.storm,
+            flare,
+            fireball: state.fireball,
+        })
+    }
+
+    /// La imagen del ultimo frame a tamano completo, RGBA8 (con la
+    /// resolucion dinamica, ya ampliada).
+    pub fn frame(&self) -> &[u8] {
+        self.dynamic.frame(&self.renderer)
+    }
+
+    /// El tamano de `frame`.
+    pub fn frame_size(&self) -> (usize, usize) {
+        self.dynamic.full
     }
 
     /// El nombre de un cuerpo en el HUD (el de la version que se ve).
@@ -1116,7 +1414,7 @@ impl App {
     /// Cambia de version (V) con la transicion: la imagen de ahora se
     /// guarda y la nueva se abre encima. La nave sigue donde estaba.
     pub fn toggle_version(&mut self) {
-        let from = self.renderer.rgba().to_vec();
+        let from = self.frame().to_vec();
         self.switch_version();
         self.transition = Some(Transition {
             from,
@@ -1126,6 +1424,13 @@ impl App {
                 Version::Ocaso => Toward::Ocaso,
             },
         });
+    }
+
+    /// Pasa a la version chapina sin transicion (`--chapina`).
+    pub fn use_chapin(&mut self) {
+        if self.system.version == Version::Ocaso {
+            self.switch_version();
+        }
     }
 
     /// Cambia de version sin transicion. En la chapina no hay final: se
@@ -1153,35 +1458,40 @@ impl App {
         Some((title, fade))
     }
 
-    /// Elige la nave botella `index` (teclas 1 a 6), en la version chapina.
-    pub fn select_bottle(&mut self, index: usize) {
-        if self.system.version != Version::Chapin || index >= self.system.bottles.len() {
+    /// Elige la nave chapina `index` (teclas 1 a 9), en la version chapina.
+    pub fn select_ship(&mut self, index: usize) {
+        if self.system.version != Version::Chapin || index >= self.system.chapin_ships.len() {
             return;
         }
-        self.bottle = index;
+        self.chapin_ship = index;
         self.apply_ship();
-        self.banner = Some(self.system.bottles[index].name);
+        self.banner = Some(self.system.chapin_ships[index].name);
     }
 
-    /// La siguiente nave botella (B), solo en la version chapina.
-    pub fn next_bottle(&mut self) {
-        if self.system.version != Version::Chapin || self.system.bottles.is_empty() {
+    /// La siguiente nave chapina (B), solo en la version chapina.
+    pub fn next_ship(&mut self) {
+        if self.system.version != Version::Chapin || self.system.chapin_ships.is_empty() {
             return;
         }
-        self.bottle = (self.bottle + 1) % self.system.bottles.len();
+        self.chapin_ship = (self.chapin_ship + 1) % self.system.chapin_ships.len();
         self.apply_ship();
-        self.banner = Some(self.system.bottles[self.bottle].name);
+        self.banner = Some(self.system.chapin_ships[self.chapin_ship].name);
     }
 
-    /// La nave de la version que se ve: la OCASO-1 o la botella elegida.
+    /// La nave chapina elegida, si se esta en la version chapina.
+    pub fn chapin_ship(&self) -> Option<&crate::scene::ChapinShip> {
+        (self.system.version == Version::Chapin)
+            .then(|| self.system.chapin_ships.get(self.chapin_ship))
+            .flatten()
+    }
+
+    /// La nave de la version que se ve: la OCASO-1 o la chapina elegida.
     fn apply_ship(&mut self) {
-        match self.system.bottles.get(self.bottle).filter(|_| self.system.version == Version::Chapin) {
-            Some(bottle) => {
-                self.system.ship_mesh = [bottle.mesh; 3];
-                self.system.ship_material = Material::Bottle;
-                // Con la boca un poco hacia arriba: desde la camara, que va
-                // atras y arriba, se ve la etiqueta y no solo el fondo.
-                self.system.ship_fix = DQuat::from_axis_angle(DVec3::X, BOTTLE_PITCH);
+        match self.chapin_ship().copied() {
+            Some(ship) => {
+                self.system.ship_mesh = ship.lods;
+                self.system.ship_material = ship.material;
+                self.system.ship_fix = DQuat::from_axis_angle(DVec3::X, ship.pitch);
             }
             None => {
                 self.system.ship_fix = DQuat::IDENTITY;
@@ -1196,17 +1506,12 @@ impl App {
 
     /// Lo que sale por detras de la nave.
     fn exhaust_style(&self) -> effects::Exhaust {
-        match self.system.bottles.get(self.bottle).filter(|_| self.system.version == Version::Chapin) {
-            Some(bottle) => bottle.exhaust,
-            None => effects::Exhaust::Plasma,
-        }
+        self.chapin_ship().map_or(effects::Exhaust::Plasma, |ship| ship.exhaust)
     }
 
-    /// El nombre de la nave botella elegida, en la version chapina.
-    pub fn bottle_name(&self) -> Option<&'static str> {
-        (self.system.version == Version::Chapin)
-            .then(|| self.system.bottles.get(self.bottle).map(|b| b.name))
-            .flatten()
+    /// El nombre de la nave chapina elegida, en la version chapina.
+    pub fn ship_name(&self) -> Option<&'static str> {
+        self.chapin_ship().map(|ship| ship.name)
     }
 
     /// Estadisticas del terreno del planeta mas cercano a la nave.
@@ -1266,6 +1571,7 @@ impl App {
             time,
             act: self.timeline.since(time),
             chapin: self.system.version == Version::Chapin,
+            flare: self.faro_flare.map(|f| time - f),
         });
         self.settings.assist = true;
         self.settings.cruise = false;
@@ -1274,6 +1580,7 @@ impl App {
     /// Avanza el juego `frame_dt` segundos reales.
     pub fn update(&mut self, frame_dt: f64, input: &FrameInput) {
         let frame_dt = frame_dt.clamp(0.0, config::MAX_FRAME_DT);
+        self.shutter = frame_dt.clamp(1.0 / 120.0, 1.0 / 15.0);
         self.steer(input, frame_dt);
         let controls = Controls {
             thrust: input.thrust,
@@ -1429,6 +1736,11 @@ impl App {
         let ship_rot = self.ship_prev.rot.slerp(self.ship.rot, alpha);
 
         let camera = self.camera(ship_pos, ship_rot, t);
+        // Resolucion dinamica: con la imagen en movimiento, el renderer chico.
+        let fast = self.dynamic.moving(&self.system, &camera, t);
+        let low = fast && self.transition.is_none() && self.freeze.is_none();
+        self.dynamic.select(&mut self.renderer, low);
+        let (full_w, full_h) = self.dynamic.full;
         let view = camera.view(self.renderer.width(), self.renderer.height());
         // El culling y el LOD se deciden desde la camara congelada si la hay.
         let cull_camera = self.freeze.unwrap_or(camera);
@@ -1441,15 +1753,8 @@ impl App {
             )
         });
         self.build_frustum(&camera, pixel_angle_of(&camera, self.renderer.height()));
-        self.markers = markers(
-            &self.system,
-            &self.timeline,
-            t,
-            &camera,
-            &view,
-            self.renderer.width(),
-            self.renderer.height(),
-        );
+        // Los marcadores del HUD van sobre la ventana: a tamano completo.
+        self.markers = markers(&self.system, &self.timeline, t, &camera, &camera.view(full_w, full_h), full_w, full_h);
 
         let show_ship = self.camera_mode == CameraMode::Chase;
         let pixel_angle = 2.0 * (camera.fov_y * 0.5).tan() / self.renderer.height() as f64;
@@ -1514,6 +1819,16 @@ impl App {
             .max(state.disk_outer as f64 * state.rs * 0.5)
             .max(1.0);
         self.build_path(t, &camera, pixel_angle);
+        self.renderer.lines.clear();
+        if let Some(i) = self.system.find("Faro").filter(|&i| !self.system.bodies[i].hidden) {
+            // Lejos, la estrella mide pocos pixeles y las lineas se enciman:
+            // brillan menos para no hacer una mancha. De muy cerca llenan la
+            // pantalla: tambien se bajan.
+            let body = &self.system.bodies[i];
+            let pixels = (faro::RADIUS / ((body.position(t) - camera.pos).length() * pixel_angle).max(1e-9)) as f32;
+            let density = (pixels / 8.0).clamp(0.12, 1.0) * (90.0 / pixels).clamp(0.35, 1.0);
+            faro::field_lines(&mut self.renderer.lines, body, t, self.faro_flare, camera.pos, density);
+        }
         self.emit_particles(t, &camera, ship_pos, ship_rot, show_ship);
         // Gargantua se come a Pira: hierve y se encoge dentro de su vapor.
         let melting = self.system.find("Pira").filter(|_| state.stream_age > 0.0);
@@ -1543,7 +1858,10 @@ impl App {
             melting,
             &mut draws,
         );
-        for mesh in [&self.path_mesh, &self.frustum_mesh] {
+        for (mesh, material) in [
+            (&self.path_mesh, Material::Line(Vec3::ONE)),
+            (&self.frustum_mesh, Material::Line(Vec3::ONE)),
+        ] {
             if mesh.indices.is_empty() {
                 continue;
             }
@@ -1553,7 +1871,7 @@ impl App {
                 local_offset: Vec3::ZERO,
                 model: DMat4::from_affine(&DMat3::IDENTITY, DVec3::ZERO).to_f32(),
                 normal: DMat3::IDENTITY.to_f32(),
-                material: Material::Line(Vec3::ONE),
+                material,
                 bounds_center: mesh.bounds_center,
                 bounds_radius: mesh.bounds_radius,
                 tag: 0,
@@ -1633,15 +1951,6 @@ impl App {
                 });
             }
         }
-        if let Some((top, _)) = beacon_lamp(&self.system, t) {
-            let near = smoothstep(300.0, 60.0, (top - ship_pos).length() as f32);
-            let flash = shaders::beacon_flash(t as f32, near);
-            points.push(crate::shaders::PointLight {
-                pos: (top - camera.pos).as_vec3(),
-                color: Vec3::new(2.4, 0.12, 0.05) * (400.0 * flash),
-                radius: 160.0,
-            });
-        }
         // Las mas cercanas primero: el shading recorre todas por pixel.
         points.sort_by(|a, b| a.pos.length_squared().total_cmp(&b.pos.length_squared()));
         points.truncate(12);
@@ -1655,6 +1964,35 @@ impl App {
             })
             .map(|(i, frame)| SkyView::build(i, frame, sun_light));
         let star_pos = self.system.bodies[0].position(t);
+        // Faro: su tabla de geodesicas tambien depende solo de la distancia.
+        let faro_index = self.system.find("Faro").filter(|&i| !self.system.bodies[i].hidden);
+        if let Some(i) = faro_index {
+            let rs = faro::rs();
+            let observer = ((self.system.bodies[i].position(t) - camera.pos).length() / rs) as f32;
+            let radius = (faro::RADIUS / rs) as f32;
+            match &mut self.faro_lens {
+                Some(lens) if lens.fits(observer) => {}
+                Some(lens) => lens.rebuild(observer),
+                None => self.faro_lens = Some(NeutronLens::build(radius, observer)),
+            }
+        }
+        let faro_frame = match (faro_index, &self.faro_lens) {
+            (Some(i), Some(lens)) => Some(faro_frame(&self.system, i, t, camera.pos, lens, self.shutter, self.faro_flare)),
+            _ => None,
+        };
+        if let Some(frame) = &faro_frame {
+            // El destello del haz que apunta a la camara: luz directa de la
+            // region de emision.
+            let glare = frame.glare();
+            if glare > 0.01 {
+                let toward = if frame.magnetic.dot(-frame.center) > 0.0 { 1.0 } else { -1.0 };
+                self.renderer.particles.push(Particle {
+                    pos: frame.center + frame.magnetic * (toward * frame.beam.height * 0.5),
+                    radius: frame.beam.height * 0.12,
+                    color: Vec3::new(0.55, 0.75, 1.0) * (glare * faro::GLARE_GAIN as f32),
+                });
+            }
+        }
         // Gargantua: la tabla de geodesicas solo se rehace si la distancia
         // al agujero cambio lo suficiente.
         if state.rs > 0.5 {
@@ -1719,6 +2057,19 @@ impl App {
             * if self.renderer.p2_curve { 5.0 } else { 1.0 }
             * if ocaso { 1.0 } else { 1.15 };
         self.renderer.whiteout = state.whiteout;
+        // El pico de la gran llamarada de Faro deslumbra todo el sistema: mas
+        // cuanto mas cerca.
+        if let Some(i) = faro_index {
+            let spike = faro::state(t, self.faro_flare).spike as f32;
+            if spike > 0.0 {
+                let distance = (self.system.bodies[i].position(t) - camera.pos).length() as f32;
+                let reach = 1.0 / (1.0 + (distance / 2500.0).powi(2));
+                // Todo lo que brilla se quema a blanco (la exposicion sube) y
+                // encima un velo leve: un fundido a blanco solo deja gris.
+                self.renderer.exposure *= 1.0 + 14.0 * spike * reach;
+                self.renderer.whiteout = self.renderer.whiteout.max(spike * (0.2 + 0.25 * reach));
+            }
+        }
         self.renderer.blackout = self.death_fade();
         // Lo que esta detras del agujero y cae en su sombra no se ve: las
         // brasas de Pira del otro lado no pueden brillar sobre ella.
@@ -1730,6 +2081,14 @@ impl App {
                 let along = p.pos.dot(to_hole);
                 along < distance || along / p.pos.length() < cos_shadow
             });
+            // Los hilos de luz de Faro no estan en la profundidad que ve el
+            // agujero: detras de el, dentro del cono de su disco, se pintarian
+            // encima del disco y de la sombra.
+            let behind = |p: Vec3| {
+                let along = p.dot(to_hole);
+                along > distance && along / p.length() > hole.cone_cos
+            };
+            self.renderer.lines.retain(|l| !(behind(l.a) || behind(l.b)));
         }
         // La onda gravitacional sale del agujero cuando se abre el ojo y
         // cruza la pantalla en unos tres segundos.
@@ -1799,6 +2158,7 @@ impl App {
                 state.shell_light,
             ),
             black_hole: hole.as_ref(),
+            faro: faro_frame.as_ref(),
             sun_pos: (star_pos - camera.pos).as_vec3(),
             sun_radius: light_radius as f32,
             sun_light,
@@ -1840,6 +2200,7 @@ impl App {
             let progress = tr.age / transition::WIPE;
             transition::blend(self.renderer.rgba_mut(), &tr.from, width, height, progress, tr.toward);
         }
+        self.dynamic.present(&self.renderer);
         self.stats.ms_total = frame_start.elapsed().as_secs_f32() * 1000.0;
         self.stats
     }
@@ -1987,25 +2348,15 @@ impl App {
             );
         }
 
-        if let Some((top, up)) = beacon_lamp(system, t) {
-            let start = out.len();
-            out.resize(start + effects::BEACON_COUNT, blank);
-            let near = smoothstep(300.0, 60.0, (top - ship_pos).length() as f32);
-            effects::beacon_waves(
-                &mut out[start..],
-                (top - camera.pos).as_vec3(),
-                up.as_vec3(),
-                t,
-                shaders::BEACON_PERIOD,
-                near,
-            );
+        // La bola de fuego de la gran llamarada de Faro.
+        if let Some(i) = system.find("Faro").filter(|&i| !system.bodies[i].hidden) {
+            faro::fireball(&mut out, &system.bodies[i], t, self.faro_flare, camera.pos);
         }
         // Lo que flota alrededor de la camara cerca del suelo de cada planeta.
         let motes: Vec<(&str, effects::Motes, f64)> = match system.version {
             Version::Ocaso => vec![
                 ("Pira", effects::Motes::Embers, 120.0),
                 ("Argos", effects::Motes::Drops, 120.0),
-                ("Cementerio", effects::Motes::Dust, 100.0),
                 ("Parpado", effects::Motes::Glints, 90.0),
             ],
             Version::Chapin => system
@@ -2028,22 +2379,12 @@ impl App {
                 effects::motes(&mut out[start..], body, t, camera.pos, kind, strength);
             }
         }
-        // Los geiseres cerca de la camara echan lava; los naufragios
-        // despiertos, chispas.
-        let ship_rel = (ship_pos - camera.pos).as_vec3();
+        // Los geiseres cerca de la camara echan lava.
         for (mouth, up, activity, seed) in vents_near(system, t, camera.pos, ship_pos) {
             if activity > 0.05 {
                 let start = out.len();
                 out.resize(start + effects::FOUNTAIN_COUNT, blank);
                 effects::fountain(&mut out[start..], mouth, up, t, activity, seed);
-            }
-        }
-        for (at, up, seed) in wrecks_near(system, t, camera.pos) {
-            let near = smoothstep(160.0, 30.0, (at - ship_rel).length());
-            if near > 0.05 {
-                let start = out.len();
-                out.resize(start + effects::SPARK_COUNT, blank);
-                effects::sparks(&mut out[start..], at, up, t, near, seed);
             }
         }
         if let Some(i) = system.find("Jardin").filter(|_| system.version == Version::Ocaso) {
@@ -2066,7 +2407,7 @@ impl App {
                 ship_pos,
                 ship_rot * self.system.ship_fix,
                 self.throttle,
-                if self.system.version == Version::Chapin { config::BOTTLE_LENGTH } else { config::SHIP_LENGTH },
+                self.chapin_ship().map_or(config::SHIP_LENGTH, |ship| ship.length),
                 t,
                 camera.pos,
                 self.exhaust_style(),
@@ -2102,9 +2443,9 @@ impl App {
         let rot = (self.aim * look).normalize();
         let mut pos = match self.camera_mode {
             CameraMode::Chase => {
-                let offset = if self.system.version == Version::Chapin {
+                let offset = if let Some(ship) = self.chapin_ship() {
                     let [x, y, z] = config::BOTTLE_CHASE;
-                    DVec3::new(x, y, z)
+                    DVec3::new(x, y, z) * (ship.length / config::BOTTLE_LENGTH)
                 } else {
                     DVec3::new(2.2, config::CHASE_HEIGHT, config::CHASE_DISTANCE)
                 };
@@ -2144,6 +2485,7 @@ impl App {
         self.transition = None;
         let t = preset.time;
         self.timeline = Timeline::at(t, preset.act);
+        self.faro_flare = preset.flare.map(|age| t - age);
         self.cinematic_fov = if matches!(preset.shot, Shot::BlackHole) {
             Some(34.0)
         } else {
@@ -2456,9 +2798,6 @@ struct Transition {
     toward: Toward,
 }
 
-/// Cuanto se inclinan las naves botella con la boca hacia arriba (radianes).
-const BOTTLE_PITCH: f64 = 0.38;
-
 /// Segundos que se ve el titulo de la transicion (la cortina dura menos).
 const TITLE: f32 = 2.6;
 
@@ -2472,6 +2811,123 @@ pub struct Marker {
 }
 
 /// Angulo que cubre un pixel con esta camara.
+/// La resolucion dinamica: dos renderers (el completo y uno a
+/// `DYNAMIC_SCALE`) que se intercambian al empezar el frame, y lo que se
+/// necesita para decidir.
+///
+/// Que tan rapido se mueve la imagen se mide en rad/s: el angulo que giro
+/// la camara desde el frame anterior (`2 acos |q1 . q2|`) mas lo que avanzo
+/// dividido entre la distancia a la superficie mas cercana (el angulo con
+/// que se corre lo que esta abajo), entre el tiempo de reloj entre los dos
+/// frames. Con histeresis: baja en cuanto pasa de `DYNAMIC_FAST` y sube
+/// cuando lleva `DYNAMIC_SETTLE` s por debajo de `DYNAMIC_SLOW`, asi no
+/// parpadea entre las dos.
+pub struct Dynamic {
+    /// Si se usa (F8).
+    pub enabled: bool,
+    /// Una sola vez: el proximo frame completo (la foto).
+    pub force_full: bool,
+    pub full: (usize, usize),
+    /// El renderer que no se esta usando (creado la primera vez).
+    spare: Option<Renderer>,
+    low: bool,
+    upscaler: Option<crate::render::upscale::Upscaler>,
+    /// La imagen ampliada cuando se rendereo chico.
+    display: Vec<u8>,
+    last: Option<(DVec3, DQuat, std::time::Instant)>,
+    calm_since: Option<std::time::Instant>,
+}
+
+impl Dynamic {
+    fn new(width: usize, height: usize) -> Self {
+        Self {
+            enabled: false,
+            force_full: false,
+            full: (width, height),
+            spare: None,
+            low: false,
+            upscaler: None,
+            display: Vec::new(),
+            last: None,
+            calm_since: None,
+        }
+    }
+
+    /// Si ahora se esta renderizando chico.
+    pub fn is_low(&self) -> bool {
+        self.low
+    }
+
+    /// Si la imagen se mueve rapido (y conviene renderizar chico).
+    fn moving(&mut self, system: &System, camera: &Camera, t: f64) -> bool {
+        let now = std::time::Instant::now();
+        let last = self.last.replace((camera.pos, camera.rot, now));
+        let force = std::mem::take(&mut self.force_full);
+        if !self.enabled || force {
+            self.calm_since = None;
+            return false;
+        }
+        let Some((pos, rot, then)) = last else { return self.low };
+        let dt = (now - then).as_secs_f64().max(1e-3);
+        let turn = 2.0 * rot.dot(camera.rot).abs().min(1.0).acos();
+        let ground = system
+            .bodies
+            .iter()
+            .filter(|b| !b.hidden)
+            .map(|b| (camera.pos - b.position(t)).length() - b.radius)
+            .fold(f64::MAX, f64::min)
+            .max(1.0);
+        let rate = (turn + (camera.pos - pos).length() / ground) / dt;
+        if rate > config::DYNAMIC_FAST {
+            self.calm_since = None;
+            true
+        } else if rate < config::DYNAMIC_SLOW {
+            let since = *self.calm_since.get_or_insert(now);
+            self.low && (now - since).as_secs_f64() < config::DYNAMIC_SETTLE
+        } else {
+            self.calm_since = None;
+            self.low
+        }
+    }
+
+    /// Deja en `active` el renderer que toca (el chico o el completo). Las
+    /// particulas viven en el renderer: se pasan al otro.
+    fn select(&mut self, active: &mut Renderer, low: bool) {
+        if low == self.low {
+            return;
+        }
+        let other = self.spare.take().unwrap_or_else(|| {
+            let (w, h) = self.full;
+            let scaled = |v: usize| (((v as f64 * config::DYNAMIC_SCALE) / 2.0).round() * 2.0).max(2.0) as usize;
+            if low { Renderer::new(scaled(w), scaled(h)) } else { Renderer::new(w, h) }
+        });
+        let previous = std::mem::replace(active, other);
+        active.particles = previous.particles.clone();
+        active.bloom_intensity = previous.bloom_intensity;
+        self.spare = Some(previous);
+        self.low = low;
+    }
+
+    /// Despues de renderizar: si fue chico, la imagen ampliada.
+    fn present(&mut self, renderer: &Renderer) {
+        if !self.low {
+            return;
+        }
+        let src = (renderer.width(), renderer.height());
+        if !self.upscaler.as_ref().is_some_and(|u| u.fits(src, self.full)) {
+            self.upscaler = Some(crate::render::upscale::Upscaler::new(src, self.full));
+        }
+        self.display.resize(self.full.0 * self.full.1 * 4, 0);
+        if let Some(up) = self.upscaler.as_mut() {
+            up.run(renderer.rgba(), &mut self.display);
+        }
+    }
+
+    fn frame<'a>(&'a self, renderer: &'a Renderer) -> &'a [u8] {
+        if self.low { &self.display } else { renderer.rgba() }
+    }
+}
+
 fn pixel_angle_of(camera: &Camera, height: usize) -> f64 {
     2.0 * (camera.fov_y * 0.5).tan() / height as f64
 }
@@ -2552,6 +3008,66 @@ fn markers(
 
 /// La cola de polvo de Pira: sale del lado de noche, lejos de la estrella,
 /// y se curva hacia atras en la orbita.
+/// Faro en este frame, visto desde `camera`.
+fn faro_frame<'a>(
+    system: &System,
+    index: usize,
+    t: f64,
+    camera: DVec3,
+    lens: &'a NeutronLens,
+    shutter: f64,
+    flare: Option<f64>,
+) -> shaders::faro::Faro<'a> {
+    let body = &system.bodies[index];
+    let model = faro::model();
+    let center = body.position(t);
+    let crust = faro::crust_at(body, t, flare);
+    let before = faro::crust_at(body, t - shutter, flare);
+    let state = faro::state(t, flare);
+    let distance = (center - camera).length();
+    let star = system.bodies[0].position(t);
+    let turn = faro::turn_at(body, t, flare);
+    shaders::faro::Faro {
+        center: (center - camera).as_vec3(),
+        radius: faro::RADIUS as f32,
+        lens,
+        magnetic: crust.rotate(faro::magnetic_local()).as_vec3(),
+        magnetic_before: before.rotate(faro::magnetic_local()).as_vec3(),
+        to_crust: crust.conjugate().to_mat3().to_f32(),
+        redshift: (model.surface_lapse / (1.0 - faro::rs() / distance.max(faro::RADIUS)).sqrt()) as f32,
+        pole_temperature: state.pole_temperature as f32,
+        conductivity_ratio: faro::CONDUCTIVITY_RATIO as f32,
+        polar_cap: model.polar_cap as f32,
+        cap_temperature: state.cap_temperature as f32,
+        spots: [1.0f64, -1.0].map(|sign| shaders::faro::Spot {
+            center: (crust.rotate(faro::magnetic_local()) * sign).as_vec3(),
+            radius: state.spot_radius as f32,
+            temperature: state.spot_temperature as f32,
+        }),
+        flash: state.flash as f32,
+        gain: faro::SURFACE_GAIN as f32,
+        beam: shaders::faro::BeamShape {
+            core: model.core as f32,
+            inner: model.inner_cone as f32,
+            outer: model.outer_cone as f32,
+            height: (model.inner_height_km * faro::SCALE) as f32,
+            sparks: faro::SPARKS,
+            carousel: (t / (faro::CAROUSEL_TURNS * faro::PERIOD)).fract() as f32,
+        },
+        turn: turn as f32,
+        beam_gain: (faro::BEAM_GAIN * state.radio) as f32,
+        wind_source: (star - camera).as_vec3(),
+        wind_reference: (center - star).length() as f32,
+        // Con la camara metida en la bruma, todo el cielo se tenia de morado:
+        // se apaga al acercarse.
+        halo_gain: (faro::HALO_GAIN * (1.0 + 0.5 * state.storm + 3.0 * state.fireball)) as f32
+            * smoothstep(60.0, 200.0, distance as f32),
+        time: t as f32,
+        derived: Default::default(),
+    }
+    .prepared()
+}
+
 fn pira_tail(system: &System, t: f64, camera: DVec3, light: Vec3) -> Option<shaders::Tail> {
     let i = system.find("Pira")?;
     let pira = &system.bodies[i];
@@ -2633,32 +3149,6 @@ fn vents_near(system: &System, t: f64, camera: DVec3, ship: DVec3) -> Vec<(Vec3,
             (mouth, up, activity, seed)
         })
         .collect()
-}
-
-/// Naufragios de Cementerio cerca de la camara: un punto sobre el casco, la
-/// vertical y su numero.
-fn wrecks_near(system: &System, t: f64, camera: DVec3) -> Vec<(Vec3, Vec3, u32)> {
-    props_near(system, "Cementerio", PropKind::Wreck, 4.5, t, camera, 220.0)
-        .into_iter()
-        .map(|(at, up, seed, _)| (at, up, seed))
-        .collect()
-}
-
-/// La lampara de la baliza de Cementerio en el mundo y la vertical ahi.
-fn beacon_lamp(system: &System, t: f64) -> Option<(DVec3, DVec3)> {
-    let i = system.find("Cementerio")?;
-    let body = &system.bodies[i];
-    let beacon = system.props[i]
-        .instances
-        .iter()
-        .find(|p| p.kind == PropKind::Beacon)?;
-    let rotation = body.rotation(t);
-    let up = rotation.rotate(beacon.position.normalize());
-    let lamp = beacon.position
-        + beacon
-            .rotation
-            .rotate(DVec3::Y * (props::BEACON_TOP * beacon.scale) as f64);
-    Some((body.position(t) + rotation.rotate(lamp), up))
 }
 
 /// Direccion de la nave vista desde el centro de Vigia, en su propio espacio:
@@ -2842,8 +3332,8 @@ fn ring_info(system: &System, t: f64, camera: DVec3) -> Vec<RingInfo> {
         .filter_map(|body| {
             let rings = body.rings?;
             let normal = body.rotation(t).rotate(DVec3::Y);
-            // Ejes del plano que no giran con el planeta: los restos orbitan
-            // solos.
+            // Ejes del plano que no giran con el planeta: lo que hay en el
+            // anillo orbita a su ritmo.
             let axis_a = normal.cross(DVec3::Z).normalize();
             Some(RingInfo {
                 style: rings.style,
@@ -3024,6 +3514,10 @@ fn build_draws<'a>(
                 // del colapso ya no hay nada que dibujar.
                 let (radius, material) = if index == 0 {
                     (star_radius, star_material)
+                } else if matches!(body.material, Material::Faro) {
+                    // El disco que se ve de Faro es mas grande que Faro: la
+                    // esfera de apoyo mide lo que el rayo rasante.
+                    (faro::apparent_radius(center.length()), body.material)
                 } else {
                     (body.render_radius(t), body.material)
                 };
@@ -3073,6 +3567,36 @@ fn build_draws<'a>(
 
 #[cfg(test)]
 mod tests {
+    /// La resolucion dinamica: girando rapido se renderiza chico (y la
+    /// imagen sale ampliada al tamano completo); quieta, vuelve a completa.
+    #[test]
+    fn dynamic_resolution_drops_while_turning_and_comes_back() {
+        let mut app = App::new(160, 90).unwrap();
+        app.dynamic.enabled = true;
+        app.render();
+        assert!(!app.dynamic.is_low());
+        for k in 0..3 {
+            app.aim = DQuat::from_axis_angle(DVec3::Y, 0.4 * (k + 1) as f64) * app.aim;
+            app.render();
+        }
+        assert!(app.dynamic.is_low(), "girando");
+        assert_eq!(app.renderer.width(), 120);
+        assert_eq!(app.frame().len(), 160 * 90 * 4);
+        assert_eq!(app.frame_size(), (160, 90));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        app.render();
+        std::thread::sleep(std::time::Duration::from_secs_f64(config::DYNAMIC_SETTLE + 0.05));
+        app.render();
+        assert!(!app.dynamic.is_low(), "quieta");
+        assert_eq!(app.renderer.width(), 160);
+        assert_eq!(app.frame().len(), 160 * 90 * 4);
+        // La foto siempre completa.
+        app.aim = DQuat::from_axis_angle(DVec3::Y, 1.0) * app.aim;
+        app.dynamic.force_full = true;
+        app.render();
+        assert_eq!(app.renderer.width(), 160);
+    }
+
     /// En la version chapina, N llega a cada lugar de dia (menos Antigua,
     /// en Pira, que le da siempre la misma cara a la estrella y ya esta de
     /// dia).
@@ -3098,6 +3622,104 @@ mod tests {
     }
 
     use super::*;
+
+    /// Pegada a Faro, la nave se va con el motor a fondo hacia afuera (antes
+    /// su gravedad era la de un planeta de 140 km metida en 12 y la tragaba).
+    #[test]
+    fn the_chapin_vehicles_fly_nose_first_with_their_wheels_down() {
+        use crate::scene::Surface;
+        let app = App::new(64, 36).unwrap();
+        let vehicles: Vec<_> = app.system.chapin_ships.iter().filter(|s| matches!(s.material, Material::Vehicle)).collect();
+        assert_eq!(vehicles.len(), 3);
+        for ship in vehicles {
+            let mesh = &app.system.meshes[ship.lods[0]];
+            let mean = |pick: &dyn Fn(usize) -> bool| {
+                let picked: Vec<Vec3> = (0..mesh.positions.len()).filter(|&i| pick(i)).map(|i| mesh.positions[i]).collect();
+                assert!(!picked.is_empty(), "{}", ship.name);
+                picked.iter().fold(Vec3::ZERO, |a, &p| a + p) / picked.len() as f32
+            };
+            let surface = |i: usize| Surface::from_code(mesh.uvs[i].x);
+            let all = mean(&|_| true);
+            // Los faros (luces blancas) adelante, en -Z; las llantas abajo.
+            let lights = mean(&|i| surface(i) == Surface::Light && mesh.colors[i].min_element() > 0.6);
+            let wheels = mean(&|i| surface(i) == Surface::Rubber);
+            assert!(lights.z < all.z - 0.2 * ship.length as f32, "{}: faros en z {}", ship.name, lights.z);
+            assert!(wheels.y < all.y, "{}: llantas en y {}", ship.name, wheels.y);
+            // Mide lo que dice su largo, a lo largo de z.
+            let (lo, hi) = mesh.positions.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), &p| (lo.min(p), hi.max(p)));
+            let size = hi - lo;
+            assert!((size.z - ship.length as f32).abs() < 0.01, "{}: {size:?}", ship.name);
+            assert!(size.x < size.z && size.y < size.z, "{}: {size:?}", ship.name);
+        }
+    }
+
+    #[test]
+    fn the_ship_can_leave_faro_from_its_surface() {
+        let mut app = App::new(64, 36).unwrap();
+        let i = app.system.find("Faro").unwrap();
+        let t = 40.0;
+        let center = app.system.bodies[i].position(t);
+        let up = DVec3::new(0.3, 0.9, 0.3).normalize();
+        app.place(center + up * (faro::RADIUS + 3.0), DQuat::look_rotation(up, DVec3::X), t);
+        // Arriba (y) y adelante (hacia afuera) con turbo.
+        let input = FrameInput {
+            thrust: DVec3::new(0.0, 1.0, -1.0),
+            boost: true,
+            ..FrameInput::default()
+        };
+        for _ in 0..600 {
+            app.update(1.0 / 60.0, &input);
+        }
+        let altitude = (app.ship.world_pos - app.system.bodies[i].position(app.sim_time)).length() - faro::RADIUS;
+        assert!(altitude > 200.0, "{altitude}");
+    }
+
+    /// Con la estrella mas grande, ni el arranque ni ninguna vista fija dejan
+    /// la nave dentro de ella (ni rozando su superficie).
+    #[test]
+    fn no_view_starts_inside_the_star() {
+        let mut app = App::new(64, 36).unwrap();
+        let star = |app: &App| {
+            let t = app.sim_time;
+            let state = cycle::at(t, &app.timeline, app.system.star_base);
+            ((app.ship.world_pos - app.system.bodies[0].position(t)).length(), state.star_radius)
+        };
+        let (distance, radius) = star(&app);
+        assert!(distance > radius * 1.1, "arranque: {distance} vs {radius}");
+        for preset in PRESETS.iter() {
+            app.apply_preset(preset);
+            let (distance, radius) = star(&app);
+            assert!(radius == 0.0 || distance > radius * 1.1, "{}: {distance} vs {radius}", preset.name);
+        }
+    }
+
+    /// Ningun pixel de Faro sale NaN o infinito, desde ninguna distancia ni
+    /// angulo (un NaN se riega con el bloom y deja un cuadro negro).
+    #[test]
+    fn faro_never_renders_non_finite_pixels() {
+        let mut app = App::new(160, 90).unwrap();
+        let i = app.system.find("Faro").unwrap();
+        let mut bad = Vec::new();
+        for k in 0..400u32 {
+            let t = 40.0 + k as f64 * 0.37;
+            app.faro_flare = if k % 3 == 0 { Some(t - (k % 40) as f64 * 0.3) } else { None };
+            let center = app.system.bodies[i].position(t);
+            let h = |s: u32| crate::math::hash_u32(k * 7 + s) as f64 / 4_294_967_296.0;
+            let dir = DVec3::new(h(1) - 0.5, h(2) - 0.5, h(3) - 0.5).normalize();
+            let distance = faro::RADIUS * 1.12 * (1.0 + 600.0 * h(4).powi(3));
+            let pos = center + dir * distance;
+            // Mirando a Faro con algo de desvio.
+            let look = (center - pos).normalize() + DVec3::new(h(5) - 0.5, h(6) - 0.5, h(7) - 0.5) * 0.6;
+            app.camera_mode = CameraMode::Cockpit;
+            app.place(pos, DQuat::look_rotation(look, DVec3::Y), t);
+            app.render();
+            let n = app.renderer.non_finite();
+            if !n.is_empty() {
+                bad.push((k, t, distance, n.len()));
+            }
+        }
+        assert!(bad.is_empty(), "{bad:?}");
+    }
 
     /// Al llegar con N la nave queda quieta sobre el suelo, que gira: antes
     /// llegaba quieta respecto al centro del planeta y en Atitlan (Vigia
@@ -3196,6 +3818,7 @@ mod tests {
             time: 40.0,
             act: None,
             chapin: false,
+            flare: None,
         };
         app.apply_preset(&preset);
         let jardin = app.system.find("Jardin").unwrap();
@@ -3245,6 +3868,7 @@ mod tests {
             time: 40.0,
             act: None,
             chapin: false,
+            flare: None,
         };
         app.apply_preset(&preset);
         let jardin = app.system.find("Jardin").unwrap();

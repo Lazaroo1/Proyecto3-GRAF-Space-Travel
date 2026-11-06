@@ -10,8 +10,13 @@ pub mod relativity;
 use math::Vec2;
 use photon::Photon;
 pub fn volume_step(photon: &Photon, medium: disk::Medium) -> f32 {
+    volume_step_from(photon, medium, photon.step_length())
+}
+
+/// `volume_step` a partir de un paso de vacio `base` dado.
+#[inline(always)]
+pub fn volume_step_from(photon: &Photon, medium: disk::Medium, base: f32) -> f32 {
     let enhanced = medium.enhanced;
-    let base = photon.step_length();
     let radius = Vec2::new(photon.pos.x, photon.pos.z).length();
     let outer_radius = if enhanced {
         config::OUTER_GAS_END

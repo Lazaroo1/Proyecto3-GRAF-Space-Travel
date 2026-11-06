@@ -1,5 +1,5 @@
-//! El sistema de OCASO: la estrella moribunda, sus cinco planetas y sus
-//! lunas.
+//! El sistema de OCASO: la estrella moribunda, su companera muerta (Faro,
+//! la estrella de neutrones), sus planetas y sus lunas.
 //!
 //! Todo movimiento es una funcion del tiempo de simulacion `t`: la posicion
 //! en la orbita, el giro sobre el eje y el latido de la estrella. Nada se
@@ -13,16 +13,14 @@ use std::sync::Arc;
 use super::effects::Exhaust;
 use crate::chapin::{self, Chapin};
 use super::props::{self, PropModel, PropSet};
-use super::{Mesh, icosphere, load_obj};
+use super::{Mesh, icosphere, load_obj, load_vehicle};
 use crate::config;
 use crate::math::{DQuat, DVec3, Perlin, Vec3};
 use crate::shaders::{
     ArgosLook, AtmosphereModel, AtmosphereParams, Material, RingStyle, ShipStyle, SkyCube,
     SkyStyle, SunStyle, Textures, heartbeat,
 };
-use crate::terrain::shapes::{
-    ArgosField, CementerioField, JardinField, MIRROR_SHORE, ParpadoField, PiraField,
-};
+use crate::terrain::shapes::{ArgosField, JardinField, MIRROR_SHORE, ParpadoField, PiraField};
 use crate::terrain::{HeightField, Smooth, Terrain};
 
 pub struct Body {
@@ -273,8 +271,8 @@ pub struct System {
     other_sky: SkyCube,
     /// Semilla con la que se colocaron los objetos de la otra version.
     other_seed: u32,
-    /// Las naves botella de la version chapina.
-    pub bottles: Vec<Bottle>,
+    /// Las naves de la version chapina: las botellas y los vehiculos.
+    pub chapin_ships: Vec<ChapinShip>,
 }
 
 /// La version del sistema.
@@ -285,13 +283,38 @@ pub enum Version {
     Chapin,
 }
 
-/// Una nave botella: su nombre, su malla y lo que echa por detras.
+/// Una nave de la version chapina: su nombre, sus mallas (de cerca a
+/// lejos), su largo, su material, cuanto sube la nariz y lo que echa por
+/// detras.
 #[derive(Clone, Copy, Debug)]
-pub struct Bottle {
+pub struct ChapinShip {
     pub name: &'static str,
-    pub mesh: usize,
+    pub lods: [usize; 3],
+    pub length: f64,
+    pub material: Material,
+    pub pitch: f64,
     pub exhaust: Exhaust,
 }
+
+/// Los vehiculos chapines (modelados en Blender para este proyecto): nombre,
+/// archivo en `assets/naves`, largo en el juego y escape. Los largos guardan
+/// la proporcion de los de verdad (3.3, 9.6 y 4.6 m), la camioneta un poco
+/// achicada.
+const VEHICLES: [(&str, &str, f64, Exhaust); 3] = [
+    ("Tuk-Tuk Elena", "01-tuk-tuk-elena", 4.8, Exhaust::Sparks),
+    (
+        "La Mamaneta",
+        "02-la-mamaneta",
+        12.0,
+        Exhaust::Flame(Vec3::new(1.4, 0.55, 0.12), Vec3::new(0.5, 0.06, 0.02)),
+    ),
+    (
+        "Colectivo Q.5",
+        "03-colectivo-q5",
+        6.6,
+        Exhaust::Flame(Vec3::new(1.3, 0.25, 0.9), Vec3::new(0.1, 0.35, 0.9)),
+    ),
+];
 
 /// Las naves botella: nombre, archivo en `assets/botellas` y su escape.
 const BOTTLES: [(&str, &str, Exhaust); 6] = [
@@ -366,24 +389,48 @@ impl System {
         // Las naves botella: en los OBJ la botella esta parada sobre +Z con la
         // etiqueta hacia +Y. Vuelan con el pico adelante (-Z) y la etiqueta
         // arriba (+Y): media vuelta alrededor de Y.
-        let mut bottles = Vec::new();
+        let mut chapin_ships = Vec::new();
         for &(name, file, exhaust) in &BOTTLES {
             let mut mesh = load_obj(&assets.join("botellas").join(format!("{file}-low.obj")))?;
             mesh.deform(|p| Vec3::new(-p.x, p.y, -p.z));
             mesh.normalize_size(config::BOTTLE_LENGTH as f32);
-            bottles.push(Bottle {
+            chapin_ships.push(ChapinShip {
                 name,
-                mesh: meshes.len(),
+                lods: [meshes.len(); 3],
+                length: config::BOTTLE_LENGTH,
+                material: Material::Bottle,
+                pitch: config::BOTTLE_PITCH,
                 exhaust,
             });
             meshes.push(mesh);
+        }
+        // Los vehiculos: en los OBJ el frente es +X y arriba +Z; vuelan con
+        // el frente en -Z y arriba +Y (un giro, sin espejo). De cerca la
+        // version media; de lejos, la baja.
+        for &(name, file, length, exhaust) in &VEHICLES {
+            let first = meshes.len();
+            for detail in ["medium", "low"] {
+                let mut mesh = load_vehicle(&assets.join("naves").join(format!("{file}-{detail}.obj")))?;
+                mesh.deform(|p| Vec3::new(-p.y, p.z, -p.x));
+                mesh.normalize_size(length as f32);
+                meshes.push(mesh);
+            }
+            chapin_ships.push(ChapinShip {
+                name,
+                lods: [first, first, first + 1],
+                length,
+                material: Material::Vehicle,
+                pitch: 0.0,
+                exhaust,
+            });
         }
         let seed = config::NOISE_SEED;
 
         let star = Body {
             name: "Ocaso",
             label: "Ocaso",
-            radius: 320.0,
+            // El cuerpo mas grande del sistema (Vigia mide 540).
+            radius: 560.0,
             pulse: 0.012,
             orbit_radius: 0.0,
             orbit_period: 1.0,
@@ -410,7 +457,9 @@ impl System {
         let (mut pira, pira_terrain, pira_air) = PlanetSpec {
             name: "Pira",
             radius: 110.0,
-            orbit: 800.0,
+            // Pegada a la estrella, pero afuera de ella aun hinchada (605) y
+            // antes de Jardin (que empieza en 1100).
+            orbit: 950.0,
             period: 260.0,
             phase: 2.4,
             inclination: 0.0,
@@ -512,27 +561,64 @@ impl System {
         }
         .build();
 
-        let (mut cementerio, cementerio_terrain, _) = PlanetSpec {
+        // Cementerio: el lugar de la Capital, que solo existe en la version
+        // chapina. En OCASO su orbita es de Faro y aqui no hay nada: sin
+        // relieve, sin anillos, sin aire y sin dibujarse (el material nunca
+        // se usa). Lo de la Capital lo arma `build_chapin` con su nombre.
+        let cementerio = Body {
             name: "Cementerio",
+            label: "Cementerio",
             radius: 140.0,
-            orbit: 5200.0,
-            period: 2600.0,
-            phase: 3.1,
-            inclination: -0.06,
-            spin: 170.0,
-            tilt: 0.55,
-            gravity: 3.5,
-            material: Material::Cementerio,
-            surface: Arc::new(CementerioField::new(seed ^ 0xCE3)),
-            // Sin aire: la roca muerta se ve con sombras duras.
-            atmosphere: None,
-        }
-        .build();
-        cementerio.rings = Some(Rings {
-            inner: 1.7,
-            outer: 3.1,
-            style: RingStyle::Wrecks,
-        });
+            pulse: 0.0,
+            orbit_radius: 5200.0,
+            orbit_period: 2600.0,
+            orbit_phase: 3.1,
+            orbit_inclination: -0.06,
+            spin_period: 170.0,
+            spin_phase: 0.0,
+            axial_tilt: 0.55,
+            mu: 3.5 * 140.0 * 140.0,
+            soi: 140.0 * 6.0,
+            mesh: 0,
+            material: Material::Chapin(Chapin::Capital),
+            surface: None,
+            rings: None,
+            hidden: true,
+            absent: true,
+            host: None,
+        };
+
+        // Faro: la estrella de neutrones, con sus proporciones reales (1
+        // unidad = 500 m).
+        let faro = Body {
+            name: "Faro",
+            label: "Faro",
+            radius: super::faro::RADIUS,
+            pulse: 0.0,
+            orbit_radius: 5200.0,
+            orbit_period: 2600.0,
+            orbit_phase: 3.1,
+            orbit_inclination: -0.06,
+            // Para la nave, Faro no gira: no hay suelo con el cual girar (el
+            // modo local llevaria la nave y la mira con un giro de 2 s). Su
+            // giro real lo lleva `faro::turn_at`.
+            spin_period: 0.0,
+            spin_phase: 0.0,
+            axial_tilt: 0.1,
+            // La gravedad de juego de un planeta chico (2 en la superficie,
+            // menos que la de Pira): la de verdad (1e11 veces la de la
+            // Tierra) no dejaria acercarse, y con mas los motores no sacan a
+            // la nave de junto a ella.
+            mu: 2.0 * super::faro::RADIUS * super::faro::RADIUS,
+            soi: 1800.0,
+            mesh: 0,
+            material: Material::Faro,
+            surface: None,
+            rings: None,
+            hidden: false,
+            absent: false,
+            host: None,
+        };
         // Anillos delgados de polvo, por dentro de la orbita de su luna.
         vigia.rings = Some(Rings {
             inner: 1.45,
@@ -595,16 +681,17 @@ impl System {
         xela.hidden = true;
 
         let mut system = Self {
-            bodies: vec![star, pira, jardin, vigia, argos, cementerio, parpado, xela],
+            bodies: vec![star, pira, jardin, vigia, argos, cementerio, parpado, xela, faro],
             terrains: vec![
                 None,
                 Some(pira_terrain),
                 Some(jardin_terrain),
                 Some(vigia_terrain),
                 Some(argos_terrain),
-                Some(cementerio_terrain),
+                None,
                 Some(parpado_terrain),
                 Some(xela_terrain),
+                None,
             ],
             atmospheres: vec![
                 None,
@@ -614,6 +701,7 @@ impl System {
                 argos_air,
                 None,
                 parpado_air,
+                None,
                 None,
             ],
             meshes,
@@ -630,7 +718,7 @@ impl System {
             prop_models: props::build_models(),
             props: Vec::new(),
             prop_seed: config::PROP_SEED,
-            star_base: 320.0,
+            star_base: 560.0,
             eye_body: 3,
             sites: Vec::new(),
             version: Version::Ocaso,
@@ -638,7 +726,7 @@ impl System {
             other_sites: Vec::new(),
             other_sky: SkyCube::bake(config::SKY_SIZE, seed ^ 0xC4A9, SkyStyle::Chapin),
             other_seed: config::PROP_SEED,
-            bottles,
+            chapin_ships,
         };
         system.sites = system.build_sites();
         system.scatter_props(config::PROP_SEED);
@@ -658,7 +746,8 @@ impl System {
                         material: body.material,
                         surface: body.surface.clone(),
                         rings: body.rings,
-                        absent: false,
+                        // Faro no existe en la version chapina.
+                        absent: body.name == "Faro",
                         terrain: None,
                         atmosphere: None,
                         props: PropSet::default(),
@@ -720,9 +809,15 @@ impl System {
                     name,
                     normal,
                     forward,
-                    view: Self::SITE_VIEW,
+                    view: chapin::site_view(body.name).unwrap_or(Self::SITE_VIEW),
                 });
             }
+        }
+        // La carrera del Periferico se ofrece en el aire sobre la capital
+        // (los shucos, abajo en el Reformador): una parada mas de N, arriba
+        // del Reformador y mirando hacia el horizonte, donde pasa el anillo.
+        if let Some(reformador) = sites.iter().find(|s| s.name == "El Reformador").copied() {
+            sites.push(Site { name: "El Periferico", view: (120.0, 90.0, 30.0), ..reformador });
         }
         sites
     }
@@ -783,7 +878,7 @@ impl System {
 
     /// Los lugares para visitar. En Pira (que le da siempre la misma cara a
     /// la estrella) y en Argos quedan cerca del terminador: la estrella baja
-    /// en el horizonte marca el relieve. En Cementerio, al pie de la baliza.
+    /// en el horizonte marca el relieve.
     fn build_sites(&self) -> Vec<Site> {
         let t = 40.0;
         let local = |index: usize, normal: DVec3, toward: DVec3| {
@@ -812,11 +907,6 @@ impl System {
             let (normal, forward) = local(i, (to_star * 0.35 - side * 0.85 + up * 0.4).normalize(), to_star);
             sites.push(Site { body: i, name: "El nido", normal, forward, view: Self::SITE_VIEW });
         }
-        if let Some(i) = self.find("Cementerio") {
-            let normal = DVec3::new(0.32, 0.22, 0.92).normalize();
-            let forward = normal.cross(DVec3::Y).normalize();
-            sites.push(Site { body: i, name: "La baliza", normal, forward, view: Self::SITE_VIEW });
-        }
         // En la luna de Vigia, a la orilla del lago: Vigia del otro lado del
         // agua, con su ojo mirando y reflejado.
         if let Some(i) = self.find("Parpado") {
@@ -829,6 +919,21 @@ impl System {
                 normal,
                 forward,
                 view: (3.0, 6.0, 6.0),
+            });
+        }
+        // Faro no tiene suelo: se llega por encima de su ecuador, donde los
+        // haces barren, mirando a la estrella (el objetivo de la vista cae en
+        // su centro: altura * 0.25 + elevacion = -radio).
+        if let Some(i) = self.find("Faro") {
+            let normal = DVec3::new(0.85, 0.3, 0.43).normalize();
+            let forward = DVec3::Y.cross(normal).normalize();
+            let altitude = 16.0 * super::faro::RADIUS;
+            sites.push(Site {
+                body: i,
+                name: "El faro",
+                normal,
+                forward,
+                view: (altitude, 9.0 * super::faro::RADIUS, -(altitude * 0.25 + super::faro::RADIUS)),
             });
         }
         sites

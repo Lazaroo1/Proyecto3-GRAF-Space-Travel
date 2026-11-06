@@ -85,10 +85,18 @@ pub struct Bloom {
     kernel: Vec<f32>,
     /// Peso de cada nivel en el compuesto: caida geometrica, normalizada.
     weights: Vec<f32>,
+    /// Por debajo de esto una reduccion o ampliacion va en serie.
+    parallel_min: usize,
 }
 
 impl Bloom {
     pub fn new(width: usize, height: usize) -> Self {
+        Self::with_falloff(width, height, config::BLOOM_FALLOFF)
+    }
+
+    /// Igual, con otra caida del peso de cada nivel: con menos, el nucleo
+    /// pesa mas que la cola ancha (la carrera lo usa asi).
+    pub fn with_falloff(width: usize, height: usize, falloff: f32) -> Self {
         let mut levels = Vec::new();
         let mut blurred = Vec::new();
         let (mut w, mut h) = ((width / 2).max(1), (height / 2).max(1));
@@ -99,7 +107,7 @@ impl Bloom {
             h = (h / 2).max(1);
         }
         let raw: Vec<f32> = (0..config::BLOOM_LEVELS)
-            .map(|i| config::BLOOM_FALLOFF.powi(i as i32))
+            .map(|i| falloff.powi(i as i32))
             .collect();
         let total: f32 = raw.iter().sum();
         Self {
@@ -107,7 +115,16 @@ impl Bloom {
             blurred,
             kernel: gaussian_kernel(config::BLOOM_RADIUS, config::BLOOM_SIGMA),
             weights: raw.iter().map(|w| w / total).collect(),
+            parallel_min: PARALLEL_MIN,
         }
+    }
+
+    /// Igual, repartiendo entre hilos tambien los niveles chicos (desde
+    /// `min` texeles por hilo): la carrera arma la piramide a un cuarto de
+    /// la pantalla y ahi casi todos los niveles quedaban en serie.
+    pub fn with_parallel_min(mut self, min: usize) -> Self {
+        self.parallel_min = min.max(1);
+        self
     }
 
     /// Nivel 0, donde cada tile deja su brillo.
@@ -124,7 +141,7 @@ impl Bloom {
     pub fn process(&mut self) {
         for i in 1..self.levels.len() {
             let (larger, smaller) = self.levels.split_at_mut(i);
-            downsample(&larger[i - 1], &mut smaller[0]);
+            downsample(&larger[i - 1], &mut smaller[0], self.parallel_min);
         }
         blur_all(&self.levels, &mut self.blurred, &self.kernel);
         let last = self.blurred.len() - 1;
@@ -134,7 +151,7 @@ impl Bloom {
         }
         for i in (0..last).rev() {
             let (larger, smaller) = self.blurred.split_at_mut(i + 1);
-            upsample_add(&smaller[0], &mut larger[i], self.weights[i]);
+            upsample_add(&smaller[0], &mut larger[i], self.weights[i], self.parallel_min);
         }
     }
 }
@@ -176,11 +193,11 @@ pub fn extract_tile(
 }
 
 /// Reduce a la mitad con un filtro de caja de 2x2.
-fn downsample(src: &MipLevel, dst: &mut MipLevel) {
+fn downsample(src: &MipLevel, dst: &mut MipLevel, parallel_min: usize) {
     let (src_w, src_h) = (src.width, src.height);
     let src_pixels = &src.pixels;
     let dst_w = dst.width;
-    parallel::chunks_mut(&mut dst.pixels, dst_w, PARALLEL_MIN, |y, row| {
+    parallel::chunks_mut(&mut dst.pixels, dst_w, parallel_min, |y, row| {
         let y0 = (2 * y).min(src_h - 1) * src_w;
         let y1 = (2 * y + 1).min(src_h - 1) * src_w;
         for (x, out) in row.iter_mut().enumerate() {
@@ -263,9 +280,9 @@ fn blur_row(line: &[Vec3], out: &mut [Vec3], kernel: &[f32]) {
 }
 
 /// `dst = dst * weight + src ampliado`, con muestreo bilineal.
-fn upsample_add(src: &MipLevel, dst: &mut MipLevel, weight: f32) {
+fn upsample_add(src: &MipLevel, dst: &mut MipLevel, weight: f32, parallel_min: usize) {
     let (w, h) = (dst.width, dst.height);
-    parallel::chunks_mut(&mut dst.pixels, w, PARALLEL_MIN, |y, row| {
+    parallel::chunks_mut(&mut dst.pixels, w, parallel_min, |y, row| {
         let v = (y as f32 + 0.5) / h as f32;
         for (x, out) in row.iter_mut().enumerate() {
             let u = (x as f32 + 0.5) / w as f32;

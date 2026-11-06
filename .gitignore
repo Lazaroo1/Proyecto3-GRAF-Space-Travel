@@ -31,3 +31,6 @@ rustc-ice-*.txt
 
 # Cache de Python de los scripts de tools/
 __pycache__/
+
+# Records y ajustes de los minijuegos (de quien juega)
+/minijuegos.txt

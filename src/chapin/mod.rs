@@ -14,8 +14,9 @@
 //! | Vigia | Atitlan: un mundo lago con tres volcanes ([atitlan.rs]) |
 //! | Parpado | Semuc Champey: pozas turquesa ([semuc.rs]) |
 //! | Argos | Los Cuchumatanes y San Andres Xecul ([cuchumatanes.rs]) |
-//! | (nueva) | La Luna de Xelaju, luna de los Cuchumatanes ([xela.rs]) |
-//! | Cementerio | La capital: camionetas y la Torre del Reformador ([capital.rs]) |
+//! | (nueva) | La Luna de Xelaju, luna de los Cuchumatanes, y su marimba ([xela.rs]) |
+//! | Faro | No existe: su orbita es de la capital |
+//! | (nueva, cuerpo `Cementerio`) | La capital: camionetas y la Torre del Reformador ([capital.rs]) |
 //! | El final (J) | No hay: Kinich Ajaw no se apaga ni late |
 //!
 //! Cada planeta vive en su archivo y da lo mismo: su `spec` (nombre,
@@ -125,6 +126,17 @@ pub fn site(name: &str, default: (DVec3, DVec3)) -> Option<(&'static str, DVec3,
         "Parpado" => semuc::site(default),
         "Argos" => cuchumatanes::site(default),
         "Cementerio" => capital::site(default),
+        "Xela" => xela::site(default),
+        _ => None,
+    }
+}
+
+/// Como se llega a ver el lugar de un cuerpo (altura, distancia antes y
+/// cuanto mas arriba mirar), si no es la de siempre: la Luna de Xelaju es
+/// tan chica que desde lejos su suelo ya se curva.
+pub fn site_view(name: &str) -> Option<(f64, f64, f64)> {
+    match name {
+        "Xela" => Some(xela::SITE_VIEW),
         _ => None,
     }
 }
@@ -179,6 +191,7 @@ pub fn mesh(kind: PropKind, detail: usize) -> Mesh {
         PropKind::Lancha => atitlan::mesh(kind, detail),
         PropKind::Iglesia | PropKind::Pino | PropKind::Puesto => cuchumatanes::mesh(kind, detail),
         PropKind::Camioneta | PropKind::Torre | PropKind::Edificio | PropKind::Rascacielos => capital::mesh(kind, detail),
+        PropKind::Marimba => xela::mesh(detail),
         _ => unreachable!("{kind:?} no es un objeto chapin"),
     }
 }
@@ -194,6 +207,7 @@ pub fn shade_prop(kind: PropKind, f: &Fragment, u: &Uniforms, style: &PropStyle,
         PropKind::Camioneta | PropKind::Torre | PropKind::Edificio | PropKind::Rascacielos => {
             capital::shade_prop(kind, f, u, style, sun)
         }
+        PropKind::Marimba => xela::shade_prop(f, u, style, sun),
         _ => Vec3::ZERO,
     }
 }

@@ -1,7 +1,7 @@
 //! Constructor de mallas procedurales.
 //!
-//! Los modelos de la superficie (ojos, hongos, corales, naufragios) se
-//! arman con codigo a partir de primitivas: cajas, troncos de cono,
+//! Los modelos de la superficie (ojos, hongos, corales, geiseres, edificios)
+//! se arman con codigo a partir de primitivas: cajas, troncos de cono,
 //! elipsoides y tubos. Cada primitiva genera posiciones, normales, uv y
 //! tangentes; las tangentes apuntan hacia donde crece la `u` de la textura,
 //! que es lo que necesita el mapeo de normales.
@@ -16,9 +16,6 @@ use crate::math::{Vec2, Vec3, Vec4};
 pub struct MeshBuilder {
     mesh: Mesh,
     color: Vec3,
-    /// Con `Some(s)`, las caras planas reciben uv en unidades del mundo (una
-    /// repeticion de la textura cada `s`) en vez de 0 a 1 por cara.
-    uv_world: Option<f32>,
 }
 
 /// Dos ejes perpendiculares a `axis` (unitario), para armar anillos.
@@ -39,7 +36,6 @@ impl MeshBuilder {
         Self {
             mesh: Mesh::default(),
             color: Vec3::ONE,
-            uv_world: None,
         }
     }
 
@@ -47,23 +43,6 @@ impl MeshBuilder {
     pub fn color(&mut self, color: Vec3) -> &mut Self {
         self.color = color;
         self
-    }
-
-    /// Uv de las caras planas que se agreguen despues: `Some(s)` repite la
-    /// textura cada `s` unidades (las placas de un casco no se estiran en
-    /// las caras largas); `None` va de 0 a 1 en cada cara.
-    pub fn uv_world(&mut self, size: Option<f32>) -> &mut Self {
-        self.uv_world = size;
-        self
-    }
-
-    /// Uv de un punto de una cara plana que empieza en `origin`, con
-    /// `tangent` (unitaria) como eje u y `bitangent` como eje v.
-    fn planar_uv(&self, p: Vec3, origin: Vec3, tangent: Vec3, bitangent: Vec3, fallback: Vec2) -> Vec2 {
-        match self.uv_world {
-            Some(size) => Vec2::new((p - origin).dot(tangent) / size, (p - origin).dot(bitangent) / size),
-            None => fallback,
-        }
     }
 
     fn vertex(&mut self, p: Vec3, n: Vec3, uv: Vec2, tangent: Vec4) -> u32 {
@@ -82,38 +61,29 @@ impl MeshBuilder {
     pub fn quad(&mut self, p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3) {
         let normal = (p1 - p0).cross(p3 - p0).normalize();
         let tangent = (p1 - p0).normalize();
-        let bitangent = normal.cross(tangent);
         let t = Vec4::new(tangent.x, tangent.y, tangent.z, 1.0);
-        let uv = |s: &Self, p, fallback| s.planar_uv(p, p0, tangent, bitangent, fallback);
-        let (uv0, uv1) = (uv(self, p0, Vec2::new(0.0, 0.0)), uv(self, p1, Vec2::new(1.0, 0.0)));
-        let (uv2, uv3) = (uv(self, p2, Vec2::new(1.0, 1.0)), uv(self, p3, Vec2::new(0.0, 1.0)));
-        let a = self.vertex(p0, normal, uv0, t);
-        let b = self.vertex(p1, normal, uv1, t);
-        let c = self.vertex(p2, normal, uv2, t);
-        let d = self.vertex(p3, normal, uv3, t);
+        let a = self.vertex(p0, normal, Vec2::new(0.0, 0.0), t);
+        let b = self.vertex(p1, normal, Vec2::new(1.0, 0.0), t);
+        let c = self.vertex(p2, normal, Vec2::new(1.0, 1.0), t);
+        let d = self.vertex(p3, normal, Vec2::new(0.0, 1.0), t);
         self.mesh.indices.push([a, b, c]);
         self.mesh.indices.push([a, c, d]);
     }
 
     /// Triangulo plano.
     pub fn triangle(&mut self, p0: Vec3, p1: Vec3, p2: Vec3) {
-        self.triangle_framed(p0, p1, p2, p0, (p1 - p0).normalize());
+        self.triangle_along(p0, p1, p2, (p1 - p0).normalize());
     }
 
-    /// Triangulo plano cuyo uv (en modo `uv_world`) se mide desde `origin`
-    /// con `tangent` como eje u. Los triangulos de una tapa comparten ese
-    /// marco y la textura sigue de uno al otro sin cortes.
-    fn triangle_framed(&mut self, p0: Vec3, p1: Vec3, p2: Vec3, origin: Vec3, tangent: Vec3) {
+    /// Triangulo plano con la tangente sobre `tangent` (llevada al plano del
+    /// triangulo): los triangulos de una tapa comparten el mismo eje.
+    fn triangle_along(&mut self, p0: Vec3, p1: Vec3, p2: Vec3, tangent: Vec3) {
         let normal = (p1 - p0).cross(p2 - p0).normalize();
         let tangent = (tangent - normal * tangent.dot(normal)).normalize();
-        let bitangent = normal.cross(tangent);
         let t = Vec4::new(tangent.x, tangent.y, tangent.z, 1.0);
-        let uv0 = self.planar_uv(p0, origin, tangent, bitangent, Vec2::new(0.0, 0.0));
-        let uv1 = self.planar_uv(p1, origin, tangent, bitangent, Vec2::new(1.0, 0.0));
-        let uv2 = self.planar_uv(p2, origin, tangent, bitangent, Vec2::new(0.5, 1.0));
-        let a = self.vertex(p0, normal, uv0, t);
-        let b = self.vertex(p1, normal, uv1, t);
-        let c = self.vertex(p2, normal, uv2, t);
+        let a = self.vertex(p0, normal, Vec2::new(0.0, 0.0), t);
+        let b = self.vertex(p1, normal, Vec2::new(1.0, 0.0), t);
+        let c = self.vertex(p2, normal, Vec2::new(0.5, 1.0), t);
         self.mesh.indices.push([a, b, c]);
     }
 
@@ -160,22 +130,15 @@ impl MeshBuilder {
         let slope = (r0 - r1) / height;
         if smooth {
             let first = self.mesh.positions.len() as u32;
-            // En unidades del mundo: u a lo largo de la circunferencia media,
-            // con un numero entero de repeticiones para que la textura cierre
-            // sin costura donde la vuelta empieza y termina.
-            let (u_span, v_span) = match self.uv_world {
-                Some(size) => ((std::f32::consts::PI * (r0 + r1) / size).round().max(1.0), height / size),
-                None => (1.0, 1.0),
-            };
             for i in 0..=segments {
                 let a = i as f32 / segments as f32 * std::f32::consts::TAU;
                 let radial = u * a.cos() + w * a.sin();
                 let normal = (radial + axis * slope).normalize();
                 let tangent = (-u * a.sin() + w * a.cos()).normalize();
                 let t = Vec4::new(tangent.x, tangent.y, tangent.z, 1.0);
-                let s = i as f32 / segments as f32 * u_span;
+                let s = i as f32 / segments as f32;
                 self.vertex(base + radial * r0, normal, Vec2::new(s, 0.0), t);
-                self.vertex(top + radial * r1, normal, Vec2::new(s, v_span), t);
+                self.vertex(top + radial * r1, normal, Vec2::new(s, 1.0), t);
             }
             for i in 0..segments as u32 {
                 let (a, b) = (first + 2 * i, first + 2 * i + 1);
@@ -195,12 +158,12 @@ impl MeshBuilder {
         }
         if caps.0 {
             for i in 0..segments {
-                self.triangle_framed(base, ring(i + 1, r0, base), ring(i, r0, base), base, u);
+                self.triangle_along(base, ring(i + 1, r0, base), ring(i, r0, base), u);
             }
         }
         if caps.1 && r1 > 1e-5 {
             for i in 0..segments {
-                self.triangle_framed(top, ring(i, r1, top), ring(i + 1, r1, top), top, u);
+                self.triangle_along(top, ring(i, r1, top), ring(i + 1, r1, top), u);
             }
         }
     }
@@ -295,28 +258,6 @@ impl MeshBuilder {
                 self.mesh.indices.push([a, b + 1, b]);
                 self.mesh.indices.push([a, a + 1, b + 1]);
             }
-        }
-    }
-
-    /// Cuantos vertices y triangulos hay hasta ahora (para `flip`).
-    pub fn mark(&self) -> (usize, usize) {
-        (self.mesh.positions.len(), self.mesh.indices.len())
-    }
-
-    /// Da vuelta todo lo agregado desde `mark`: las caras miran al otro
-    /// lado. Sirve para las paredes de adentro de algo abierto.
-    pub fn flip(&mut self, mark: (usize, usize)) {
-        let m = &mut self.mesh;
-        for n in &mut m.normals[mark.0..] {
-            *n = -*n;
-        }
-        // Con la normal invertida, la bitangente (n x t * w) cambiaria de
-        // lado: se corrige el signo para que v siga creciendo igual.
-        for t in &mut m.tangents[mark.0..] {
-            t.w = -t.w;
-        }
-        for tri in &mut m.indices[mark.1..] {
-            tri.swap(1, 2);
         }
     }
 

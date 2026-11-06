@@ -50,7 +50,7 @@ pub fn shade_tile(tile: usize, vis: &[VisPixel], out: &mut [Vec3], ctx: &ShadeCo
             let dir = ctx.view.pixel_direction(px, py, inv_width, inv_height);
             let sky = pixel.id == VisPixel::EMPTY_ID;
             let (color, depth) = match (sky, ctx.uniforms.black_hole) {
-                (true, None) => (shaders::sky(dir, ctx.uniforms), f32::INFINITY),
+                (true, None) => (shaders::lensed_sky(dir, ctx.uniforms), f32::INFINITY),
                 // Con Gargantua el cielo se ve a traves de su lente.
                 (true, Some(hole)) => {
                     ctx.gas_field
