@@ -127,10 +127,11 @@ pub fn race(app: &App, records: Records) -> carrera::Carrera {
     let chosen = app.chapin_ship.min(ships.len().saturating_sub(1));
     let player = Class::of_ship(chosen);
     let bottle = if player == Class::Chela { chosen } else { 0 };
-    // La botella va con la boca un poco arriba: de atras se le ve la
-    // etiqueta y no solo el fondo.
+    // La botella va con la boca un poco arriba (0.2 rad): de atras se le ve
+    // la etiqueta y no solo el fondo. (Con 0.35 parecia una botella que se
+    // cae.)
     let mut chela = app.system.meshes[ships[bottle].lods[0]].clone();
-    let (sin, cos) = 0.35f32.sin_cos();
+    let (sin, cos) = 0.2f32.sin_cos();
     chela.deform(|p| crate::math::Vec3::new(p.x, p.y * cos - p.z * sin, p.y * sin + p.z * cos));
     // Cuanto mide en metros una unidad de cada modelo.
     let meters = |class: Class, index: usize| class.length() / ships[index].length as f32;
@@ -302,6 +303,64 @@ mod tests {
         app.toggle_version();
         app.update(1.0 / 60.0, &FrameInput::default());
         assert_eq!(available(&app), None, "en OCASO la luna no existe");
+    }
+
+    /// La carrera con las naves de verdad: cuanto cuesta cada cosa a 1280 x
+    /// 720 y fotos con freno y con turbo (`OCASO_NAVE=8 OCASO_T=16
+    /// OCASO_PNG=carpeta cargo test --release perfil_carrera -- --ignored
+    /// --nocapture`).
+    #[test]
+    #[ignore = "mide tiempos y guarda fotos"]
+    fn perfil_carrera() {
+        let (w, h) = (1280, 720);
+        let mut app = App::new(w, h).unwrap();
+        let ship: usize = std::env::var("OCASO_NAVE").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
+        app.chapin_ship = ship.clamp(1, 9) - 1;
+        let capital = PRESETS.iter().find(|p| p.name == "51_capital").unwrap();
+        app.apply_preset(capital);
+        let at: f32 = std::env::var("OCASO_T").ok().and_then(|v| v.parse().ok()).unwrap_or(16.0);
+        let t = std::time::Instant::now();
+        let mut game = race(&app, Records::in_memory());
+        println!("horneado {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
+        game.set_autopilot(true);
+        game.start();
+        let dt = 1.0 / 60.0;
+        let mut elapsed = 0.0;
+        while elapsed < at {
+            game.update(dt, &Keys::default());
+            elapsed += dt as f32;
+        }
+        // Como la foto de la loma: hasta entrar a un tunel de arcos.
+        if std::env::var("OCASO_TUNEL").is_ok() {
+            while elapsed < at + 20.0 && !game.in_tunnel() {
+                game.update(dt, &Keys::default());
+                elapsed += dt as f32;
+            }
+        }
+        let mut rgba = vec![0u8; w * h * 4];
+        game.draw(&mut rgba);
+        game.bench_items(&mut rgba);
+        let Ok(dir) = std::env::var("OCASO_PNG") else { return };
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut save = |game: &mut carrera::Carrera, name: &str| {
+            game.draw(&mut rgba);
+            let path = std::path::Path::new(&dir).join(format!("{name}.png"));
+            crate::render::png::write_rgba(&path, w as u32, h as u32, &rgba).unwrap();
+        };
+        // Cuatro seguidas (las LEDs que corren), con freno y con turbo.
+        for k in 0..4 {
+            save(&mut game, &format!("seguidas_{k}"));
+            game.update(0.1, &Keys::default());
+        }
+        game.force(1.0, false);
+        save(&mut game, "freno");
+        game.force(0.0, true);
+        game.boost_rivals();
+        for k in 0..3 {
+            game.update(dt, &Keys::default());
+            game.force(0.0, true);
+            save(&mut game, &format!("turbo_{k}"));
+        }
     }
 
     #[test]

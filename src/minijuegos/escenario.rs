@@ -202,19 +202,21 @@ fn halve(image: &[[f32; 4]], side: usize) -> Vec<[f32; 4]> {
     out
 }
 
-/// De la imagen en flotantes al sprite RGBA8. No lleva emision guardada
-/// (`emit` vacio): quien lo pega la saca de su color (`0.45 max(rgb)`).
+/// De la imagen en flotantes al sprite RGBA8. No lleva luz de LEDs
+/// (`glow` vacio): quien lo pega la saca de su color (`0.45 max(rgb)`).
 fn to_sprite(image: &[[f32; 4]], side: usize) -> Sprite {
     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
     Sprite {
         width: side,
         height: side,
         pixels: image.iter().map(|p| [byte(p[0]), byte(p[1]), byte(p[2]), byte(p[3])]).collect(),
-        emit: Vec::new(),
+        glow: Vec::new(),
+        texels: Vec::new(),
         spans: vec![(0, side.min(u16::MAX as usize) as u16); side],
         solid: vec![(0, 0); side],
         anchor: (side as f32 * 0.5, side as f32 * 0.5),
         scale: side as f32 / (2.0 * KITE_EXTENT),
+        levels: Vec::new(),
     }
 }
 
@@ -246,7 +248,7 @@ mod tests {
         assert!((mean(big) - want).abs() < 3.0, "{} {want}", mean(big));
         for m in &mips {
             assert_eq!(m.pixels.len(), m.width * m.height);
-            assert!(m.spans.len() == m.height && m.emit.is_empty());
+            assert!(m.spans.len() == m.height && m.glow.is_empty());
         }
     }
 
