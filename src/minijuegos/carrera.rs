@@ -845,7 +845,7 @@ impl Carrera {
         let mut jobs = Vec::new();
         for m in &models {
             for &yaw in &yaws {
-                jobs.push(hornear::Job { mesh: m.mesh, finish: m.finish, yaw, elevation: RIVAL_ELEVATION, meters: m.meters, pixels_per_meter: 46.0 * s });
+                jobs.push(hornear::Job { mesh: m.mesh, finish: m.finish, yaw, elevation: RIVAL_ELEVATION, meters: m.meters, pixels_per_meter: 46.0 * s, eye: 0.0, rise: 0.0 });
             }
         }
         // La propia, de cerca: tal como la ve la camara, a su tamano en
@@ -854,14 +854,22 @@ impl Carrera {
         let (back, up) = camera_offset(spec);
         let model = &models[player.index()];
         let elevation = ((up - spec.height * 0.45) / back).atan();
+        // La perspectiva del horneado: la camara a `1.5 (back - largo / 2)`
+        // de la cola (de verdad esta a `back - largo / 2`, pero tan de cerca
+        // la cola salia el doble y la camioneta se salia de la pantalla; un
+        // poco mas lejos es como un lente largo), con el punto de fuga en
+        // el centro de la nave (en el horizonte, el techo se alargaba de mas
+        // con la vista desde arriba del horneado).
+        let eye = 1.5 * (back - 0.5 * spec.length).max(1.0);
+        let rise = 0.0;
         for k in 0..PLAYER_YAWS {
             let yaw = (k as f32 - (PLAYER_YAWS / 2) as f32) * PLAYER_YAW_STEP;
-            jobs.push(hornear::Job { mesh: model.mesh, finish: model.finish, yaw, elevation, meters: model.meters, pixels_per_meter: focal / back });
+            jobs.push(hornear::Job { mesh: model.mesh, finish: model.finish, yaw, elevation, meters: model.meters, pixels_per_meter: focal / back, eye, rise });
         }
         // Las latas del trafico, vistas como las rivales.
         for m in cans {
             for &yaw in &yaws {
-                jobs.push(hornear::Job { mesh: m.mesh, finish: m.finish, yaw, elevation: RIVAL_ELEVATION, meters: m.meters, pixels_per_meter: 46.0 * s });
+                jobs.push(hornear::Job { mesh: m.mesh, finish: m.finish, yaw, elevation: RIVAL_ELEVATION, meters: m.meters, pixels_per_meter: 46.0 * s, eye: 0.0, rise: 0.0 });
             }
         }
         let mut baked = hornear::bake_all(&jobs);
