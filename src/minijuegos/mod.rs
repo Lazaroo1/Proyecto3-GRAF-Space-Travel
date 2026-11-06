@@ -29,6 +29,7 @@ pub mod figuras;
 pub mod hornear;
 pub mod lienzo;
 pub mod marimba;
+pub mod personaje;
 pub mod posproceso;
 pub mod shucos;
 pub mod surfers;

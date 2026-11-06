@@ -27,7 +27,10 @@ use std::f32::consts::{PI, TAU};
 
 use super::carrera::value_noise;
 use super::figuras::{Canvas, paint};
+use super::hornear::Sprite;
 use super::lienzo;
+use super::personaje::{self, RUN_FRAMES};
+use std::sync::Arc;
 use super::{Align, Font, Keys, Minigame, Overlay, Records};
 use crate::audio::SAMPLE_RATE;
 use crate::math::{Vec3, hash_u32, smoothstep};
@@ -266,6 +269,9 @@ pub struct CamionetaSurfers {
     wall: f32,
     done: bool,
     autopilot: bool,
+    /// Meyer horneado (los cuadros de la carrera y el del salto), si esta
+    /// el modelo; si no, se dibuja un patojo con figuras.
+    meyer: Option<Arc<Vec<Sprite>>>,
     auto_wait: f32,
     message: Option<(&'static str, f32)>,
     // El sonido.
@@ -305,6 +311,7 @@ impl CamionetaSurfers {
             wall: 0.0,
             done: false,
             autopilot: false,
+            meyer: None,
             auto_wait: 0.0,
             message: None,
             pending: Vec::new(),
@@ -315,6 +322,11 @@ impl CamionetaSurfers {
             march: 0.0,
             step_at: 0.0,
         };
+        // Meyer, horneado desde la camara del juego: de espaldas, desde
+        // `atan((alto de la camara - 0.9) / atras)` arriba, a los pixeles por
+        // metro de donde corre.
+        let elevation = ((CAM_UP - 0.9) / CAM_BACK).atan();
+        game.meyer = personaje::meyer(elevation, game.focal / CAM_BACK);
         game.reset();
         game
     }
@@ -618,7 +630,7 @@ impl CamionetaSurfers {
         r.roll = (r.roll - dt).max(0.0);
         let before_z = r.z;
         r.z += r.v * dt;
-        r.phase += dt * r.v * 0.55;
+        r.phase += dt * r.v * 0.75;
         // Lo que viene de frente avanza hacia atras.
         for o in &mut self.obstacles {
             o.z -= o.v * dt;
@@ -1129,6 +1141,36 @@ impl CamionetaSurfers {
     }
 }
 
+/// Pega en la fila `yf` un sprite horneado (premultiplicado) con su ancla
+/// en `at` (donde pisa, en la pantalla) a `scale` pixeles de pantalla por
+/// pixel del sprite, detras de lo que este mas cerca que `depth`.
+#[allow(clippy::too_many_arguments)]
+fn blit(sprite: &Sprite, at: (f32, f32), scale: f32, depth: f32, light: f32, yf: f32, row: &mut [u8], depths: &[f32], width: usize) {
+    if scale <= 0.0 {
+        return;
+    }
+    let inv = 1.0 / scale;
+    let v = sprite.anchor.1 + (yf - at.1) * inv;
+    if v < 0.0 || v >= sprite.height as f32 {
+        return;
+    }
+    let x0 = ((at.0 - sprite.anchor.0 * scale).floor().max(0.0) as usize).min(width);
+    let x1 = ((at.0 + (sprite.width as f32 - sprite.anchor.0) * scale).ceil().max(0.0) as usize).min(width);
+    for x in x0..x1 {
+        if depths.get(x).is_some_and(|&z| z < depth) {
+            continue;
+        }
+        let u = sprite.anchor.0 + (x as f32 + 0.5 - at.0) * inv;
+        let s = sprite.sample(u, v);
+        if s[3] <= 0.002 {
+            continue;
+        }
+        let p = &mut row[x * 4..x * 4 + 4];
+        let c = lienzo::read(p) * (1.0 - s[3]) + Vec3::new(s[0], s[1], s[2]) * light;
+        lienzo::write(p, c);
+    }
+}
+
 /// Prueba un rayo (origen `o`, direccion `(rx, -ry, 1)`) contra una caja:
 /// la profundidad donde entra y por que cara (0 de frente, 1 arriba, 2 de
 /// lado), o nada.
@@ -1335,7 +1377,7 @@ impl CamionetaSurfers {
 
     /// Las figuras de este frame: lenes, bombas que caen, chispas y humo, el
     /// patojo y, si lo persiguen, los cucuruchos.
-    fn figures(&self, cam: &Camera) -> Canvas {
+    fn figures(&self, cam: &Camera) -> (Canvas, Canvas) {
         let mut c = Canvas::default();
         let s = self.s;
         let mut items: Vec<(f32, u8, usize)> = Vec::new();
@@ -1402,7 +1444,7 @@ impl CamionetaSurfers {
         }
         // El patojo, de espaldas.
         let r = &self.run;
-        let Some((x, ground, k, d)) = cam.project(Vec3::new(r.x, r.y, r.z)) else { return c };
+        let Some((x, ground, k, d)) = cam.project(Vec3::new(r.x, r.y, r.z)) else { return (c, Canvas::default()) };
         c.depth = d - 0.6;
         if let Some((sx, sy, sk, _)) = cam.project(Vec3::new(r.x, r.support, r.z)) {
             let lift = ((r.y - r.support) / 2.0).clamp(0.0, 1.0);
@@ -1414,6 +1456,8 @@ impl CamionetaSurfers {
         let white = Vec3::new(0.95, 0.95, 0.95);
         let jeans = Vec3::new(0.15, 0.22, 0.4);
         let m = |v: f32| v * k;
+        // Con Meyer, rueda con su guerrera beige y su gorra.
+        let (jersey, cap) = if self.meyer.is_some() { (Vec3::new(0.66, 0.6, 0.45), Vec3::new(0.85, 0.82, 0.72)) } else { (jersey, Vec3::new(0.85, 0.12, 0.12)) };
         if r.roll > 0.0 && r.climb <= 0.0 {
             // Rodando: hecho bolita.
             let cy = ground - m(0.42);
@@ -1424,8 +1468,13 @@ impl CamionetaSurfers {
                 c.line(x + aj.cos() * m(0.1), cy + aj.sin() * m(0.1), x + aj.cos() * m(0.38), cy + aj.sin() * m(0.38), m(0.06), white);
             }
             c.disc(x, cy - m(0.28), m(0.14), skin);
-            c.rect(x, cy - m(0.36), m(0.15), m(0.06), m(0.05), Vec3::new(0.85, 0.12, 0.12));
-            return self.chasers(c, cam);
+            c.rect(x, cy - m(0.36), m(0.15), m(0.06), m(0.05), cap);
+            return (c, self.chasers(Canvas::default(), cam));
+        }
+        if self.meyer.is_some() {
+            // Meyer va en su sprite (`blit`), entre lo de atras y los
+            // cucuruchos.
+            return (c, self.chasers(Canvas::default(), cam));
         }
         let air = r.y > r.support + 0.05;
         let climbing = r.climb > 0.0;
@@ -1475,7 +1524,7 @@ impl CamionetaSurfers {
         c.disc(x, head - m(0.04), m(0.135), Vec3::new(0.85, 0.12, 0.12));
         c.rect(x, head + m(0.05), m(0.09), m(0.03), m(0.02), Vec3::new(0.7, 0.08, 0.1));
         let _ = s;
-        self.chasers(c, cam)
+        (c, self.chasers(Canvas::default(), cam))
     }
 
     /// Los cucuruchos que persiguen: tunica morada, cordon blanco y el
@@ -1644,14 +1693,30 @@ impl Minigame for CamionetaSurfers {
             }
             boxes.push(BoxHit { index, min, max, x0: x0 - 1.0, x1: x1 + 1.0, y0: y0 - 1.0, y1: y1 + 1.0 });
         }
-        let figures = self.figures(&cam);
+        let (figures, front) = self.figures(&cam);
         let ash = 0.55 * self.eruption();
+        // Meyer: el cuadro de su carrera (o el del salto), donde pisa en la
+        // pantalla, su escala y su profundidad.
+        let r = self.run;
+        let runner = match (&self.meyer, cam.project(Vec3::new(r.x, r.y, r.z))) {
+            (Some(sprites), Some((x, ground, k, d))) if r.roll <= 0.0 || r.climb > 0.0 => {
+                let air = r.y > r.support + 0.05 || r.climb > 0.0;
+                let frame = if air { RUN_FRAMES } else { ((r.phase / TAU).rem_euclid(1.0) * RUN_FRAMES as f32) as usize % RUN_FRAMES };
+                sprites.get(frame).map(|s| (s, (x, ground), k / s.scale, d))
+            }
+            _ => None,
+        };
+        let light = 1.0 - 0.45 * ash;
         let dim = if self.screen == Screen::Running { 1.0 } else { 0.55 };
         let this = &*self;
         parallel::chunks_mut(rgba, width * 4, 1, |y, row| {
             let mut depth = vec![f32::MAX; width];
             this.row(y, row, &mut depth, &cam, &boxes, ash);
             paint(&figures.shapes, y as f32 + 0.5, row, width, Some(&depth));
+            if let Some((sprite, at, scale, d)) = runner {
+                blit(sprite, at, scale, d, light, y as f32 + 0.5, row, &depth, width);
+            }
+            paint(&front.shapes, y as f32 + 0.5, row, width, Some(&depth));
             if dim < 1.0 {
                 for p in row.chunks_exact_mut(4) {
                     for k in 0..3 {
