@@ -8,6 +8,9 @@
 //! vuelta mas. Los tres colores de las camionetas salen al pegarlas,
 //! permutando los canales del color (rojo, verde, azul -> verde, azul, rojo
 //! -> azul, rojo, verde): un solo horneado da tres pinturas.
+//!
+//! Para la avenida de los shucos van de lado (`side`): la nariz a la
+//! derecha, y al pegarlas al reves van para la izquierda.
 
 use std::collections::HashMap;
 use std::f32::consts::PI;
@@ -77,6 +80,42 @@ pub fn fleet(ppm: f32) -> Option<Arc<Fleet>> {
         .clone()
 }
 
+/// La Mamaneta y el Tuk-Tuk Elena de lado, con la nariz a la derecha.
+pub struct Side {
+    pub bus: Sprite,
+    pub tuk: Sprite,
+}
+
+/// Desde que altura se ven de lado (rad): casi a la altura de los ojos.
+pub const SIDE_ELEVATION: f32 = 0.05;
+
+/// Las dos naves de lado a `ppm` (una vez por tamano), o nada si no estan.
+pub fn side(ppm: f32) -> Option<Arc<Side>> {
+    static CACHE: OnceLock<Mutex<HashMap<u32, Option<Arc<Side>>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = cache.lock().ok()?;
+    map.entry(ppm.to_bits())
+        .or_insert_with(|| {
+            let baked = (|| -> Result<Side, String> {
+                let (bus, _) = load("02-la-mamaneta", BUS_HEIGHT)?;
+                let (tuk, _) = load("01-tuk-tuk-elena", TUK_HEIGHT)?;
+                let jobs: Vec<hornear::Job> = [&bus, &tuk].iter().map(|mesh| hornear::Job { mesh, finish: Finish::Vehicle, yaw: 0.5 * PI, elevation: SIDE_ELEVATION, meters: 1.0, pixels_per_meter: ppm, eye: 0.0, rise: 0.0 }).collect();
+                let mut baked = hornear::bake_all(&jobs);
+                let tuk_sprite = baked.pop().ok_or("sin el tuk-tuk")?;
+                let bus_sprite = baked.pop().ok_or("sin la camioneta")?;
+                Ok(Side { bus: bus_sprite, tuk: tuk_sprite })
+            })();
+            match baked {
+                Ok(s) => Some(Arc::new(s)),
+                Err(e) => {
+                    eprintln!("sin las naves de lado: {e}");
+                    None
+                }
+            }
+        })
+        .clone()
+}
+
 fn bake(ppm: f32) -> Result<Fleet, String> {
     let (bus, bus_size) = load("02-la-mamaneta", BUS_HEIGHT)?;
     let (tuk, tuk_size) = load("01-tuk-tuk-elena", TUK_HEIGHT)?;
@@ -110,5 +149,14 @@ mod tests {
         assert_eq!(Fleet::yaw_index(0.0), 3);
         assert_eq!(Fleet::yaw_index(-1.0), 0);
         assert_eq!(Fleet::yaw_index(0.12), 4);
+    }
+
+    /// De lado una camioneta es mucho mas larga que alta.
+    #[test]
+    fn the_side_views_are_long() {
+        let s = side(40.0).expect("de lado");
+        let (w, h) = (s.bus.width as f32 / s.bus.scale, s.bus.height as f32 / s.bus.scale);
+        assert!(w > 1.8 * h, "{w} x {h}");
+        assert!(s.tuk.width < s.bus.width);
     }
 }

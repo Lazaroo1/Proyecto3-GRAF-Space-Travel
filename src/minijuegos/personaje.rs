@@ -22,6 +22,10 @@
 //! Con cada pose se hornea un sprite (`hornear`) desde atras y desde la
 //! altura de la camara del juego: ocho de la carrera y uno del salto. Se
 //! hornean una vez por tamano de pantalla y se guardan.
+//!
+//! En los shucos llega de cliente (`customer`): un cuadro de frente,
+//! parado saludando, y ocho caminando de lado (con pasos mas cortos que los
+//! de la carrera), vistos a la altura de los ojos.
 
 use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
@@ -307,6 +311,50 @@ impl Character {
     }
 }
 
+/// Los cuadros del cliente: los que siguen al de frente, caminando.
+pub const WALK_FRAMES: usize = 8;
+
+impl Character {
+    /// Meyer de cliente: el cuadro 0 de frente, parado (la mano de abajo
+    /// colgando y la otra saludando), y `WALK_FRAMES` caminando con la nariz
+    /// a la derecha, a `ppm` pixeles por metro desde `elevation`.
+    pub fn bake_customer(&self, elevation: f32, ppm: f32) -> Vec<Sprite> {
+        let mut meshes = vec![self.pose([0.0, 0.0], [0.0, 0.0], 0.05)];
+        for f in 0..WALK_FRAMES {
+            let phi = TAU * f as f32 / WALK_FRAMES as f32;
+            let leg = |psi: f32| (0.36 * psi.sin(), 0.6 * (0.5 - 0.5 * (psi + 0.6).cos()).powf(1.5) * if psi.cos() < 0.3 { 1.0 } else { 0.4 });
+            let (hl, kl) = leg(phi);
+            let (hr, kr) = leg(phi + PI);
+            let arm_phase = if self.arm_side < 0.0 { phi + PI } else { phi };
+            meshes.push(self.pose([hl, hr], [kl, kr], -0.35 * arm_phase.sin()));
+        }
+        let meters = HEIGHT / self.height.max(1e-6);
+        let jobs: Vec<hornear::Job> = meshes
+            .iter()
+            .enumerate()
+            .map(|(i, mesh)| hornear::Job { mesh, finish: Finish::Vehicle, yaw: if i == 0 { PI } else { 0.5 * PI }, elevation, meters, pixels_per_meter: ppm, eye: 0.0, rise: 0.0 })
+            .collect();
+        hornear::bake_all(&jobs)
+    }
+}
+
+/// Meyer de cliente para los shucos (ver `Character::bake_customer`), una
+/// vez por tamano, o nada si no esta el modelo.
+pub fn customer(elevation: f32, ppm: f32) -> Option<Arc<Vec<Sprite>>> {
+    static CACHE: OnceLock<Mutex<HashMap<(u32, u32), Option<Arc<Vec<Sprite>>>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = cache.lock().ok()?;
+    map.entry((elevation.to_bits(), ppm.to_bits()))
+        .or_insert_with(|| match Character::load(&assets().join("personajes").join("meyer.obj")) {
+            Ok(c) => Some(Arc::new(c.bake_customer(elevation, ppm))),
+            Err(e) => {
+                eprintln!("sin el personaje: {e}");
+                None
+            }
+        })
+        .clone()
+}
+
 /// La carpeta de los modelos: la del directorio actual o la del proyecto.
 fn assets() -> PathBuf {
     let local = PathBuf::from("assets");
@@ -393,6 +441,45 @@ mod tests {
             crate::render::png::write_rgba(&path, w as u32, h as u32, &rgba).expect("png");
             println!("{}", path.display());
         }
+    }
+
+    /// Los cuadros del cliente en una tira, en PNG (`cargo test --release
+    /// dump_customer -- --ignored --nocapture`).
+    #[test]
+    #[ignore = "guarda una foto"]
+    fn dump_customer() {
+        let sprites = customer(0.03, 240.0).expect("los sprites");
+        let (w, h) = (sprites.iter().map(|s| s.width).sum::<usize>(), sprites.iter().map(|s| s.height).max().unwrap_or(1));
+        let mut rgba = vec![0u8; w * h * 4];
+        let mut x0 = 0;
+        for s in sprites.iter() {
+            for y in 0..s.height {
+                for x in 0..s.width {
+                    let p = s.pixels[y * s.width + x];
+                    let a = p[3] as f32 / 255.0;
+                    let o = (y * w + x0 + x) * 4;
+                    for k in 0..3 {
+                        rgba[o + k] = (p[k] as f32 + 40.0 * (1.0 - a)).min(255.0) as u8;
+                    }
+                    rgba[o + 3] = 255;
+                }
+            }
+            x0 += s.width;
+        }
+        let path = std::env::temp_dir().join("meyer_cliente.png");
+        crate::render::png::write_rgba(&path, w as u32, h as u32, &rgba).expect("png");
+        println!("{}", path.display());
+    }
+
+    /// De cliente: de frente es mas ancho que de lado (los hombros) y los
+    /// pasos cambian de cuadro a cuadro.
+    #[test]
+    fn meyer_bakes_as_a_customer() {
+        let sprites = customer(0.03, 50.0).expect("los sprites");
+        assert_eq!(sprites.len(), 1 + WALK_FRAMES);
+        let tall = sprites[0].height as f32 / sprites[0].scale;
+        assert!(tall > 1.5 && tall < 2.6, "{tall} m");
+        assert_ne!(sprites[1].pixels, sprites[3].pixels);
     }
 
     #[test]

@@ -768,7 +768,11 @@ cada 7 s, o cada 3.4 s en las horas pico: la salida de la U (21:00-22:00, casi
 todos estudiantes) y la del estadio (22:30-23:30, aficionados). Después de la
 una salen los bolos. Cada cliente trae su pedido y su paciencia (32 s, menos
 el agente de la PMT y más el bolo); la barrita del globito se vacía y, si
-llega a cero, se va enojado.
+llega a cero, se va enojado. **Don Meyer**, el personaje de Blender de la
+Camioneta Surfers, llega cada noche en el primer turno libre después de las
+20:15 (y a veces vuelve, nunca dos a la vez) a pedir su mixto de longaniza
+y chorizo «con todo y bastante guacamol», o uno de salchicha «sin cebolla y
+doble mostaza».
 
 - **El shuco** se arma por partes. **1** pone el pan en la tabla. Cada carne
   tiene su lugar en la plancha: su tecla la pone a cocinar y, la segunda
@@ -786,33 +790,90 @@ llega a cero, se va enojado.
   que se compran mejoras: la plancha de hierro (cocina 35 % más rápido), el
   toldo (la gente aguanta 25 % más) y el ayudante (pone el pan solo).
 
-**El dibujo.** Todo en CPU, con figuras de distancia con signo: cajas
-redondeadas, discos, segmentos (cápsulas) y arcos. La cobertura de cada pixel
-sale de la distancia al borde (`lienzo::cover`), así los bordes quedan
-suaves sin muestrear de más, y algunas figuras llevan resplandor
-(`exp(−d / alcance)` afuera). El fondo se hornea una vez al abrir (5 ms): el
-cielo, los edificios con ventanas al azar, la Torre del Reformador (dos
-patas de celosía que suben juntándose con la curva `x = 0.11 w (1 − t)^1.6`,
-sus cruces, plataformas, el arco y el faro rojo), la 7a Avenida con el paso
-de cebra, los postes de sodio, el toldo de faja y el mostrador de acero
-cepillado con la canasta, la plancha, la tabla, los tazones y los botes.
-Cada frame se copia el fondo y, por filas en paralelo, se pintan encima los
-clientes (arriba del mostrador), las carnes y el shuco (abajo) y el vapor,
-el humo y las monedas (en todas). Un frame cuesta de 1 a 2.5 ms.
+**El dibujo.** Todo en CPU, con figuras de distancia con signo
+([figuras.rs](src/minijuegos/figuras.rs)): cajas redondeadas, discos,
+elipses, segmentos (cápsulas), arcos y polígonos convexos. La cobertura de
+cada pixel sale de la distancia al borde (`lienzo::cover`), así los bordes
+quedan suaves sin muestrear de más, y algunas figuras llevan resplandor
+(`exp(−d / alcance)` afuera).
 
-- **Los clientes** son figuras armadas: el cuerpo, los brazos con las manos
-  en el mostrador, el pelo como un disco detrás de la cabeza (se ve su
-  orilla) y la cara con ojos y boca (un arco: sonrisa abajo, enojo arriba).
-  Cada uno con lo suyo: la mochila y los lentes del estudiante, la gorra y
-  el chaleco del agente, el chongo, los aretes y el delantal de la señora, la
-  camisola roja, la bufanda y la gorra al revés del aficionado, y la nariz
-  roja, el pelo alborotado, la botella y el bamboleo del bolo.
+- **Volumen**: casi todo se sombrea como si fuera de barro. La distancia al
+  borde dice qué tan inclinada está la superficie: a `e` pixeles adentro,
+  con un perfil de círculo de radio `vol`, la normal es `(g q, √(1 − q²))`
+  con `q = 1 − e / vol` y `g` el gradiente de la distancia (analítico para
+  cada forma; por diferencias en los polígonos). En la orilla la normal mira
+  de lado y a `vol` adentro mira de frente: una cápsula se ve cilindro, un
+  disco esfera, una caja una almohada. Con esa normal va Lambert con la luz
+  de los focos de la carretilla (de arriba y de frente), la luz azul del
+  cielo de noche, un brillo de Blinn-Phong (`(n · h)^32`, con cinco
+  cuadrados) en lo lustroso (los botes, el barro esmaltado, la grasa de la
+  carne, la botella del bolo) y la contraluz naranja de los postes en la
+  orilla (`q⁴`).
+- **La escena quieta** se hornea al abrir (~0.3 s), en tres capas. Lo de
+  lejos: el cielo con nubes que alumbra la ciudad desde abajo, dos filas de
+  edificios con ventanas al azar (unas cálidas, otras del azul de la tele,
+  tinacos y antenas), los árboles del parque, la Torre del Reformador (dos
+  patas de celosía que suben juntándose con la curva `x = 0.11 w (1 − t)^1.6`,
+  cada una con su cordón de afuera, el de adentro y sus diagonales, las
+  cruces, dos plataformas con baranda, el arco, el campanario; los
+  reflectores del pie la alumbran cálida y se apaga hacia arriba), la cruz
+  verde de una farmacia, un rótulo de neón y la 7a Avenida con los reflejos
+  de los postes en el asfalto mojado. Todo eso se **desenfoca** como en una
+  foto que enfoca a la gente: tres pasadas de caja de radio 2 px por fila y
+  por columna, que juntas se parecen a una gaussiana (teorema del límite
+  central), en el color y en la emisión. Encima, ya desenfocadas, las luces
+  de lejos (los focos de la torre, su faro, los postes como discos con la
+  orilla más brillante, el semáforo). Y nítidos, el toldo de faja (paños
+  abombados, arrugas, el tejido, la luz de los focos desde abajo, la orilla
+  de ondas con su ribete), la serie, tres focos colgando y el mostrador de
+  acero en perspectiva: el pasamanos con su brillo, el acero cepillado (una
+  veta por fila) con reflejo de Fresnel (de lejos, rasante, refleja más) y
+  los focos reflejados como estelas, la canasta con su servilleta típica y
+  tres panes franceses, la plancha hundida (un trapecio, más angosto lo de
+  allá, con el frente, las perillas y las rayas que se juntan hacia allá),
+  la tabla con su canto, los tazones de barro con su franja de puntitos y
+  los botes. Cada cosa con su sombra en el acero.
+- **Cada frame** se copia la escena y, por filas en paralelo, se pinta
+  encima: la serie (los foquitos se prenden en carrerita), la avenida, los
+  clientes y sus globitos (arriba del mostrador), las carnes, el shuco y el
+  bote de las propinas (abajo) y el vapor, el humo y las monedas. Lo que
+  emite (focos, serie, ventanas, faros, LEDs, la plancha, las chispas) lo
+  guarda en el alfa y pasa por el posproceso de la carrera: el brillo de dos
+  escalas, la viñeta, la gradación y el grano. Un frame cuesta unos 4 ms a
+  720p (de 3 a 10 según el calor de la laptop).
+- **La avenida**: los carros son figuras con las orillas suaves
+  (desenfocados) con faros que emiten, la luz que echan en el asfalto y sus
+  calaveras; el carril de allá va a la izquierda y el de acá a la derecha.
+  Entre ellos pasan el **Tuk-Tuk Elena** y, cada 12 a 22 s, **La Mamaneta**
+  pitando: los modelos de Blender con que se vuela, horneados de lado
+  ([flota.rs](src/minijuegos/flota.rs), `side`) a la mitad del tamaño con
+  que se ven, así al ampliarlos quedan suaves como lo demás de lejos, con
+  sus LEDs animadas y una de tres pinturas.
+- **Los clientes** son figuras armadas con volumen: el cuerpo con los
+  hombros redondos, los brazos con las manos en el mostrador, la cabeza un
+  poco de huevo con sus orejas, el pelo, los ojos (el blanco, el iris, la
+  pupila y su brillo; el párpado baja si está enojado y el bolo los tiene a
+  media asta), las cejas, la nariz, los cachetes y la boca según cómo esté.
+  Cada uno con lo suyo: la playera polo, la mochila y los lentes del
+  estudiante; la gorra con visera, el chaleco con franjas plateadas, la
+  placa y el pito del agente; el chongo, los aretes, el delantal con
+  florecitas y el perraje de rayas de la señora; la camisola roja con el
+  cuello en V, la bufanda, la gorra al revés y la cara pintada del
+  aficionado; y la camisa de cuadros abierta, la barba de días, la nariz
+  roja, el sudor, la botella y el bamboleo del bolo.
+- **Don Meyer** es el modelo de Blender (`personaje.rs`, `customer`):
+  horneado una vez de frente, parado y saludando, y en ocho cuadros
+  caminando de lado (la pierna gira por la cadera y la rodilla, con pasos
+  más cortos que los de la carrera), con la luz cálida de los focos.
 - **Las carnes** cambian de color con la cocción (de cruda a dorada hasta
-  estar lista y de ahí a negra), se les marcan las rayas de la parrilla y
-  chisporrotean. Lo que se quema echa humo.
+  estar lista y de ahí a negra), brillan de grasa (la quemada ya no), se
+  les marcan las rayas de la parrilla y chisporrotean. Lo que se quema echa
+  humo.
 - **El shuco** se dibuja por capas como uno de verdad: el pan abierto, las
-  carnes, el guacamol, el repollo en tiritas, la cebolla en cuadritos y las
-  salsas en zigzag, una línea por porción.
+  carnes, el guacamol en grumos, el repollo en tiritas, la cebolla en
+  cuadritos y las salsas en zigzag, una línea por porción.
+- **El bote de las propinas** se llena con una moneda por quetzal de
+  propina de la noche.
 
 **El sonido**: la plancha chirría (ruido con chasquidos sueltos, más fuerte
 con más carnes y con lo quemado), el tráfico de la avenida suena lejos y de
@@ -824,8 +885,11 @@ instrumento de la marimba de la Luna) toca un arpegio con cada entrega buena.
 crudo, lo quemado, la cebolla prohibida, el guacamol que no es bastante y lo
 que no se pidió; las carnes se cocinan y se queman; una noche entera con el
 piloto automático vende al menos 14 sin devoluciones y gana plata; las
-mejoras cuestan ahorros; y cada pantalla se dibuja sin huecos con texto que
-la fuente carga.
+mejoras cuestan ahorros; cada pantalla se dibuja sin huecos con texto que
+la fuente carga; don Meyer llega después de las 20:15 y se dibuja; la
+avenida tiene tráfico y pasan camionetas; las elipses miden bien y los
+gradientes de cada forma apuntan hacia afuera; y una figura con volumen es
+más clara del lado de la luz y guarda su emisión.
 
 ## Camioneta Surfers ([minijuegos/surfers.rs](src/minijuegos/surfers.rs))
 
