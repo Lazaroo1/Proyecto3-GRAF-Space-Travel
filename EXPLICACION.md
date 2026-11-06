@@ -552,9 +552,10 @@ meta a cuadros, los charcos de luz de los postes y la neblina de lejos.
 **Las naves son sprites horneados** ([minijuegos/hornear.rs](src/minijuegos/hornear.rs)).
 Dibujar los 28 000 triángulos de cada nave en cada frame costaría lo que
 el 3D. En vez de eso, al abrir la carrera un rasterizador propio dibuja
-cada modelo una vez desde 15 rumbos (de −70° a 70°), y la propia desde
-otros 9 tal como la ve la cámara, a su tamaño en pantalla. Son 69 sprites
-en una sola pasada paralela, en menos de un segundo.
+cada modelo una vez desde 15 rumbos (de −70° a 70°, cada 10°), y la propia
+desde otros 17 (de −10° a 10°, cada 1.25°) tal como la ve la cámara, a su
+tamaño en pantalla. Son 77 sprites en una sola pasada paralela, en alrededor
+de un segundo.
 
 - La proyección es ortográfica, con buffer de profundidad y funciones de
   borde baricéntricas.
@@ -563,23 +564,121 @@ en una sola pasada paralela, en menos de un segundo.
 - La luz es de noche: luna fría, postes naranjas desde abajo y un cielo que
   se refleja en la laca, el cromo y el vidrio. Las piezas salen de
   `obj::Surface`.
-- Las LEDs se guardan aparte, se difuminan y se suman afuera del contorno,
-  como neón.
+- **Las LEDs** se guardan aparte con un núcleo que tira a blanco, un halo
+  corto y uno ancho que se suman afuera del contorno, como neón. Cada foco
+  guarda en el byte del alfa su patrón según su color: los ámbar corren
+  como luces de feria (la fase sale de su posición a lo largo de la nave),
+  los magenta, cian y azules respiran, y los rojos de atrás son stops que se
+  encienden al frenar. En la pista, el patrón y la fase se traducen a brillo
+  con una tabla de 64 entradas por nave, así que animarlas no cuesta nada.
+- **Mips**: cada sprite se promedia 2×2 hasta quedar de menos de 8 px (las
+  LEDs con mitad promedio y mitad máximo, para que de lejos no se apaguen).
+  En la pista se lee el nivel `log2(1 / escala) − 1` con mezcla entre dos
+  niveles solo cerca de la mitad: las de lejos salen nítidas y no
+  centellean.
 
 En la pista, cada nave usa el sprite del ángulo con que la ve la cámara:
 el rumbo de la pista donde está menos el ángulo del rayo, `θ − atan(x / z)`.
-Se escala con `f / z`, se pega con alfa premultiplicado y pone su sombra en
-el suelo. Una loma más cercana la tapa: la fila muestra pista más cerca que
-ella. Las que pasan pegadas a la cámara se desvanecen.
+Se toma el sprite más cercano (mezclar dos vecinos dejaba la nave doble) y se
+corre a lo ancho para que su cola caiga donde caería la del rumbo de verdad:
+la cola sigue el giro sin saltos. Se escala con `f / z` y se pega con alfa
+premultiplicado. Una loma más cercana la tapa: la fila muestra pista más
+cerca que ella. Las que pasan pegadas a la cámara son sólidas (se desvanecen
+solo a menos de 1.6 m) y se barren a lo ancho con lo que se mueven respecto
+a la cámara (4 muestras). Lo que queda detrás de una nave opaca (la pista,
+postes, humo, otras naves) no se pinta.
 
-**El cielo y la capital.** El cubemap del cielo chapín se pasa una vez a un
-panorama (rumbo por altura). Cada pixel lo lee con el rumbo de la cámara más
-el ángulo de su columna, así que el cielo gira de verdad en las curvas. La
-capital es una esfera abajo a la derecha, y su centro avanza con la vuelta
-(la pista le da la vuelta). Cada pixel del cielo prueba su rayo contra la
-esfera. Si pega, pinta la ciudad de noche: tierra oscura, luces de sodio
-donde un ruido fBm dice que hay ciudad y no barranco (ruido *ridged*), nubes
-oscuras que las tapan y el halo de la atmósfera en el borde.
+**Las naves con vida.**
+
+- **Peso**: cada nave tiene un resorte de ladeo y uno de rebote por clase.
+  La curva y el volante la ladean; un túmulo y la cresta de una loma la
+  hacen saltar. El tuk-tuk gira sobre la rueda de afuera y levanta la de
+  adentro. La chela flota: sube y baja y se mece sola.
+- **La chela** es de vidrio ámbar: contraluz en la silueta, cielo reflejado
+  con Fresnel y cerveza con burbujas adentro. Debajo lleva un anillo
+  antigravedad cian y una cáustica ámbar en la pista.
+- **El humo negro** sale de las chimeneas de verdad de la camioneta: se
+  buscan en la malla (el metal más alto de cada lado en el frente). Cada
+  soplo sale con `0.8 v`, el aire lo frena (`e^(−1.8 dt)`), sube cada vez más
+  rápido y crece como `r0 + 1.4 edad^0.7`. Se alumbra con el poste de arriba
+  y con la ciudad de abajo.
+- **El turbo** es distinto por clase: un cono de llama en el escape que
+  apunta a la cámara (amarillo y naranja en la camioneta, blanco y magenta
+  con anillos de choque en el colectivo, espuma en la chela, brasa y
+  chispas en el tuk-tuk).
+- **Chispas** balísticas (`g = 9.8`, rebotan con 0.4) al rozar la baranda,
+  al chocar y al pasar un túmulo.
+- **Luz de la escena sobre la nave**: el poste más cercano la barre de
+  arriba y el neón de cada baranda pinta su costado.
+
+**El cielo y la capital** ([minijuegos/ciudad.rs](src/minijuegos/ciudad.rs)).
+La pista va a 400 m sobre la Ciudad de Guatemala. Cada columna de la pantalla
+es un rayo de una cámara estenopeica; la pista guarda su trazo en metros
+(el rumbo integrado), así que la ciudad corre de verdad con las curvas.
+
+- **La ciudad** es una textura de 2048×2048 texeles de 3 m que se repite
+  (un cuadro de 6 km), horneada al abrir la carrera en unos 100 ms. Tiene
+  zonas de Voronoi con su cuadrícula, cuadra y densidad; barrancos que la
+  parten (las curvas de nivel cero de un ruido); calles con un farol cada
+  28 m, de sodio o LED según la zona; calzadas con faroles y carros (faros
+  blancos de un lado y stops rojos del otro); y La Aurora con su pista
+  iluminada y el estadio. Se guarda con gamma 2 y con mips en luz lineal.
+- **El rayo contra la esfera** del planeta (radio de 160 km) da dónde pega
+  cada pixel. El nivel del mip sale de lo que mide el pixel en el suelo, y
+  hacia el horizonte se funde en una neblina violeta.
+- **El cielo**: un gradiente con el airglow verde pegado al limbo curvo, una
+  banda magenta y un domo de sodio, sumados en modo pantalla al panorama
+  del cubemap (con la Vía Láctea plateada). Pasa una estrella fugaz cada 5 a
+  15 s.
+- **Los volcanes**: Agua, Acatenango (dos picos), Fuego y Pacaya como
+  siluetas por columna, con perfil de cono empinado y falda cóncava. El
+  Fuego hace erupción cada 6 a 11 s y una justo en el verde: destello,
+  ríos de lava, un penacho que dobla el viento y bombas en parábola.
+
+**El asfalto mojado.**
+
+- **Reflejos**: lo que emite en un frame (las LEDs, el neón, los faroles)
+  deja una estela que baja por columna (`S = 0.1 L + 0.9 S`). La pista la lee
+  en el frame siguiente: cada luz deja una cortina de su color hacia la
+  cámara.
+- **El cielo reflejado** con Fresnel de Schlick,
+  `F = 0.02 + 0.98 (1 − sen α)^5`: de lejos la pista es un espejo.
+- **Los postes** dejan su charco con `cos³` de la luz y una raya especular
+  que baja hacia la cámara. Cada nave lleva su charco del color de sus LEDs
+  y su sombra de contacto, y las calaveras se reflejan al frenar.
+- **El material**: losas de 32 m, juntas que destellan, ojos de gato que con
+  turbo se estiran en trazadoras, bordillo celeste y blanco con relieve,
+  hombro con los rombos de la faja y túmulos con chevrones. Las rayas se
+  filtran en caja (la integral de la raya sobre lo que mide el pixel), así
+  que de lejos no parpadean.
+
+**La escenografía chapina** ([minijuegos/escenario.rs](src/minijuegos/escenario.rs)).
+
+- **La Torre del Reformador** sobre la meta: celosía de hierro de 66 m con
+  la manta a cuadros. Sus focos LED son también el semáforo: se llenan de
+  rojo por tercios con la cuenta y se ponen verdes al arrancar.
+- **Túneles de arcos de foquitos de feria** en cinco tramos, uno cada 16 m,
+  con 41 focos de cinco colores que tiñen la pista.
+- **Barriletes gigantes de Sumpango**, horneados al abrir la carrera: rueda
+  de papel de china con orilla de colores, greca maya, gajos con los motivos
+  de la faja y un sol al centro, vistos a contraluz. Uno cada 200 m y el
+  festival, uno cada 48 m antes de la meta.
+- **Postes** con tira LED, filo de neón y cono de luz.
+- **Cohetes** sobre la capital: uno de ambiente cada 4 a 9 s y cuatro al
+  cruzar la meta, de cinco clases (palmera dorada, navideño, patrio, de
+  papel de china y crepitante), con su pum que llega con el retraso del
+  sonido.
+
+**La luz** ([minijuegos/posproceso.rs](src/minijuegos/posproceso.rs)).
+Durante la pasada de filas cada pixel guarda cuánto emite en el byte del
+alfa; lo opaco que se pinta encima lo borra, así una nave tapa la baranda.
+Lo que emite se extrae a un cuarto de la pantalla con la croma subida (para
+que el brillo salga del color de la luz y no blanco) y pasa por la pirámide
+de bloom del juego principal: un brillo de dos escalas. El compuesto pone
+viñeta (menos donde algo emite), el brillo en modo pantalla, una gradación
+de sombras índigo y altas de sodio, curva S y grano. Con la velocidad la
+cámara se abre (un resorte) y salen líneas; con el turbo hay más y la
+aberración cromática separa los canales en la orilla.
 
 **La física**, a 120 pasos por segundo:
 
@@ -611,8 +710,9 @@ oscuras que las tapan y el halo de la atmósfera en el borde.
   juega y 5 % menos si va muy adelante.
 - **El tráfico** son 16 naves lentas de las cuatro clases. Cambian de carril
   de vez en cuando y, si les pitan (H), se hacen a un lado.
-- **El humo negro**: las camionetas que aceleran sueltan soplos que se
-  quedan en la pista, crecen y se apagan. Pasar por uno nubla la pantalla.
+- **El humo negro**: las camionetas que aceleran sueltan soplos de sus
+  chimeneas que crecen, suben y se apagan. Si la cámara pasa por uno denso,
+  se nubla la pantalla.
 
 Con el piloto automático las cuatro clases terminan en 2:14-2:25 (unos 44 s
 por vuelta). La camioneta es la más difícil: gana en las rectas y pierde en
@@ -640,6 +740,15 @@ las curvas.
 - Todo el texto usa letras que la fuente carga.
 - El horneado ve una caja de atrás y de lado del tamaño correcto, con la LED
   encendida y su resplandor afuera del contorno.
+- La ciudad se repite sin costura y tiene luces y barrancos; el limbo, el
+  airglow y los volcanes caen donde deben, y el Fuego da la salida.
+- La tabla de tono sigue a la curva, las rayas filtradas dan su integral y
+  la pista mojada sale finita y en rango.
+- Saltarse lo que tapa una nave opaca da la misma imagen que pintarlo todo.
+- Lo que tapa a algo que emite borra su emisión; la estela baja desde lo que
+  emite.
+- Las chimeneas y el escape salen de la malla; el tuk-tuk se ladea hacia
+  afuera; un choque suelta chispas una sola vez; el humo sube, crece y se va.
 
 # Cambios de la sexta revisión
 
