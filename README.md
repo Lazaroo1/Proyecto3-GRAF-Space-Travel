@@ -144,7 +144,21 @@ sistema cuesta 50-140).
 
 ## Video
 
-Dos recorridos continuos, uno por versión, con todo lo que pide el
+**[El video de muestra](media/muestra.mp4)** (4 min 12 s, con sonido): la
+ventana del juego tal cual, con su HUD, manejada por un guion
+(`--muestra`). Pasa con **N** por cada lugar de OCASO (el claro de Jardín,
+los géiseres de Pira, el nido de Argos, el espejo de Párpado y Faro, con su
+gran llamarada) con el crucero rodeando el planeta; el final de la estrella
+(el estertor, el colapso, la onda gravitacional, Gargantúa comiéndose a Pira
+y El Ojo); la **V** a la versión chapina, y otra vez **N** por cada lugar
+(Antigua, Tikal, Panajachel, San Andrés Xecul, El Reformador, Semuc, la
+Luna de Xelajú y El Periférico), abriendo con **Enter** y jugando solos los
+cuatro minijuegos: Talega Surfers, los shucos, la marimba y la carrera. El
+tiempo avanza fijo (1/30 s por frame), así que el video va en tiempo real
+aunque cada frame se tarde lo suyo; el sonido es el que genera el juego (el
+sintetizador y el de los minijuegos; las canciones del reproductor no).
+
+Y dos recorridos continuos, uno por versión, con todo lo que pide el
 requisito 5: **vuelo espacial, acercamiento, una vuelta completa al planeta
 y alejamiento**, sin cortes ni cambio de escena:
 
@@ -185,6 +199,7 @@ Opciones:
 cargo run --release -- --res 1920x1080        # resolución del render (por defecto 1280x720)
 cargo run --release -- --chapina              # empieza en la versión chapina
 cargo run --release -- --recorrido video.mp4  # graba el recorrido (ffmpeg); con --chapina, el chapín
+cargo run --release -- --muestra muestra.mp4  # graba el video de muestra: la ventana manejada por un guion (ffmpeg)
 cargo run --release -- --captura capturas     # las 57 vistas fijas como PNG, sin abrir ventana
 cargo run --release -- --marimba              # arranca en la Luna de Xelajú con la marimba abierta
 cargo run --release -- --nave 8               # la nave chapina con que se empieza (7 tuk-tuk, 8 camioneta, 9 colectivo)

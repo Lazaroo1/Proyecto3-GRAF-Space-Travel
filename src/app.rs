@@ -1159,6 +1159,18 @@ impl App {
 
     /// N: viaja al siguiente lugar para visitar (instantaneo), conservando
     /// el tiempo y el ciclo.
+    /// Como N, pero hasta el lugar llamado `name` (el video de muestra los
+    /// pide por nombre). `false` si no hay uno asi en esta version.
+    pub fn visit_site(&mut self, name: &str) -> bool {
+        let count = self.system.sites.len();
+        let Some(i) = self.system.sites.iter().position(|s| s.name == name) else {
+            return false;
+        };
+        self.next_site = (i + count - 1) % count;
+        self.visit_next_site();
+        true
+    }
+
     pub fn visit_next_site(&mut self) {
         if self.system.sites.is_empty() {
             return;

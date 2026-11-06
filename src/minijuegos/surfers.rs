@@ -2922,6 +2922,11 @@ impl TalegaSurfers {
 }
 
 impl Minigame for TalegaSurfers {
+    fn demo_start(&mut self) {
+        self.start();
+        self.set_autopilot(true);
+    }
+
     fn update(&mut self, dt: f64, keys: &Keys) {
         let dt = (dt as f32).min(0.05);
         self.wall += dt;

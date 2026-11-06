@@ -937,6 +937,14 @@ impl MarimbaTiles {
 }
 
 impl Minigame for MarimbaTiles {
+    fn demo_start(&mut self) {
+        self.play(Level::Tiple);
+    }
+
+    fn demo_input(&mut self, dt: f64) -> Keys {
+        self.demo_keys(dt, 9)
+    }
+
     fn update(&mut self, dt: f64, keys: &Keys) {
         self.wall += dt;
         self.held = keys.lane_down;
