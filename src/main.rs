@@ -48,6 +48,8 @@ enum Mode {
     RaceCapture(PathBuf),
     /// Fotos de los shucos del Reformador, sin ventana.
     ShucosCapture(PathBuf),
+    /// Fotos de la Camioneta Surfers, sin ventana.
+    SurfersCapture(PathBuf),
 }
 
 struct Options {
@@ -62,6 +64,7 @@ struct Options {
     marimba: bool,
     race: bool,
     shucos: bool,
+    surfers: bool,
     /// La nave chapina con que se empieza (1 a 9).
     ship: Option<usize>,
 }
@@ -75,11 +78,13 @@ uso: ocaso [opciones]
   --marimba             arranca en la Luna de Xelaju con la marimba abierta
   --carrera             arranca en la capital con la carrera del Periferico abierta
   --shucos              arranca en El Reformador con la carretilla de shucos abierta
+  --surfers             arranca en Antigua con la Camioneta Surfers abierta
   --nave N              la nave de la version chapina (1-6 botellas, 7 tuk-tuk,
                         8 camioneta, 9 colectivo)
   --captura-marimba DIR guarda fotos del minijuego de la marimba sin ventana
   --captura-carrera DIR guarda fotos de la carrera del Periferico sin ventana
   --captura-shucos DIR  guarda fotos de los shucos del Reformador sin ventana
+  --captura-surfers DIR guarda fotos de la Camioneta Surfers sin ventana
   --bench FRAMES        mide cada vista fija FRAMES veces sin abrir ventana
   --wire                empieza con el wireframe encendido (F3)
   --lod                 empieza con los colores de LOD encendidos (F4)
@@ -97,6 +102,7 @@ fn parse_args() -> Result<Options, String> {
         marimba: false,
         race: false,
         shucos: false,
+        surfers: false,
         ship: None,
     };
     let mut args = std::env::args().skip(1);
@@ -129,6 +135,7 @@ fn parse_args() -> Result<Options, String> {
             "--marimba" => options.marimba = true,
             "--carrera" => options.race = true,
             "--shucos" => options.shucos = true,
+            "--surfers" => options.surfers = true,
             "--nave" => {
                 let n: usize = args.next().ok_or("--nave espera un numero")?.parse().map_err(|_| "nave invalida")?;
                 if !(1..=9).contains(&n) {
@@ -139,6 +146,10 @@ fn parse_args() -> Result<Options, String> {
             "--captura-carrera" => {
                 let dir = args.next().ok_or("--captura-carrera espera una carpeta")?;
                 options.mode = Mode::RaceCapture(PathBuf::from(dir));
+            }
+            "--captura-surfers" => {
+                let dir = args.next().ok_or("--captura-surfers espera una carpeta")?;
+                options.mode = Mode::SurfersCapture(PathBuf::from(dir));
             }
             "--captura-shucos" => {
                 let dir = args.next().ok_or("--captura-shucos espera una carpeta")?;
@@ -187,6 +198,7 @@ fn main() {
         Mode::GameCapture(dir) => run_game_capture(&options, dir),
         Mode::RaceCapture(dir) => run_race_capture(&options, dir),
         Mode::ShucosCapture(dir) => run_shucos_capture(&options, dir),
+        Mode::SurfersCapture(dir) => run_surfers_capture(&options, dir),
     };
     if let Err(error) = result {
         eprintln!("error: {error}");
@@ -218,6 +230,8 @@ fn run_window(options: &Options) -> Result<(), String> {
         app.apply_preset(capital_preset());
     } else if options.shucos {
         app.apply_preset(reformador_preset());
+    } else if options.surfers {
+        app.apply_preset(PRESETS.iter().find(|p| p.name == "42_antigua").expect("la vista de Antigua"));
     } else if options.preset.is_none() {
         app.apply_preset(&PRESETS[21]);
     }
@@ -277,12 +291,14 @@ fn run_window(options: &Options) -> Result<(), String> {
     let mut minigame: Option<Box<dyn minijuegos::Minigame>> = None;
     let mut opening: Option<minijuegos::Kind> = None;
     let mut game_frame = vec![0u8; options.width * options.height * 4];
-    if options.marimba || options.race || options.shucos {
+    if options.marimba || options.race || options.shucos || options.surfers {
         app.render();
         let kind = if options.race {
             minijuegos::Kind::Carrera
         } else if options.shucos {
             minijuegos::Kind::Shucos
+        } else if options.surfers {
+            minijuegos::Kind::Surfers
         } else {
             minijuegos::Kind::Marimba
         };
@@ -676,6 +692,52 @@ fn run_shucos_capture(options: &Options, dir: &Path) -> Result<(), String> {
     save(&mut game, "shucos_6_resultados")?;
     let (sold, returned, angry, money) = game.tally();
     println!("vendidos {sold}, devueltos {returned}, enojados {angry}, ganancia Q{money}");
+    Ok(())
+}
+
+/// Fotos de la Camioneta Surfers: el menu, la corrida con el piloto
+/// automatico (al salir, con las camionetas, con la ceniza y las bombas) y
+/// el final. Solo lo que dibuja la CPU.
+fn run_surfers_capture(options: &Options, dir: &Path) -> Result<(), String> {
+    use minijuegos::Minigame;
+    use minijuegos::surfers::CamionetaSurfers;
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let (w, h) = (options.width, options.height);
+    let mut game = CamionetaSurfers::new(w, h, minijuegos::Records::in_memory());
+    let mut frame = vec![0u8; w * h * 4];
+    let mut save = |game: &mut CamionetaSurfers, name: &str| -> Result<(), String> {
+        let mut times: Vec<f64> = (0..9)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                game.draw(&mut frame);
+                start.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        times.sort_by(f64::total_cmp);
+        let path = dir.join(format!("{name}.png"));
+        render::png::write_rgba(&path, w as u32, h as u32, &frame).map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("{name:<24} {:6.2} ms   -> {}", times[4], path.display());
+        Ok(())
+    };
+    save(&mut game, "surfers_1_menu")?;
+    game.start();
+    game.set_autopilot(true);
+    let dt = 1.0 / 60.0;
+    let mut elapsed = 0.0;
+    for (at, name) in [(3.0, "surfers_2_salida"), (14.0, "surfers_3_calle"), (30.0, "surfers_4_ceniza"), (55.0, "surfers_5_bombas")] {
+        while elapsed < at && game.running() {
+            game.update(dt, &minijuegos::Keys::default());
+            elapsed += dt;
+        }
+        save(&mut game, name)?;
+    }
+    while game.running() && elapsed < 240.0 {
+        game.update(dt, &minijuegos::Keys::default());
+        elapsed += dt;
+    }
+    save(&mut game, "surfers_6_final")?;
+    let (meters, lenes, score) = game.tally();
+    println!("corrio {meters:.0} m, {lenes} lenes, {score} puntos: {}", game.reason());
     Ok(())
 }
 

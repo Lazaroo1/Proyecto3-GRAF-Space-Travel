@@ -391,9 +391,9 @@ gran llamarada.
 # Los minijuegos
 
 Cada planeta va a tener su minijuego ([minijuegos/](src/minijuegos)). Por
-ahora están el de la Luna de Xelajú, **la marimba de la Luna**, y los dos de
-la capital: **la carrera del Periférico** (en su anillo) y **los shucos del
-Reformador** (en el suelo).
+ahora están el de la Luna de Xelajú, **la marimba de la Luna**; los dos de
+la capital, **la carrera del Periférico** (en su anillo) y **los shucos del
+Reformador** (en el suelo); y el de Antigua, **la Camioneta Surfers**.
 
 ## El marco común ([minijuegos/mod.rs](src/minijuegos/mod.rs))
 
@@ -826,6 +826,82 @@ que no se pidió; las carnes se cocinan y se queman; una noche entera con el
 piloto automático vende al menos 14 sin devoluciones y gana plata; las
 mejoras cuestan ahorros; y cada pantalla se dibuja sin huecos con texto que
 la fuente carga.
+
+## Camioneta Surfers ([minijuegos/surfers.rs](src/minijuegos/surfers.rs))
+
+**El juego.** Un corredor sin fin por la calle del Arco, en tres carriles de
+2.2 m. La velocidad sube de 12 a 24 m/s (`v = 12 + 0.11 t`). El patojo salta
+con 8.6 m/s contra una gravedad de 26 m/s² (sube 1.4 m y pasa 0.66 s en el
+aire) y rueda 0.62 s; en el aire, abajo lo hace bajar de golpe. La física
+corre en pasos de 10 ms, así a toda velocidad nada se atraviesa.
+
+- **La calle se arma por tramos de 28 m**, siempre con un carril libre:
+  camionetas (paradas o de frente), alfombras de aserrín (si dejan un carril
+  limpio, depende de lo difícil), un lazo de papel picado y carretas de
+  helados, tuk-tuks parados, o un respiro con lenes en zigzag. Las alfombras
+  que no caen en carriles seguidos se parten en dos (la caja va del primer
+  carril al último).
+- **Las camionetas paradas** se suben por la escalera de atrás: si se llega
+  a la cola desde atrás y en su carril, el patojo sube en 0.25 s y corre en
+  la parrilla (a 3 m) hasta que se acaba la camioneta. Las que vienen de
+  frente (a 7 m/s) también tienen techo, pero desde el suelo no perdonan.
+- **Choques**: cajas contra la caja del patojo (1.7 m de alto, 0.8 rodando).
+  La carreta (1.1 m) se pasa saltando; el lazo (de 1.05 a 1.65 m), rodando.
+- **Las alfombras**: pisarla en el suelo suelta a los cucuruchos por 7 s;
+  pisar otra mientras tanto es perder.
+- **Las bombas del Fuego** empiezan a los 12 s y caen cada vez más seguido
+  (cada 5 s al principio y cada 2 s con la erupción a todo). Cada una se
+  apunta adelante, en un carril, donde va a estar el patojo en 1.8 s; su
+  sombra se oscurece y su anillo se enciende en esos 1.6 s, y al caer
+  salpica lava y ceniza.
+
+**El dibujo**, todo en CPU, por filas en paralelo. La cámara mira de frente
+(a 5.6 m detrás y 3.1 m arriba), así el rayo de cada pixel es `(rx, −ry, 1)`
+y `t` es directamente la profundidad. Cada rayo se prueba contra:
+
+- **El suelo** (`t = alto / ry`): el empedrado son piedras redondeadas en
+  hileras corridas (una caja redondeada por celda, con su tono al azar) y
+  de lejos, cuando un pixel ya mide varias piedras, se promedia; las
+  banquetas, las alfombras (orilla, rombos y flores de aserrín, y un manchón
+  si se pisaron) y las sombras de las bombas.
+- **Las fachadas** (planos `x = ±4.4 m`, `t = (±4.4 − x) / rx`), con la altura
+  de cada casa: el color de la casa, el zócalo, la puerta de tableros, las
+  ventanas con reja (algunas encendidas), el farol con su luz en la pared y
+  el alero de teja.
+- **El Arco de Santa Catalina**, cada 420 m: un muro amarillo con su arco,
+  las molduras blancas, la hilera de ventanitas, el reloj y la cúpula.
+- **Las cajas** de lo que hay en la calle, con la prueba de las placas: el
+  rayo entra a la caja por la última placa que cruza y sale por la primera;
+  la placa por la que entra dice la cara (la de atrás, el techo o el lado).
+  Cada cara se pinta según qué es: la camioneta parada de espaldas con su
+  ventana, sus calaveras y la escalera; la que viene con su parabrisas, el
+  letrero, los focos y la parrilla del radiador; el techo con la parrilla y
+  los bultos; los lados con ventanas y llantas; el tuk-tuk, la carreta con su
+  helado pintado y el papel picado (con sus recortes, por donde se ve lo de
+  atrás). Solo se prueban las cajas que caen en la fila.
+- **El cielo** del atardecer: el Volcán de Agua al fondo (justo detrás del
+  Arco), el Fuego a la derecha con el cráter encendido y su penacho de
+  ceniza que el viento ladea, y la ceniza que poco a poco tapa todo.
+
+Lo lejano se funde con la neblina (`1 − e^(−t/110)`). Encima, cada pixel
+con su profundidad (`figuras.rs`, que ahora comparten con los shucos) van las
+monedas que giran, las bombas que caen con su estela, la lava, el polvo y
+las chispas, el patojo de espaldas (camisola celeste y blanco, gorra al revés
+y su morral típico; corre, salta, sube y rueda hecho bolita) y los
+cucuruchos, de túnica morada y capirote, que lo persiguen. Un frame cuesta
+unos 7 ms.
+
+**El sonido**: el viento sube con la velocidad, el volcán retumba cada vez
+más, los pasos, el salto, la moneda, el pito de dos tonos de la camioneta
+que viene, el silbido de cada bomba (que baja de tono hasta caer) y su
+explosión, y mientras persiguen los cucuruchos, una marcha de procesión
+(bombo y un acorde grave de metales).
+
+**Pruebas**: el rayo entra a la caja por la cara que debe; cada tramo deja un
+carril libre; sin saltar la carreta se choca y saltando se pasa; por la
+escalera se sube al techo; una segunda alfombra con los cucuruchos atrás es
+perder; el piloto automático corre más de 500 m en un minuto y junta lenes;
+y cada pantalla se dibuja sin huecos con texto que la fuente carga.
 
 # Cambios de la sexta revisión
 
