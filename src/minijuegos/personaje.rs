@@ -19,6 +19,13 @@
 //! positivo lo de abajo del pivote va hacia adelante. Las normales giran
 //! igual, sin trasladarse.
 //!
+//! **La cara** viene con textura (`map_Kd`): una imagen de la referencia
+//! proyectada sobre su malla, que es fina (unas 70 mil caras). Se guarda
+//! cruda a 1024 x 1024 (`meyer-rostro-color.rgb`, RGB de 8 bits) y cada
+//! esquina toma el color de su coordenada de textura (bilineal), pasado de
+//! sRGB a lineal como los colores del `.mtl`: con una malla asi de fina, el
+//! color por vertice conserva el detalle a los tamanos en que se ve Meyer.
+//!
 //! Con cada pose se hornea un sprite (`hornear`) desde atras y desde la
 //! altura de la camara del juego: ocho de la carrera y uno del salto. Se
 //! hornean una vez por tamano de pantalla y se guardan.
@@ -70,37 +77,83 @@ pub struct Character {
     torso: f32,
 }
 
-/// Lee un `.mtl`: el color difuso y el exponente especular de cada material.
-fn read_mtl(text: &str) -> HashMap<String, (Vec3, f32)> {
+/// Un material del `.mtl`: el color difuso, el exponente especular y su
+/// imagen, si tiene.
+#[derive(Clone, Debug)]
+struct Material {
+    kd: Vec3,
+    ns: f32,
+    map: Option<String>,
+}
+
+/// Lee un `.mtl`: el color difuso, el exponente especular y la imagen
+/// (`map_Kd`) de cada material.
+fn read_mtl(text: &str) -> HashMap<String, Material> {
     let mut out = HashMap::new();
     let mut name = String::new();
-    let mut kd = Vec3::splat(0.7);
-    let mut ns = 50.0;
+    let fresh = || Material { kd: Vec3::splat(0.7), ns: 50.0, map: None };
+    let mut current = fresh();
     for line in text.lines().map(str::trim) {
         let mut it = line.split_whitespace();
         match it.next() {
             Some("newmtl") => {
                 if !name.is_empty() {
-                    out.insert(name.clone(), (kd, ns));
+                    out.insert(name.clone(), current.clone());
                 }
                 name = it.collect::<Vec<_>>().join(" ");
-                kd = Vec3::splat(0.7);
-                ns = 50.0;
+                current = fresh();
             }
             Some("Kd") => {
                 let v: Vec<f32> = it.filter_map(|t| t.parse().ok()).collect();
                 if v.len() >= 3 {
-                    kd = Vec3::new(v[0], v[1], v[2]);
+                    current.kd = Vec3::new(v[0], v[1], v[2]);
                 }
             }
-            Some("Ns") => ns = it.next().and_then(|t| t.parse().ok()).unwrap_or(50.0),
+            Some("Ns") => current.ns = it.next().and_then(|t| t.parse().ok()).unwrap_or(50.0),
+            Some("map_Kd") => current.map = it.last().map(str::to_string),
             _ => {}
         }
     }
     if !name.is_empty() {
-        out.insert(name, (kd, ns));
+        out.insert(name, current);
     }
     out
+}
+
+/// Una imagen cruda cuadrada (RGB de 8 bits por canal), en lineal.
+struct Texture {
+    size: usize,
+    texels: Vec<Vec3>,
+}
+
+impl Texture {
+    /// La version cruda de `image` (la misma carpeta y nombre, `.rgb`).
+    fn load(dir: &Path, image: &str) -> Option<Self> {
+        let raw = std::fs::read(dir.join(Path::new(image).with_extension("rgb"))).ok()?;
+        let size = ((raw.len() / 3) as f64).sqrt() as usize;
+        if size == 0 || size * size * 3 != raw.len() {
+            return None;
+        }
+        let linear: [f32; 256] = std::array::from_fn(|i| (i as f32 / 255.0).powf(2.2));
+        let texels = raw.chunks_exact(3).map(|p| Vec3::new(linear[p[0] as usize], linear[p[1] as usize], linear[p[2] as usize])).collect();
+        Some(Self { size, texels })
+    }
+
+    /// El color en `(u, v)` (v hacia arriba, como en el `.obj`), bilineal y
+    /// repetida.
+    fn sample(&self, u: f32, v: f32) -> Vec3 {
+        let n = self.size;
+        let x = (u - u.floor()) * n as f32 - 0.5;
+        let y = (1.0 - (v - v.floor())) * n as f32 - 0.5;
+        let (x0, y0) = (x.floor(), y.floor());
+        let (fx, fy) = (x - x0, y - y0);
+        let wrap = |i: f32| (i as i64).rem_euclid(n as i64) as usize;
+        let (xa, xb, ya, yb) = (wrap(x0), wrap(x0 + 1.0), wrap(y0), wrap(y0 + 1.0));
+        let at = |x: usize, y: usize| self.texels[y * n + x];
+        let top = at(xa, ya).lerp(at(xb, ya), fx);
+        let bottom = at(xa, yb).lerp(at(xb, yb), fx);
+        top.lerp(bottom, fy)
+    }
 }
 
 /// La parte de una pieza por su nombre (las de dos lados, por el lado de
@@ -129,6 +182,17 @@ impl Character {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let mtl_path = path.with_extension("mtl");
         let materials = read_mtl(&std::fs::read_to_string(&mtl_path).map_err(|e| format!("{}: {e}", mtl_path.display()))?);
+        let dir = path.parent().unwrap_or(Path::new("."));
+        let mut textures: HashMap<String, Option<Texture>> = HashMap::new();
+        for m in materials.values() {
+            if let Some(map) = &m.map {
+                textures.entry(map.clone()).or_insert_with(|| Texture::load(dir, map));
+            }
+        }
+        let mut texture: Option<&Texture> = None;
+        let mut coords: Vec<Vec2> = Vec::new();
+        // Que vertices llevan imagen (la cara): dicen hacia donde mira.
+        let mut faced: Vec<bool> = Vec::new();
         let (mut positions, mut normals) = (Vec::new(), Vec::new());
         let mut mesh = Mesh::default();
         let mut tags: Vec<(usize, Part)> = Vec::new();
@@ -146,15 +210,22 @@ impl Character {
                         if kind { normals.push(p) } else { positions.push(p) }
                     }
                 }
+                Some("vt") => {
+                    let v: Vec<f32> = it.filter_map(|t| t.parse().ok()).collect();
+                    if v.len() >= 2 {
+                        coords.push(Vec2::new(v[0], v[1]));
+                    }
+                }
                 Some("o") => objects.push(it.collect::<Vec<_>>().join(" ")),
                 Some("usemtl") => {
                     let name = it.collect::<Vec<_>>().join(" ");
-                    let (kd, ns) = materials.get(&name).copied().unwrap_or((Vec3::splat(0.7), 50.0));
-                    color = kd;
-                    rough = (2.0 / (ns.max(0.0) + 2.0)).powf(0.25);
+                    let m = materials.get(&name);
+                    color = m.map_or(Vec3::splat(0.7), |m| m.kd);
+                    rough = (2.0 / (m.map_or(50.0, |m| m.ns).max(0.0) + 2.0)).powf(0.25);
+                    texture = m.and_then(|m| m.map.as_ref()).and_then(|map| textures.get(map)).and_then(Option::as_ref);
                 }
                 Some("f") => {
-                    let corners: Vec<(usize, Option<usize>)> = it
+                    let corners: Vec<(usize, Option<usize>, Option<usize>)> = it
                         .filter_map(|c| {
                             let mut f = c.split('/');
                             let index = |t: Option<&str>, n: usize| -> Option<usize> {
@@ -163,8 +234,8 @@ impl Character {
                                 (i >= 0 && (i as usize) < n).then_some(i as usize)
                             };
                             let v = index(f.next(), positions.len())?;
-                            let _ = f.next();
-                            Some((v, index(f.next(), normals.len())))
+                            let t = index(f.next(), coords.len());
+                            Some((v, t, index(f.next(), normals.len())))
                         })
                         .collect();
                     if corners.len() < 3 {
@@ -172,11 +243,16 @@ impl Character {
                     }
                     let object = objects.last().map_or("", String::as_str);
                     let base = mesh.positions.len() as u32;
-                    for &(v, n) in &corners {
+                    for &(v, t, n) in &corners {
                         let p = positions[v];
                         mesh.positions.push(p);
                         mesh.normals.push(n.map_or(Vec3::Y, |n| normals[n]));
-                        mesh.colors.push(color);
+                        // Con imagen, el color de su coordenada de textura.
+                        mesh.colors.push(match (texture, t) {
+                            (Some(image), Some(t)) => image.sample(coords[t].x, coords[t].y),
+                            _ => color,
+                        });
+                        faced.push(texture.is_some());
                         mesh.uvs.push(Vec2::new(Surface::Paint as u8 as f32, rough));
                         tags.push((objects.len(), part_of(object, p.x)));
                     }
@@ -189,6 +265,25 @@ impl Character {
         }
         if mesh.positions.is_empty() {
             return Err(format!("{}: sin caras", path.display()));
+        }
+        // El frente va hacia -z (como el primer modelo): si la cara queda del
+        // lado +z, media vuelta alrededor de y.
+        let mean_z = |pick: &dyn Fn(usize) -> bool| {
+            let (n, sum) = (0..mesh.positions.len()).filter(|&i| pick(i)).fold((0usize, 0.0f32), |(n, s), i| (n + 1, s + mesh.positions[i].z));
+            (n > 0).then(|| sum / n as f32)
+        };
+        if let (Some(face), Some(all)) = (mean_z(&|i| faced[i]), mean_z(&|_| true))
+            && face > all
+        {
+            for p in mesh.positions.iter_mut().chain(mesh.normals.iter_mut()) {
+                *p = Vec3::new(-p.x, p.y, -p.z);
+            }
+            // Lo de cada lado se marco con la x de antes: cambia de lado.
+            for tag in &mut tags {
+                if let Part::Leg(side) = tag.1 {
+                    tag.1 = Part::Leg(-side);
+                }
+            }
         }
         mesh.update_bounds();
         let mut parts: Vec<Part> = tags.iter().map(|t| t.1).collect();

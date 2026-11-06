@@ -312,7 +312,20 @@ pub fn draw(
         };
         let p = &app.prop_stats;
         let lines = [
-            format!("FPS {fps}   ·   frame {:.1} ms   ·   {} hilos", s.ms_total, parallel::workers()),
+            format!(
+                "FPS {fps}   ·   frame {:.1} ms   ·   {} hilos   ·   {}×{}{}",
+                s.ms_total,
+                parallel::workers(),
+                app.renderer.width(),
+                app.renderer.height(),
+                if app.dynamic.is_low() {
+                    "  (en movimiento)"
+                } else if app.dynamic.enabled {
+                    ""
+                } else {
+                    "  (resolución dinámica apagada)"
+                }
+            ),
             format!(
                 "vértices {:.1}   triángulos {:.1}   raster {:.1}   shading {:.1}   post {:.1} ms",
                 s.ms_vertex, s.ms_triangles, s.ms_raster, s.ms_shade, s.ms_post

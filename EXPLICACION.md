@@ -1013,8 +1013,14 @@ las chispas, Meyer de espaldas y los cucuruchos, de túnica morada y
 capirote, que lo persiguen.
 
 **Meyer** ([minijuegos/personaje.rs](src/minijuegos/personaje.rs)) es un
-modelo de Blender (28 700 triángulos, 39 colores) en una sola pose,
-saludando, y sin esqueleto. Las poses de la carrera se arman girando sus
+modelo de Blender (242 000 triángulos en 120 piezas) en una sola pose,
+saludando, y sin esqueleto. La cara es una malla fina (unas 70 000 caras)
+con una textura de la referencia (`map_Kd`): se guarda cruda a 1024 x 1024
+(`assets/personajes/meyer-rostro-color.rgb`) y cada esquina toma el color de
+su coordenada de textura (bilineal, de sRGB a lineal); con una malla así de
+fina el color por vértice conserva el detalle al tamaño en que se ve. Si la
+cara queda mirando a +z, se le da media vuelta al cargarlo (y lo de cada lado
+cambia de lado) para que todo lo demás siga igual. Las poses de la carrera se arman girando sus
 piezas: las piernas (los jeans y los zapatos vienen aparte, una por lado)
 giran por la rodilla y después por la cadera, con
 `y' = p.y + dy cos a + dz sen a` y `z' = p.z + dz cos a − dy sen a` alrededor
@@ -1583,6 +1589,38 @@ con los estallidos y la llamarada).
 | Caras traseras y triángulos sin pixel | `pipeline.rs` | HUD: "espalda -N, sin pixel -N" |
 | LOD del terreno y de los objetos | quadtree, `props::select` | F4 colorea niveles; F5 apaga el LOD y el contador de triángulos sube |
 | Frustum congelado | F7 | Se vuela por fuera y se ve qué queda dentro |
+
+**Resolución dinámica (F8).** El costo de un frame está repartido en los
+shaders procedurales de cada planeta (el ruido de Perlin se lleva cerca de un
+tercio del sombreado de las superficies, el PBR otro cuarto, y el resto las
+texturas, el cielo, el AO), y casi todo crece con el número de pixeles. Así
+que mientras la imagen se mueve rápido, el frame se renderiza al 75 % del
+ancho y del alto (960 x 540, el 56 % de los pixeles) y se amplía a la ventana
+con Catmull-Rom bicúbico (separable: cada fila y después cada columna, con
+`w0 = (-t³ + 2t² - t)/2`, `w1 = (3t³ - 5t² + 2)/2`, `w2 = (-3t³ + 4t² + t)/2`,
+`w3 = (t³ - t²)/2`). Cerca de los planetas eso cuesta entre 60 y 68 % del frame
+completo: 1.5 a 1.65 veces los FPS mientras se vuela.
+
+Qué tan rápido se mueve la imagen se mide en rad/s: el ángulo que giró la
+cámara desde el frame anterior (`2 acos |q1 · q2|`) más lo que avanzó entre la
+distancia a la superficie más cercana (el ángulo con que se corre lo que está
+abajo), entre el tiempo de reloj entre los dos frames. Baja en cuanto pasa de
+0.15 rad/s y vuelve a completa cuando lleva 0.35 s por debajo de 0.06 rad/s,
+así no parpadea entre las dos. Son dos renderers que se intercambian al
+empezar el frame (las partículas viven en el renderer y pasan al otro); los
+marcadores del HUD se proyectan a tamaño completo; las fotos (P), la
+transición de versión (V), el frustum congelado, `--captura`, `--bench` y el
+video van siempre completos. F2 dice a qué tamaño va el frame.
+
+**Optimizaciones que no cambian la imagen.** El ruido de Worley revisa las 27
+celdas de la más cercana a la más lejana y se salta, sin calcular su punto,
+las que no pueden quedar más cerca que la segunda mejor (su distancia mínima
+a `p` es la de `p` a la caja de la celda): los mismos `f1` y `f2` bit por bit,
+24 % más rápido. Faro calcula una vez por frame lo que cada pixel volvía a
+calcular (los ejes de la exposición de los haces, el cono que los abarca, sus
+pulsos y sus marcos) y tabula la desviación de la luz lejos de la estrella en
+función de `u = √(1 + cos s)` (comprobada contra la lente en los puntos de en
+medio; error menor a un 1 % de pixel).
 
 ## 9. Atmósferas ([shaders/atmosphere.rs](src/shaders/atmosphere.rs))
 

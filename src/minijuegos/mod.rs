@@ -151,10 +151,10 @@ pub fn available(app: &App) -> Option<Kind> {
 /// Abre un minijuego. La marimba usa de fondo la ultima imagen del render;
 /// la carrera hornea los modelos de las naves y lee el cielo.
 pub fn start(kind: Kind, app: &App) -> Box<dyn Minigame> {
-    let (width, height) = (app.renderer.width(), app.renderer.height());
+    let (width, height) = app.frame_size();
     let records = Records::load(records_path());
     match kind {
-        Kind::Marimba => Box::new(marimba::MarimbaTiles::new(app.renderer.rgba(), width, height, records)),
+        Kind::Marimba => Box::new(marimba::MarimbaTiles::new(app.frame(), width, height, records)),
         Kind::Carrera => Box::new(race(app, records)),
         Kind::Shucos => Box::new(shucos::Shucos::new(width, height, records)),
         Kind::Surfers => Box::new(surfers::CamionetaSurfers::new(width, height, records)),
