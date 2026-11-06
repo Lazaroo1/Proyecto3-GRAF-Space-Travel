@@ -306,7 +306,7 @@ Además, fuera del menú:
 - **Sonido sintetizado**: el latido sincronizado con el que se ve, motor, viento, un tono por planeta y Faro (un golpe por cada haz que pasa por la nave, el chisporroteo de los estallidos, el trueno de la llamarada y las oscilaciones de su corteza).
 - **Bloom** y tonemap HDR que conserva el tono.
 - **Resolución dinámica** (F8, encendida en la ventana): mientras la imagen se mueve rápido (lo que gira la cámara más lo que avanza sobre la superficie más cercana, en rad/s, con histéresis) el frame se renderiza al 75 % y se amplía con Catmull-Rom bicúbico: de 1.5 a 1.65 veces los FPS volando cerca de los planetas. Quieta, las fotos (P), las capturas y el video, siempre a resolución completa; F2 dice a qué tamaño va.
-- **Optimizaciones que no cambian la imagen**: el ruido de Worley se salta las celdas que ya no pueden ganar (mismo resultado, 24 % más rápido) y Faro calcula una vez por frame lo de sus haces y tabula la desviación de su luz lejos de la estrella. Se midió con contadores de ciclos por material y por etapa (ver [EXPLICACION.md](EXPLICACION.md)).
+- **Optimizaciones sin bajar la calidad**: el ruido de Worley se salta las celdas que ya no pueden ganar (mismo resultado, 24 % más rápido) y Faro calcula una vez por frame lo de sus haces y tabula la desviación de su luz lejos de la estrella. En Gargantúa, los pasos del RK4 en el vacío (lejos del gas y del anillo de fotones) son el doble de largos sin que crezca el error contra una referencia más fina, y los rayos que ya van cayendo se cortan: sus vistas, de 13 a 16 % más rápidas. Se midió con contadores de ciclos por material y por etapa (ver [EXPLICACION.md](EXPLICACION.md)).
 
 ## En la demostración: cambiar parámetros en vivo
 
