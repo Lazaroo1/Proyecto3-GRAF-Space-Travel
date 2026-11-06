@@ -224,6 +224,8 @@ fn new_app(options: &Options) -> Result<App, String> {
 
 fn run_window(options: &Options) -> Result<(), String> {
     let mut app = new_app(options)?;
+    // En la ventana, la resolucion dinamica (F8 la apaga).
+    app.dynamic.enabled = true;
     if options.marimba {
         app.apply_preset(xela_preset());
     } else if options.race {
@@ -478,6 +480,10 @@ fn run_window(options: &Options) -> Result<(), String> {
         if rl.is_key_pressed(KeyboardKey::KEY_F7) {
             app.toggle_freeze();
         }
+        if rl.is_key_pressed(KeyboardKey::KEY_F8) {
+            app.dynamic.enabled = !app.dynamic.enabled;
+            app.banner = Some(if app.dynamic.enabled { "Resolución dinámica: sí" } else { "Resolución dinámica: no" });
+        }
         if rl.is_key_pressed(KeyboardKey::KEY_L) {
             app.settings.local = !app.settings.local;
         }
@@ -557,6 +563,8 @@ fn run_window(options: &Options) -> Result<(), String> {
             };
         }
         let photo = rl.is_key_pressed(KeyboardKey::KEY_P);
+        // La foto, siempre a resolucion completa.
+        app.dynamic.force_full |= photo;
 
         let input = read_input(&rl, captured && !skip_mouse);
         skip_mouse = false;
@@ -574,7 +582,7 @@ fn run_window(options: &Options) -> Result<(), String> {
             save_photo(&app);
         }
         texture
-            .update_texture(app.renderer.rgba())
+            .update_texture(app.frame())
             .map_err(|e| format!("no se pudo actualizar la textura: {e:?}"))?;
 
         let fps = rl.get_fps();
@@ -918,12 +926,8 @@ fn save_photo(app: &App) {
         .map_or(0, |d| d.as_secs());
     let path = dir.join(format!("foto_{stamp}.png"));
     let result = std::fs::create_dir_all(dir).and_then(|_| {
-        render::png::write_rgba(
-            &path,
-            app.renderer.width() as u32,
-            app.renderer.height() as u32,
-            app.renderer.rgba(),
-        )
+        let (width, height) = app.frame_size();
+        render::png::write_rgba(&path, width as u32, height as u32, app.frame())
     });
     match result {
         Ok(()) => println!("foto guardada en {}", path.display()),

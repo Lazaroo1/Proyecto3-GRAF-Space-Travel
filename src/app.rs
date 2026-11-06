@@ -833,7 +833,13 @@ pub const PRESETS: [Preset; 57] = [
 
 pub struct App {
     pub system: System,
+    /// El renderer del frame. Con la resolucion dinamica, mientras la imagen
+    /// se mueve, es uno mas chico (y el de tamano completo espera en
+    /// `spare`): ver `Dynamic`.
     pub renderer: Renderer,
+    /// Resolucion dinamica (F8). Encendida en la ventana; las fotos de
+    /// `--captura`, el `--bench` y el video siempre van completas.
+    pub dynamic: Dynamic,
     pub settings: FlightSettings,
     pub flight: FlightInfo,
     pub stats: Stats,
@@ -1045,6 +1051,7 @@ impl App {
             saccades: 0,
             system,
             renderer: Renderer::new(width, height),
+            dynamic: Dynamic::new(width, height),
             settings: FlightSettings::default(),
             flight: FlightInfo::default(),
             stats: Stats::default(),
@@ -1359,6 +1366,17 @@ impl App {
         })
     }
 
+    /// La imagen del ultimo frame a tamano completo, RGBA8 (con la
+    /// resolucion dinamica, ya ampliada).
+    pub fn frame(&self) -> &[u8] {
+        self.dynamic.frame(&self.renderer)
+    }
+
+    /// El tamano de `frame`.
+    pub fn frame_size(&self) -> (usize, usize) {
+        self.dynamic.full
+    }
+
     /// El nombre de un cuerpo en el HUD (el de la version que se ve).
     pub fn body_name(&self, index: usize) -> &'static str {
         self.system.bodies.get(index).map_or("?", |b| b.label)
@@ -1367,7 +1385,7 @@ impl App {
     /// Cambia de version (V) con la transicion: la imagen de ahora se
     /// guarda y la nueva se abre encima. La nave sigue donde estaba.
     pub fn toggle_version(&mut self) {
-        let from = self.renderer.rgba().to_vec();
+        let from = self.frame().to_vec();
         self.switch_version();
         self.transition = Some(Transition {
             from,
@@ -1682,6 +1700,11 @@ impl App {
         let ship_rot = self.ship_prev.rot.slerp(self.ship.rot, alpha);
 
         let camera = self.camera(ship_pos, ship_rot, t);
+        // Resolucion dinamica: con la imagen en movimiento, el renderer chico.
+        let fast = self.dynamic.moving(&self.system, &camera, t);
+        let low = fast && self.transition.is_none() && self.freeze.is_none();
+        self.dynamic.select(&mut self.renderer, low);
+        let (full_w, full_h) = self.dynamic.full;
         let view = camera.view(self.renderer.width(), self.renderer.height());
         // El culling y el LOD se deciden desde la camara congelada si la hay.
         let cull_camera = self.freeze.unwrap_or(camera);
@@ -1694,15 +1717,8 @@ impl App {
             )
         });
         self.build_frustum(&camera, pixel_angle_of(&camera, self.renderer.height()));
-        self.markers = markers(
-            &self.system,
-            &self.timeline,
-            t,
-            &camera,
-            &view,
-            self.renderer.width(),
-            self.renderer.height(),
-        );
+        // Los marcadores del HUD van sobre la ventana: a tamano completo.
+        self.markers = markers(&self.system, &self.timeline, t, &camera, &camera.view(full_w, full_h), full_w, full_h);
 
         let show_ship = self.camera_mode == CameraMode::Chase;
         let pixel_angle = 2.0 * (camera.fov_y * 0.5).tan() / self.renderer.height() as f64;
@@ -2148,6 +2164,7 @@ impl App {
             let progress = tr.age / transition::WIPE;
             transition::blend(self.renderer.rgba_mut(), &tr.from, width, height, progress, tr.toward);
         }
+        self.dynamic.present(&self.renderer);
         self.stats.ms_total = frame_start.elapsed().as_secs_f32() * 1000.0;
         self.stats
     }
@@ -2758,6 +2775,123 @@ pub struct Marker {
 }
 
 /// Angulo que cubre un pixel con esta camara.
+/// La resolucion dinamica: dos renderers (el completo y uno a
+/// `DYNAMIC_SCALE`) que se intercambian al empezar el frame, y lo que se
+/// necesita para decidir.
+///
+/// Que tan rapido se mueve la imagen se mide en rad/s: el angulo que giro
+/// la camara desde el frame anterior (`2 acos |q1 . q2|`) mas lo que avanzo
+/// dividido entre la distancia a la superficie mas cercana (el angulo con
+/// que se corre lo que esta abajo), entre el tiempo de reloj entre los dos
+/// frames. Con histeresis: baja en cuanto pasa de `DYNAMIC_FAST` y sube
+/// cuando lleva `DYNAMIC_SETTLE` s por debajo de `DYNAMIC_SLOW`, asi no
+/// parpadea entre las dos.
+pub struct Dynamic {
+    /// Si se usa (F8).
+    pub enabled: bool,
+    /// Una sola vez: el proximo frame completo (la foto).
+    pub force_full: bool,
+    pub full: (usize, usize),
+    /// El renderer que no se esta usando (creado la primera vez).
+    spare: Option<Renderer>,
+    low: bool,
+    upscaler: Option<crate::render::upscale::Upscaler>,
+    /// La imagen ampliada cuando se rendereo chico.
+    display: Vec<u8>,
+    last: Option<(DVec3, DQuat, std::time::Instant)>,
+    calm_since: Option<std::time::Instant>,
+}
+
+impl Dynamic {
+    fn new(width: usize, height: usize) -> Self {
+        Self {
+            enabled: false,
+            force_full: false,
+            full: (width, height),
+            spare: None,
+            low: false,
+            upscaler: None,
+            display: Vec::new(),
+            last: None,
+            calm_since: None,
+        }
+    }
+
+    /// Si ahora se esta renderizando chico.
+    pub fn is_low(&self) -> bool {
+        self.low
+    }
+
+    /// Si la imagen se mueve rapido (y conviene renderizar chico).
+    fn moving(&mut self, system: &System, camera: &Camera, t: f64) -> bool {
+        let now = std::time::Instant::now();
+        let last = self.last.replace((camera.pos, camera.rot, now));
+        let force = std::mem::take(&mut self.force_full);
+        if !self.enabled || force {
+            self.calm_since = None;
+            return false;
+        }
+        let Some((pos, rot, then)) = last else { return self.low };
+        let dt = (now - then).as_secs_f64().max(1e-3);
+        let turn = 2.0 * rot.dot(camera.rot).abs().min(1.0).acos();
+        let ground = system
+            .bodies
+            .iter()
+            .filter(|b| !b.hidden)
+            .map(|b| (camera.pos - b.position(t)).length() - b.radius)
+            .fold(f64::MAX, f64::min)
+            .max(1.0);
+        let rate = (turn + (camera.pos - pos).length() / ground) / dt;
+        if rate > config::DYNAMIC_FAST {
+            self.calm_since = None;
+            true
+        } else if rate < config::DYNAMIC_SLOW {
+            let since = *self.calm_since.get_or_insert(now);
+            self.low && (now - since).as_secs_f64() < config::DYNAMIC_SETTLE
+        } else {
+            self.calm_since = None;
+            self.low
+        }
+    }
+
+    /// Deja en `active` el renderer que toca (el chico o el completo). Las
+    /// particulas viven en el renderer: se pasan al otro.
+    fn select(&mut self, active: &mut Renderer, low: bool) {
+        if low == self.low {
+            return;
+        }
+        let other = self.spare.take().unwrap_or_else(|| {
+            let (w, h) = self.full;
+            let scaled = |v: usize| (((v as f64 * config::DYNAMIC_SCALE) / 2.0).round() * 2.0).max(2.0) as usize;
+            if low { Renderer::new(scaled(w), scaled(h)) } else { Renderer::new(w, h) }
+        });
+        let previous = std::mem::replace(active, other);
+        active.particles = previous.particles.clone();
+        active.bloom_intensity = previous.bloom_intensity;
+        self.spare = Some(previous);
+        self.low = low;
+    }
+
+    /// Despues de renderizar: si fue chico, la imagen ampliada.
+    fn present(&mut self, renderer: &Renderer) {
+        if !self.low {
+            return;
+        }
+        let src = (renderer.width(), renderer.height());
+        if !self.upscaler.as_ref().is_some_and(|u| u.fits(src, self.full)) {
+            self.upscaler = Some(crate::render::upscale::Upscaler::new(src, self.full));
+        }
+        self.display.resize(self.full.0 * self.full.1 * 4, 0);
+        if let Some(up) = self.upscaler.as_mut() {
+            up.run(renderer.rgba(), &mut self.display);
+        }
+    }
+
+    fn frame<'a>(&'a self, renderer: &'a Renderer) -> &'a [u8] {
+        if self.low { &self.display } else { renderer.rgba() }
+    }
+}
+
 fn pixel_angle_of(camera: &Camera, height: usize) -> f64 {
     2.0 * (camera.fov_y * 0.5).tan() / height as f64
 }
@@ -3397,6 +3531,36 @@ fn build_draws<'a>(
 
 #[cfg(test)]
 mod tests {
+    /// La resolucion dinamica: girando rapido se renderiza chico (y la
+    /// imagen sale ampliada al tamano completo); quieta, vuelve a completa.
+    #[test]
+    fn dynamic_resolution_drops_while_turning_and_comes_back() {
+        let mut app = App::new(160, 90).unwrap();
+        app.dynamic.enabled = true;
+        app.render();
+        assert!(!app.dynamic.is_low());
+        for k in 0..3 {
+            app.aim = DQuat::from_axis_angle(DVec3::Y, 0.4 * (k + 1) as f64) * app.aim;
+            app.render();
+        }
+        assert!(app.dynamic.is_low(), "girando");
+        assert_eq!(app.renderer.width(), 120);
+        assert_eq!(app.frame().len(), 160 * 90 * 4);
+        assert_eq!(app.frame_size(), (160, 90));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        app.render();
+        std::thread::sleep(std::time::Duration::from_secs_f64(config::DYNAMIC_SETTLE + 0.05));
+        app.render();
+        assert!(!app.dynamic.is_low(), "quieta");
+        assert_eq!(app.renderer.width(), 160);
+        assert_eq!(app.frame().len(), 160 * 90 * 4);
+        // La foto siempre completa.
+        app.aim = DQuat::from_axis_angle(DVec3::Y, 1.0) * app.aim;
+        app.dynamic.force_full = true;
+        app.render();
+        assert_eq!(app.renderer.width(), 160);
+    }
+
     /// En la version chapina, N llega a cada lugar de dia (menos Antigua,
     /// en Pira, que le da siempre la misma cara a la estrella y ya esta de
     /// dia).

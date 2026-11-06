@@ -36,6 +36,7 @@ mod reflections;
 mod shade;
 pub mod shadow;
 pub mod transition;
+pub mod upscale;
 mod stats;
 
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -37,6 +37,15 @@ pub const TERRAIN_FINEST: f64 = 0.35;
 pub const LOD_FACTOR: f64 = 1.8;
 /// Chunks nuevos por frame como maximo.
 pub const LOD_BUDGET: usize = 24;
+/// Resolucion dinamica: mientras la imagen se mueve rapido, el frame se
+/// renderiza a esta fraccion del ancho y del alto (la mitad de los pixeles,
+/// un poco mas) y se amplia. Se baja cuando la imagen se mueve mas de
+/// `DYNAMIC_FAST` rad/s y se sube cuando lleva `DYNAMIC_SETTLE` s por
+/// debajo de `DYNAMIC_SLOW`.
+pub const DYNAMIC_SCALE: f64 = 0.75;
+pub const DYNAMIC_FAST: f64 = 0.15;
+pub const DYNAMIC_SLOW: f64 = 0.06;
+pub const DYNAMIC_SETTLE: f64 = 0.35;
 /// Nivel fijo cuando se apaga el LOD para comparar.
 pub const LOD_FIXED_LEVEL: u8 = 4;
 
