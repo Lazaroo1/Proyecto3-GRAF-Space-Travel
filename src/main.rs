@@ -46,6 +46,8 @@ enum Mode {
     GameCapture(PathBuf),
     /// Fotos de la carrera del Periferico, sin ventana.
     RaceCapture(PathBuf),
+    /// Fotos de los shucos del Reformador, sin ventana.
+    ShucosCapture(PathBuf),
 }
 
 struct Options {
@@ -59,6 +61,7 @@ struct Options {
     /// Abrir la marimba de la Luna (o la carrera) al arrancar.
     marimba: bool,
     race: bool,
+    shucos: bool,
     /// La nave chapina con que se empieza (1 a 9).
     ship: Option<usize>,
 }
@@ -71,10 +74,12 @@ uso: ocaso [opciones]
   --recorrido MP4      graba vuelo, acercamiento, vuelta y alejamiento (ffmpeg)
   --marimba             arranca en la Luna de Xelaju con la marimba abierta
   --carrera             arranca en la capital con la carrera del Periferico abierta
+  --shucos              arranca en El Reformador con la carretilla de shucos abierta
   --nave N              la nave de la version chapina (1-6 botellas, 7 tuk-tuk,
                         8 camioneta, 9 colectivo)
   --captura-marimba DIR guarda fotos del minijuego de la marimba sin ventana
   --captura-carrera DIR guarda fotos de la carrera del Periferico sin ventana
+  --captura-shucos DIR  guarda fotos de los shucos del Reformador sin ventana
   --bench FRAMES        mide cada vista fija FRAMES veces sin abrir ventana
   --wire                empieza con el wireframe encendido (F3)
   --lod                 empieza con los colores de LOD encendidos (F4)
@@ -91,6 +96,7 @@ fn parse_args() -> Result<Options, String> {
         preset: None,
         marimba: false,
         race: false,
+        shucos: false,
         ship: None,
     };
     let mut args = std::env::args().skip(1);
@@ -122,6 +128,7 @@ fn parse_args() -> Result<Options, String> {
             "--wire" => options.wireframe = true,
             "--marimba" => options.marimba = true,
             "--carrera" => options.race = true,
+            "--shucos" => options.shucos = true,
             "--nave" => {
                 let n: usize = args.next().ok_or("--nave espera un numero")?.parse().map_err(|_| "nave invalida")?;
                 if !(1..=9).contains(&n) {
@@ -132,6 +139,10 @@ fn parse_args() -> Result<Options, String> {
             "--captura-carrera" => {
                 let dir = args.next().ok_or("--captura-carrera espera una carpeta")?;
                 options.mode = Mode::RaceCapture(PathBuf::from(dir));
+            }
+            "--captura-shucos" => {
+                let dir = args.next().ok_or("--captura-shucos espera una carpeta")?;
+                options.mode = Mode::ShucosCapture(PathBuf::from(dir));
             }
             "--captura-marimba" => {
                 let dir = args.next().ok_or("--captura-marimba espera una carpeta")?;
@@ -175,6 +186,7 @@ fn main() {
         Mode::Tour(path) => run_tour(&options, path),
         Mode::GameCapture(dir) => run_game_capture(&options, dir),
         Mode::RaceCapture(dir) => run_race_capture(&options, dir),
+        Mode::ShucosCapture(dir) => run_shucos_capture(&options, dir),
     };
     if let Err(error) = result {
         eprintln!("error: {error}");
@@ -204,6 +216,8 @@ fn run_window(options: &Options) -> Result<(), String> {
         app.apply_preset(xela_preset());
     } else if options.race {
         app.apply_preset(capital_preset());
+    } else if options.shucos {
+        app.apply_preset(reformador_preset());
     } else if options.preset.is_none() {
         app.apply_preset(&PRESETS[21]);
     }
@@ -263,9 +277,15 @@ fn run_window(options: &Options) -> Result<(), String> {
     let mut minigame: Option<Box<dyn minijuegos::Minigame>> = None;
     let mut opening: Option<minijuegos::Kind> = None;
     let mut game_frame = vec![0u8; options.width * options.height * 4];
-    if options.marimba || options.race {
+    if options.marimba || options.race || options.shucos {
         app.render();
-        let kind = if options.race { minijuegos::Kind::Carrera } else { minijuegos::Kind::Marimba };
+        let kind = if options.race {
+            minijuegos::Kind::Carrera
+        } else if options.shucos {
+            minijuegos::Kind::Shucos
+        } else {
+            minijuegos::Kind::Marimba
+        };
         minigame = Some(minijuegos::start(kind, &app));
         hud.intro_over = true;
     }
@@ -572,13 +592,91 @@ fn read_game_keys(rl: &RaylibHandle) -> minijuegos::Keys {
         brake: down(&[KEY_DOWN, KEY_S]),
         boost: pressed(&[KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT, KEY_SPACE]),
         horn: pressed(&[KEY_H]),
+        typed: typed_keys(rl),
     }
+}
+
+/// Las letras y los numeros apretados en este frame, como los marca
+/// `minijuegos::Keys::press` (los numeros tambien del teclado numerico).
+fn typed_keys(rl: &RaylibHandle) -> u64 {
+    use KeyboardKey::*;
+    let letters = [
+        KEY_A, KEY_B, KEY_C, KEY_D, KEY_E, KEY_F, KEY_G, KEY_H, KEY_I, KEY_J, KEY_K, KEY_L, KEY_M, KEY_N, KEY_O, KEY_P, KEY_Q, KEY_R, KEY_S, KEY_T, KEY_U, KEY_V, KEY_W, KEY_X, KEY_Y, KEY_Z,
+    ];
+    let digits = [KEY_ZERO, KEY_ONE, KEY_TWO, KEY_THREE, KEY_FOUR, KEY_FIVE, KEY_SIX, KEY_SEVEN, KEY_EIGHT, KEY_NINE];
+    let pad = [KEY_KP_0, KEY_KP_1, KEY_KP_2, KEY_KP_3, KEY_KP_4, KEY_KP_5, KEY_KP_6, KEY_KP_7, KEY_KP_8, KEY_KP_9];
+    let mut keys = minijuegos::Keys::default();
+    for (k, key) in letters.into_iter().enumerate() {
+        if rl.is_key_pressed(key) {
+            keys.press((b'a' + k as u8) as char);
+        }
+    }
+    for k in 0..10 {
+        if rl.is_key_pressed(digits[k]) || rl.is_key_pressed(pad[k]) {
+            keys.press((b'0' + k as u8) as char);
+        }
+    }
+    keys.typed
 }
 
 /// La capital de lejos, con su anillo (version chapina): ahi se ofrece la
 /// carrera.
 fn capital_preset() -> &'static app::Preset {
     PRESETS.iter().find(|p| p.name == "51_capital").expect("la vista de la capital")
+}
+
+/// El Reformador, en el suelo de la capital (version chapina): ahi esta la
+/// carretilla de shucos.
+fn reformador_preset() -> &'static app::Preset {
+    PRESETS.iter().find(|p| p.name == "52_reformador").expect("la vista del Reformador")
+}
+
+/// Fotos de los shucos del Reformador: el menu, la noche con el piloto
+/// automatico (al abrir, en la salida de la U, en la del estadio y con los
+/// bolos) y los resultados. Solo lo que dibuja la CPU.
+fn run_shucos_capture(options: &Options, dir: &Path) -> Result<(), String> {
+    use minijuegos::Minigame;
+    use minijuegos::shucos::Shucos;
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let (w, h) = (options.width, options.height);
+    let start = std::time::Instant::now();
+    let mut game = Shucos::new(w, h, minijuegos::Records::in_memory());
+    println!("fondo horneado en {:.0} ms", start.elapsed().as_secs_f64() * 1000.0);
+    let mut frame = vec![0u8; w * h * 4];
+    let mut save = |game: &mut Shucos, name: &str| -> Result<(), String> {
+        let mut times: Vec<f64> = (0..9)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                game.draw(&mut frame);
+                start.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        times.sort_by(f64::total_cmp);
+        let path = dir.join(format!("{name}.png"));
+        render::png::write_rgba(&path, w as u32, h as u32, &frame).map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("{name:<24} {:6.2} ms   -> {}", times[4], path.display());
+        Ok(())
+    };
+    save(&mut game, "shucos_1_menu")?;
+    game.open();
+    game.set_autopilot(true);
+    let dt = 1.0 / 60.0;
+    let mut elapsed = 0.0;
+    for (at, name) in [(7.0, "shucos_2_abriendo"), (46.0, "shucos_3_salida_de_la_u"), (76.0, "shucos_4_salida_del_estadio"), (128.0, "shucos_5_bolos")] {
+        while elapsed < at {
+            game.update(dt, &minijuegos::Keys::default());
+            elapsed += dt;
+        }
+        save(&mut game, name)?;
+    }
+    while !game.in_results() && elapsed < 400.0 {
+        game.update(dt, &minijuegos::Keys::default());
+        elapsed += dt;
+    }
+    save(&mut game, "shucos_6_resultados")?;
+    let (sold, returned, angry, money) = game.tally();
+    println!("vendidos {sold}, devueltos {returned}, enojados {angry}, ganancia Q{money}");
+    Ok(())
 }
 
 /// El lugar de la marimba en la Luna de Xelaju (version chapina): al
