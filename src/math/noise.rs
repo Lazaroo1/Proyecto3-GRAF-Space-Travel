@@ -39,35 +39,46 @@ impl Perlin {
     ///
     /// `f2 - f1` vale cero justo en la frontera entre dos celdas: dibuja una
     /// red de grietas (lava entre placas de costra, membranas entre celulas).
+    ///
+    /// Las celdas se revisan de la mas cercana a la mas lejana (la propia, las
+    /// 6 de cara, las 12 de arista y las 8 de esquina) y se salta, sin
+    /// calcular su punto, toda celda en la que ningun punto pueda quedar mas
+    /// cerca que el segundo mas cercano que ya se tiene: su distancia minima
+    /// a `p` es la de `p` a la caja de la celda. El resultado es el mismo
+    /// (los dos menores no dependen del orden) y cuesta como la mitad.
     pub fn cells(&self, p: Vec3) -> (f32, f32) {
         let (ix, iy, iz) = (floor_i(p.x), floor_i(p.y), floor_i(p.z));
+        // Lo que falta en cada eje para salir de la celda propia hacia abajo
+        // y hacia arriba, al cuadrado.
+        let (fx, fy, fz) = (p.x - ix as f32, p.y - iy as f32, p.z - iz as f32);
+        let gap = |f: f32, d: i32| match d {
+            -1 => f * f,
+            1 => (1.0 - f) * (1.0 - f),
+            _ => 0.0,
+        };
         let mut f1 = f32::MAX;
         let mut f2 = f32::MAX;
-        for dz in -1..=1 {
-            for dy in -1..=1 {
-                for dx in -1..=1 {
-                    let (cx, cy, cz) = (ix + dx, iy + dy, iz + dz);
-                    let h = hash_u32(
-                        (cx as u32).wrapping_mul(0x8DA6_B343)
-                            ^ (cy as u32).wrapping_mul(0xD816_3841)
-                            ^ (cz as u32).wrapping_mul(0xCB1A_B31F)
-                            ^ self.seed,
-                    );
-                    let h2 = hash_u32(h);
-                    let h3 = hash_u32(h2);
-                    let point = Vec3::new(
-                        cx as f32 + unit(h),
-                        cy as f32 + unit(h2),
-                        cz as f32 + unit(h3),
-                    );
-                    let d = (p - point).length_squared();
-                    if d < f1 {
-                        f2 = f1;
-                        f1 = d;
-                    } else if d < f2 {
-                        f2 = d;
-                    }
-                }
+        for &(dx, dy, dz) in NEIGHBORS.iter() {
+            let near = gap(fx, dx) + gap(fy, dy) + gap(fz, dz);
+            if near >= f2 {
+                continue;
+            }
+            let (cx, cy, cz) = (ix + dx, iy + dy, iz + dz);
+            let h = hash_u32(
+                (cx as u32).wrapping_mul(0x8DA6_B343)
+                    ^ (cy as u32).wrapping_mul(0xD816_3841)
+                    ^ (cz as u32).wrapping_mul(0xCB1A_B31F)
+                    ^ self.seed,
+            );
+            let h2 = hash_u32(h);
+            let h3 = hash_u32(h2);
+            let point = Vec3::new(cx as f32 + unit(h), cy as f32 + unit(h2), cz as f32 + unit(h3));
+            let d = (p - point).length_squared();
+            if d < f1 {
+                f2 = f1;
+                f1 = d;
+            } else if d < f2 {
+                f2 = d;
             }
         }
         (f1.sqrt(), f2.sqrt())
@@ -160,6 +171,34 @@ impl Perlin {
     }
 }
 
+/// Las 27 celdas de Worley de la mas cercana a la mas lejana: la propia, las
+/// de cara, las de arista y las de esquina.
+const NEIGHBORS: [(i32, i32, i32); 27] = {
+    let mut out = [(0, 0, 0); 27];
+    let mut n = 0;
+    let mut order = 0;
+    while order <= 3 {
+        let mut dz = -1;
+        while dz <= 1 {
+            let mut dy = -1;
+            while dy <= 1 {
+                let mut dx = -1;
+                while dx <= 1 {
+                    if (dx != 0) as i32 + (dy != 0) as i32 + (dz != 0) as i32 == order {
+                        out[n] = (dx, dy, dz);
+                        n += 1;
+                    }
+                    dx += 1;
+                }
+                dy += 1;
+            }
+            dz += 1;
+        }
+        order += 1;
+    }
+    out
+};
+
 /// Suavizado quintico de Perlin: derivadas primera y segunda continuas.
 #[inline]
 fn fade(t: f32) -> f32 {
@@ -229,6 +268,34 @@ pub fn hash_u32(mut x: u32) -> u32 {
 mod tests {
     use super::*;
 
+    /// Saltarse celdas da exactamente los mismos `f1` y `f2` que revisar
+    /// las 27.
+    #[test]
+    fn pruned_cells_match_the_full_search() {
+        let n = Perlin::new(42);
+        let full = |p: Vec3| {
+            let (ix, iy, iz) = (floor_i(p.x), floor_i(p.y), floor_i(p.z));
+            let mut ds = Vec::new();
+            for dz in -1..=1 {
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        let (cx, cy, cz) = (ix + dx, iy + dy, iz + dz);
+                        let h = hash_u32((cx as u32).wrapping_mul(0x8DA6_B343) ^ (cy as u32).wrapping_mul(0xD816_3841) ^ (cz as u32).wrapping_mul(0xCB1A_B31F) ^ n.seed);
+                        let (h2, h3) = (hash_u32(h), hash_u32(hash_u32(h)));
+                        let point = Vec3::new(cx as f32 + unit(h), cy as f32 + unit(h2), cz as f32 + unit(h3));
+                        ds.push((p - point).length_squared());
+                    }
+                }
+            }
+            ds.sort_by(f32::total_cmp);
+            (ds[0].sqrt(), ds[1].sqrt())
+        };
+        for k in 0..20_000u32 {
+            let p = Vec3::new((k as f32 * 0.731).sin() * 40.0, (k as f32 * 0.377).cos() * 40.0, k as f32 * 0.013 - 100.0);
+            assert_eq!(n.cells(p), full(p), "en {p:?}");
+        }
+    }
+
     #[test]
     fn same_seed_same_noise_and_different_seed_differs() {
         let p = Vec3::new(1.37, -4.2, 0.55);
@@ -275,3 +342,4 @@ mod tests {
         assert!(max <= 1.1 && max > 0.3);
     }
 }
+

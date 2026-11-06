@@ -2893,7 +2893,9 @@ fn faro_frame<'a>(
         halo_gain: (faro::HALO_GAIN * (1.0 + 0.5 * state.storm + 3.0 * state.fireball)) as f32
             * smoothstep(60.0, 200.0, distance as f32),
         time: t as f32,
+        derived: Default::default(),
     }
+    .prepared()
 }
 
 fn pira_tail(system: &System, t: f64, camera: DVec3, light: Vec3) -> Option<shaders::Tail> {
