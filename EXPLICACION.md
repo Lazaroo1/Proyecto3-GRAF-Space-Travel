@@ -934,11 +934,26 @@ corre en pasos de 10 ms, así a toda velocidad nada se atraviesa.
 por ellos y un poco con los pasos), así el rayo de cada pixel es `(rx, −ry, 1)`
 y `t` es directamente la profundidad.
 
-**Las camionetas** son La Mamaneta horneada derecha (de espaldas o de frente)
-desde cuatro alturas de vista, de casi de lado a casi desde arriba
-(0.14, 0.32, 0.55 y 0.85 rad); cada una usa la más cercana a
-`atan((alto de la cámara − 1.6) / distancia)`, así de cerca y desde los
-techos se ve su techo. **La rampa** es de figuras proyectadas: su sombra en el
+**Las camionetas y los tuk-tuks de cerca (a menos de 42 m) van en 3D**: la
+malla de poco detalle de La Mamaneta y del Tuk-Tuk Elena se proyecta con la
+cámara del juego en un rasterizador propio y chico
+([malla.rs](src/minijuegos/malla.rs)), porque un sprite es una imagen plana:
+al pasar a la par se veía como una tarjeta sin costado y, al subirse por la
+rampa, corta (le faltaba la perspectiva: lo cercano grande y lo de adelante
+chico). Cada triángulo se recorta contra el plano cercano
+(Sutherland-Hodgman), se apunta en las bandas de 8 filas que toca y, en cada
+fila, el tramo cubierto sale de las tres aristas
+`E(x, y) = (x − xa)(yb − ya) − (y − ya)(xb − xa)` (lineales en `x`). La
+profundidad y los atributos van con perspectiva correcta (en la pantalla es
+lineal `1/z`; `z = 1 / Σ lᵢ/zᵢ`) y se comparan con la profundidad de la fila
+(la calle, las casas, el Arco), así Meyer, las rampas y lo demás quedan
+delante o detrás donde toca. Cada pieza se sombrea por su clase (pintura con
+brillo, metal, vidrio que refleja el cielo, hule y LEDs que emiten y corren)
+con el sol de la tarde (si le da), el cielo, la ceniza y la neblina, y se
+pasa a la pantalla como los sprites (`1 − e^(−x)` y gamma 2.2, en una
+tabla). Cada nave se arma en su hilo. Más lejos van como sprite, horneadas
+derechas desde cuatro alturas de vista (0.14, 0.32, 0.55 y 0.85 rad: la más
+cercana a `atan((alto de la cámara − 1.6) / distancia)`). **La rampa** es de figuras proyectadas: su sombra en el
 empedrado (cada punto alto cae `h / L.y` corrido contra el sol), los
 caballetes, los largueros pintados de turquesa con su grueso, doce tablones
 con rendijas, veta y clavos (cada uno de su tono), la placa del pie con
