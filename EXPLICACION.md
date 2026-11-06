@@ -887,9 +887,23 @@ y `t` es directamente la profundidad. Cada rayo se prueba contra:
 Lo lejano se funde con la neblina (`1 − e^(−t/110)`). Encima, cada pixel
 con su profundidad (`figuras.rs`, que ahora comparten con los shucos) van las
 monedas que giran, las bombas que caen con su estela, la lava, el polvo y
-las chispas, el patojo de espaldas (camisola celeste y blanco, gorra al revés
-y su morral típico; corre, salta, sube y rueda hecho bolita) y los
-cucuruchos, de túnica morada y capirote, que lo persiguen. Un frame cuesta
+las chispas, Meyer de espaldas y los cucuruchos, de túnica morada y
+capirote, que lo persiguen.
+
+**Meyer** ([minijuegos/personaje.rs](src/minijuegos/personaje.rs)) es un
+modelo de Blender (28 700 triángulos, 39 colores) en una sola pose,
+saludando, y sin esqueleto. Las poses de la carrera se arman girando sus
+piezas: las piernas (los jeans y los zapatos vienen aparte, una por lado)
+giran por la rodilla y después por la cadera, con
+`y' = p.y + dy cos a + dz sen a` y `z' = p.z + dz cos a − dy sen a` alrededor
+del eje x; el brazo de abajo sale de la guerrera (cuerpo y mangas son una
+sola malla), así que cada vértice de ese lado gira por el hombro con un peso
+que sube con lo afuera que está del torso (un esqueleto de un hueso, con
+mezcla lineal); el brazo del saludo se queda saludando. Se hornean ocho
+cuadros de la carrera y uno del salto, de espaldas y desde la altura de la
+cámara, una vez por tamaño de pantalla, y en cada fila se pega el cuadro que
+toca según la fase de los pasos, con su profundidad. Si no está el modelo,
+se dibuja un patojo con figuras. Un frame cuesta
 unos 7 ms.
 
 **El sonido**: el viento sube con la velocidad, el volcán retumba cada vez
