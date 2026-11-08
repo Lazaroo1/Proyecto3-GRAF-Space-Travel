@@ -789,7 +789,7 @@ pub const PRESETS: [Preset; 58] = [
         time: 40.0,
         act: None,
         chapin: false,
-        flare: Some(8.12),
+        flare: Some(9.0),
     },
     Preset {
         name: "62_faro_bola_de_fuego",
@@ -2110,6 +2110,27 @@ impl App {
                 });
             }
         }
+        // La onda de choque de la gran llamarada de Faro tambien dobla la
+        // imagen al salir (si no esta pasando la onda gravitacional).
+        if let (None, Some(i), Some(flare)) = (self.renderer.ripple, faro_index, self.faro_flare) {
+            let age = t - flare - faro::WIND_UP;
+            if let Some((reach, _)) = faro::shock_at(age).filter(|_| age < 1.6) {
+                let center = (self.system.bodies[i].position(t) - camera.pos).as_vec3();
+                let clip = view.view_proj.transform_point(center);
+                if clip.w > view.near {
+                    let (w, h) = (self.renderer.width() as f32, self.renderer.height() as f32);
+                    let fade = (1.0 - age / 1.6) as f32;
+                    let world = (reach * faro::RADIUS) as f32;
+                    self.renderer.ripple = Some(Ripple {
+                        x: (clip.x / clip.w + 1.0) * 0.5 * w,
+                        y: (1.0 - clip.y / clip.w) * 0.5 * h,
+                        radius: world / clip.w * 0.5 * h / view.tan_half_y,
+                        width: h * 0.04,
+                        strength: h * 0.012 * fade * fade,
+                    });
+                }
+            }
+        }
         let rings = ring_info(&self.system, t, camera.pos);
         // Las nubes de la corona se tabulan solo si pueden caer en pantalla
         // (si no, un reflejo que las vea las calcula pixel por pixel).
@@ -2351,6 +2372,7 @@ impl App {
         // La bola de fuego de la gran llamarada de Faro.
         if let Some(i) = system.find("Faro").filter(|&i| !system.bodies[i].hidden) {
             faro::fireball(&mut out, &system.bodies[i], t, self.faro_flare, camera.pos);
+            faro::shock(&mut out, &system.bodies[i], t, self.faro_flare, camera.pos);
         }
         // Lo que flota alrededor de la camara cerca del suelo de cada planeta.
         let motes: Vec<(&str, effects::Motes, f64)> = match system.version {
