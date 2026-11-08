@@ -175,20 +175,40 @@ torsión Δφ = 2 √(C / (p (1 + p))) ∫₀¹ F^(1/p) / (1 − μ²) dμ
 - **La gran llamarada (F)**, con la secuencia de Parfrey, Beloborodov y Hui
   (2013):
   1. La corteza tuerce la magnetosfera hasta perder el equilibrio a unos
-     3 rad y las líneas se inflan. De verdad tarda años; aquí, 8 s.
+     3 rad y las líneas se inflan. De verdad tarda años; aquí, 8 s. Mientras
+     tanto la corteza tiembla cada vez más: cada línea vibra con su fase
+     (anclada en sus pies, se mueve la cima), se cargan de corriente y
+     brillan, y la magnetosfera se infla un 60 % más que la forma de
+     equilibrio.
   2. Un estallido precursor (el de SGR 1806−20 fue 142 s antes; aquí, 2 s).
-  3. El pico de 0.2 s (real), que deslumbra el sistema. Las líneas se abren
-     y se vuelven a cerrar al reconectarse.
-  4. La bola de fuego: pares a más de 10⁹ K atrapados en las líneas cerradas
+  3. El pico de 0.2 s (real), que deslumbra el sistema. Las líneas se abren:
+     de verdad casi a la velocidad de la luz; aquí se estiran 25 veces en
+     0.7 s con un frenado suave (`1 − (1 − x)³`), partiendo de la forma
+     torcida que tenían (no saltan al dipolo), se quedan abiertas hasta
+     1.2 s llenas del plasma de la llamarada (brillan más, no menos) y se
+     cierran al reconectarse en 3 s, destorciéndose mientras bajan y con la
+     cima encendida (`1 + 4 sin(π x) d⁶`, con `d` la distancia a los pies).
+     La forma que se dibuja (`shape`) es aparte de la torsión física que
+     muestra el panel, que sí cae de golpe a 0.3 rad.
+  4. La onda de choque: el plasma que la llamarada expulsa por el ecuador
+     magnético (el plasmoide de las simulaciones de Parfrey et al.). Es una
+     cáscara de 9000 partículas en puntos de Fibonacci, más densa en el
+     ecuador y con grumos, que sale rápido y se frena barriendo el viento,
+     `R = 1 + 70 (1 − e^(−t/1.2))` radios, y se enfría de blanco azulado a
+     violeta hasta disolverse en 3.5 s. Las que se ven grandes (junto a la
+     cámara) se apagan con `(1 + s²)⁻²`: si no, cada una sería una mancha
+     redonda en vez de una cáscara fina. Al salir también dobla la imagen
+     con la misma onda en pantalla que la onda gravitacional.
+  5. La bola de fuego: pares a más de 10⁹ K atrapados en las líneas cerradas
      junto a la estrella (Thompson y Duncan 1995). Gira con la estrella (la
      cola pulsa con el periodo) y se evapora capa por capa con
      L = L₀(1 − t/t_evap)³, t_evap = 380 s (Feroci et al. 2001). En los
      primeros 40 s brilla además una corona.
-  5. El giro se frena de golpe (antiglitch, ΔP/P = 10⁻⁴, como en SGR 1900+14):
+  6. El giro se frena de golpe (antiglitch, ΔP/P = 10⁻⁴, como en SGR 1900+14):
      el panel muestra el periodo nuevo.
-  6. La radio se apaga y vuelve después de un minuto, como en PSR J1119−6127
+  7. La radio se apaga y vuelve después de un minuto, como en PSR J1119−6127
      en 2016.
-  7. La magnetosfera queda casi sin torsión y se vuelve a torcer.
+  8. La magnetosfera queda casi sin torsión y se vuelve a torcer.
 
 ## El sonido ([audio.rs](src/audio.rs))
 

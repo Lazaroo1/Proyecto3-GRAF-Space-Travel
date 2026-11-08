@@ -115,6 +115,18 @@ pub struct State {
     pub spike: f64,
     pub open: f64,
     pub fireball: f64,
+    /// Cuanto se estiran las lineas hacia afuera (1: su forma de equilibrio).
+    pub inflate: f64,
+    /// La torsion con que se dibujan las lineas: la de arriba, salvo que
+    /// las abiertas conservan la forma torcida que tenian al romperse y se
+    /// destuercen mientras se reconectan (sin saltar al dipolo en el pico).
+    pub shape: f64,
+    /// Temblor de la corteza que sacude las lineas (0 a 1) antes del pico.
+    pub quake: f64,
+    /// Brillo extra de las lineas cargadas con el plasma de la llamarada.
+    pub afterglow: f64,
+    /// Luz de la reconexion en la cima de las lineas mientras se cierran.
+    pub reconnect: f64,
     /// Segundos desde el pico de la gran llamarada, si ya paso.
     pub since_spike: Option<f64>,
 }
@@ -154,6 +166,25 @@ pub const EVAPORATION: f64 = 380.0;
 pub const ANTIGLITCH: f64 = 1e-4;
 /// Despues de la llamarada la torsion vuelve a crecer (de verdad, en anos).
 const REGROWTH: f64 = 90.0;
+/// Las lineas se abren casi a la velocidad de la luz y se cierran al
+/// reconectarse (Parfrey, Beloborodov y Hui 2013). De verdad tarda
+/// milisegundos; aqui se estiran en `OPENING` segundos, quedan abiertas
+/// hasta `OPEN_HOLD` y se cierran en `RECONNECT` para que se vea.
+pub const OPENING: f64 = 0.7;
+pub const OPEN_HOLD: f64 = 1.2;
+pub const RECONNECT: f64 = 3.0;
+/// Cuanto se estiran las lineas abiertas.
+const OPEN_STRETCH: f64 = 25.0;
+/// La onda de choque: el plasma que la llamarada expulsa por el ecuador
+/// magnetico (el plasmoide de las simulaciones de Parfrey et al.): sale
+/// rapido y se frena barriendo el viento, hasta `SHOCK_REACH` radios con
+/// tiempo de frenado `SHOCK_BRAKE`, y se disuelve en `SHOCK_LIFE` segundos.
+pub const SHOCK_REACH: f64 = 70.0;
+pub const SHOCK_BRAKE: f64 = 1.2;
+pub const SHOCK_LIFE: f64 = 3.5;
+const SHOCK_COUNT: usize = 9000;
+/// Brillo de la onda de choque.
+const SHOCK_GAIN: f64 = 0.35;
 
 /// Un numero en [0, 1) por entero y semilla.
 fn uniform(n: i64, seed: u32) -> f64 {
@@ -224,6 +255,7 @@ pub fn state(t: f64, flare: Option<f64>) -> State {
     let mut bundle = QUIET_BUNDLE * (twist / QUIET_TWIST);
     let storm = storm_at(t);
     let (mut spike, mut open, mut fireball, mut flash, mut radio) = (0.0, 0.0, 0.0, 0.0, 1.0);
+    let (mut inflate, mut quake, mut afterglow, mut reconnect) = (1.0, 0.0, 0.0, 0.0);
     let mut since_spike = None;
     let mut extra_rate = 0.0;
     if let Some(start) = flare.filter(|&f| t >= f) {
@@ -234,6 +266,11 @@ pub fn state(t: f64, flare: Option<f64>) -> State {
             twist += (CRITICAL_TWIST - twist) * x * x;
             bundle = QUIET_BUNDLE * (1.0 + 2.0 * x * x);
             extra_rate = 6.0 * x;
+            // La magnetosfera se infla y la corteza tiembla cada vez mas;
+            // las lineas se cargan de corriente y brillan.
+            inflate = 1.0 + 0.6 * x.powi(4);
+            quake = x * x * x;
+            afterglow = 0.8 * x * x;
             let precursor = age - PRECURSOR;
             if precursor >= 0.0 {
                 flash += 3.0 * (precursor / 0.01).min(1.0) * (-precursor / 0.4).exp();
@@ -244,9 +281,20 @@ pub fn state(t: f64, flare: Option<f64>) -> State {
             // El pico sube en 5 ms y cae en su fraccion de segundo.
             spike = (after / 0.005).min(1.0) * (-after / (SPIKE * 0.4)).exp();
             flash += 8.0 * spike;
-            // Las lineas se abren casi a la velocidad de la luz y se cierran
-            // al reconectarse: aqui, mientras dura el pico.
-            open = if after < SPIKE { 1.0 } else { (-(after - SPIKE) / 0.6).exp() };
+            // Las lineas se abren (se estiran hacia afuera con un frenado
+            // suave), se quedan abiertas y se cierran al reconectarse; la
+            // reconexion enciende sus cimas mientras bajan.
+            let closing = ((after - OPEN_HOLD) / RECONNECT).clamp(0.0, 1.0);
+            open = 1.0 - closing * closing * (3.0 - 2.0 * closing);
+            // Parten de como estaban al final de la torsion (infladas 1.6).
+            let fly = 1.0 - (1.0 - (after / OPENING).min(1.0)).powi(3);
+            inflate = 1.0 + (0.6 + OPEN_STRETCH * fly) * open;
+            if closing > 0.0 && closing < 1.0 {
+                reconnect = (PI * closing).sin();
+            }
+            // El plasma caliente las deja brillando: mucho al principio y
+            // un resto mientras la bola de fuego empieza a enfriarse.
+            afterglow = 1.2 * (-after / 1.2).exp() + 0.8 * (-after / 25.0).exp();
             if after < EVAPORATION {
                 fireball = (1.0 - after / EVAPORATION).powi(3);
             }
@@ -268,6 +316,7 @@ pub fn state(t: f64, flare: Option<f64>) -> State {
     let (burst, burst_site) = bursts_at(t, rate);
     flash += 0.02 * burst;
     let (spot_radius, spot_temperature) = hot_spot(bundle, twist);
+    let shape = twist + (CRITICAL_TWIST - twist) * open;
     State {
         pole_temperature: CRUST_POLE,
         cap_temperature: CAP_TEMPERATURE,
@@ -283,6 +332,11 @@ pub fn state(t: f64, flare: Option<f64>) -> State {
         spike,
         open,
         fireball,
+        inflate,
+        shape,
+        quake,
+        afterglow,
+        reconnect,
         since_spike,
     }
 }
@@ -453,10 +507,14 @@ pub fn field_lines(out: &mut Vec<GlowLine>, body: &Body, t: f64, flare: Option<f
     let to_world = |p: DVec3| -> Vec3 {
         (center + crust.rotate((e1 * p.x + e2 * p.y + m * p.z) * RADIUS)).as_vec3()
     };
-    // Mientras las lineas estan abiertas se estiran hacia afuera.
-    let inflate = 1.0 + 25.0 * s.open;
-    let fade = (1.0 - 0.85 * s.open) as f32;
-    let activity = (s.twist / QUIET_TWIST).max(0.3).sqrt() * (1.0 + 0.6 * s.storm);
+    // Mientras las lineas estan abiertas se estiran hacia afuera; ahi
+    // llevan el plasma de la llamarada y brillan mas, no menos.
+    let inflate = s.inflate;
+    let fade = (1.0 - 0.35 * s.open) as f32;
+    let activity = (s.twist / QUIET_TWIST).max(0.3).sqrt() * (1.0 + 0.6 * s.storm) * (1.0 + s.afterglow);
+    // El temblor: cada linea vibra con su fase, mas rapido cuanto mas cerca
+    // del pico (ondas de Alfven que la corteza rota manda por las lineas).
+    let tremor = 0.035 * s.quake;
     let mut points = Vec::with_capacity(80);
     let mut colors = Vec::with_capacity(80);
     for (set_index, set) in LINE_SETS.iter().enumerate() {
@@ -491,7 +549,7 @@ pub fn field_lines(out: &mut Vec<GlowLine>, body: &Body, t: f64, flare: Option<f
                         let x = k as f64 / (set.samples - 1) as f64;
                         // Mas puntos junto a los pies, donde la linea se curva.
                         let along = start + (end - start) * (1.0 - (1.0 - x) * (1.0 - x));
-                        let mut p = super::magnetosphere::line_point(s.twist, theta_f, phi_f, along);
+                        let mut p = super::magnetosphere::line_point(s.shape, theta_f, phi_f, along);
                         let r = p.length();
                         if r > set.reach {
                             break;
@@ -499,12 +557,20 @@ pub fn field_lines(out: &mut Vec<GlowLine>, body: &Body, t: f64, flare: Option<f
                         p = p * ((1.0 + (r - 1.0) * inflate) / r);
                         // 0 en los pies, 1 en la cima; los paquetes suben.
                         let d = (1.0 - (2.0 * along - 1.0).abs()) as f32;
+                        if tremor > 0.0 {
+                            // Los pies estan anclados en la corteza; vibra la cima.
+                            let w = TAU * (t * (9.0 + 6.0 * phase) + phase) + 5.0 * d as f64;
+                            let shake = DVec3::new(w.sin(), (1.3 * w + 1.0).sin(), (0.7 * w + 2.0).sin());
+                            p += shake * (tremor * (r - 1.0) * d as f64);
+                        }
                         let packets = 0.65 + 0.35 * ((TAU * (3.0 * d as f64 - 0.6 * t + phase)).sin() as f32).powi(3);
                         let near = 0.25 + 1.4 * (-(r as f32 - 1.0) / 1.6).exp();
                         // Las abiertas se apagan al alejarse.
                         let open_fade = if set.reach.is_finite() { 1.0 - (r / set.reach) as f32 } else { 1.0 };
+                        // Al reconectarse, la cima de cada linea se enciende.
+                        let cusp = 1.0 + 4.0 * s.reconnect as f32 * d.powi(6);
                         points.push(to_world(p));
-                        colors.push(plasma_tint(r as f32) * (near * packets * strength * open_fade));
+                        colors.push(plasma_tint(r as f32) * (near * packets * strength * open_fade * cusp));
                     }
                     let n = points.len();
                     for k in 1..n {
@@ -562,6 +628,66 @@ pub fn fireball(out: &mut Vec<Particle>, body: &Body, t: f64, flare: Option<f64>
     }
 }
 
+/// Radio de la onda de choque (en radios de la estrella) y su brillo, a
+/// `age` segundos del pico; nada si ya se disolvio.
+pub fn shock_at(age: f64) -> Option<(f64, f64)> {
+    if !(0.0..SHOCK_LIFE).contains(&age) {
+        return None;
+    }
+    let left = 1.0 - age / SHOCK_LIFE;
+    let reach = 1.0 + SHOCK_REACH * (1.0 - (-age / SHOCK_BRAKE).exp());
+    Some((reach, (age / 0.04).min(1.0) * left * left))
+}
+
+/// La onda de choque de la gran llamarada: una cascara de plasma que sale
+/// del pico, mas densa en el ecuador magnetico (por donde las lineas
+/// abiertas lo expulsan), con grumos, y se enfria de blanco azulado a
+/// violeta mientras se expande. No gira con la estrella: es lo que ya salio.
+pub fn shock(out: &mut Vec<Particle>, body: &Body, t: f64, flare: Option<f64>, camera: DVec3) {
+    let Some(spike_time) = flare.map(|f| f + WIND_UP) else {
+        return;
+    };
+    let age = t - spike_time;
+    let Some((reach, light)) = shock_at(age) else {
+        return;
+    };
+    let crust = crust_at(body, spike_time, flare);
+    let center = body.position(t) - camera;
+    let (m, e1, e2) = magnetic_frame();
+    let cool = (age / SHOCK_LIFE) as f32;
+    let tint = Vec3::new(2.2, 2.4, 3.4).lerp(Vec3::new(1.4, 0.45, 2.3), cool.sqrt());
+    let golden = PI * (3.0 - 5f64.sqrt());
+    for k in 0..SHOCK_COUNT {
+        let u = |seed: u32| uniform(k as i64, seed);
+        // Puntos de Fibonacci sobre la esfera, con un poco de desorden.
+        let z = 1.0 - 2.0 * (k as f64 + 0.5) / SHOCK_COUNT as f64;
+        let phi = golden * k as f64 + 0.3 * (u(1) - 0.5);
+        let ring = (1.0 - z * z).sqrt();
+        let dir = DVec3::new(ring * phi.cos(), ring * phi.sin(), z);
+        // Mas plasma por el ecuador y en grumos que no estan en todos lados.
+        let equator = 0.1 + 1.3 * (-(z / 0.22).powi(2)).exp();
+        let wave = (7.0 * phi + 4.0 * (5.0 * z + 2.0 * u(2)).sin()).sin();
+        let clumps = 0.55 + 0.45 * (0.5 + 0.5 * wave).powi(2);
+        // Cascara con grosor: unos van un poco adelante y otros atras.
+        let r = reach * (1.0 + 0.07 * (u(3) - 0.5));
+        let local = (e1 * dir.x + e2 * dir.y + m * dir.z) * (r * RADIUS);
+        let pos = center + crust.rotate(local);
+        // Las que se ven grandes (cerca de la camara) se apagan: serian
+        // manchas redondas en vez de una cascara fina.
+        let radius = 0.028 * reach * RADIUS;
+        let size = radius / pos.length().max(1e-3) / 0.012;
+        let near = (1.0 + size * size).powi(-2);
+        if near < 0.02 {
+            continue;
+        }
+        out.push(Particle {
+            pos: pos.as_vec3(),
+            radius: radius as f32,
+            color: tint * (light * equator * clumps * near * SHOCK_GAIN) as f32,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -596,6 +722,32 @@ mod tests {
         assert!((tail.fireball - 0.9f64.powi(3)).abs() < 1e-9);
         assert!(tail.twist < QUIET_TWIST);
         assert!(state(100.0 + WIND_UP + EVAPORATION + 1.0, flare).fireball == 0.0);
+    }
+
+    #[test]
+    fn the_lines_open_stay_open_and_reconnect() {
+        let flare = Some(100.0);
+        let at = |after: f64| state(100.0 + WIND_UP + after, flare);
+        // Antes del pico la magnetosfera ya se infla y tiembla.
+        let late = state(100.0 + WIND_UP * 0.95, flare);
+        assert!(late.inflate > 1.4 && late.quake > 0.8);
+        // Se estiran en `OPENING` y no de golpe.
+        assert!(at(0.1).inflate < at(OPENING).inflate);
+        assert!(at(OPENING).inflate > OPEN_STRETCH);
+        assert_eq!(at(OPEN_HOLD - 0.01).open, 1.0);
+        // Se cierran encendiendo sus cimas y despues quedan en reposo.
+        let mid = at(OPEN_HOLD + RECONNECT * 0.5);
+        assert!(mid.open > 0.4 && mid.open < 0.6 && mid.reconnect > 0.99);
+        let done = at(OPEN_HOLD + RECONNECT + 0.1);
+        assert_eq!((done.open, done.reconnect, done.inflate), (0.0, 0.0, 1.0));
+        assert!((done.shape - done.twist).abs() < 1e-12);
+        // En el pico las lineas no saltan: la forma sigue donde iba.
+        let (a, b) = (state(100.0 + WIND_UP - 1e-6, flare), at(0.0));
+        assert!((a.shape - b.shape).abs() < 1e-3 && (a.inflate - b.inflate).abs() < 1e-3);
+        // La onda de choque crece y se disuelve.
+        let (r0, _) = shock_at(0.5).unwrap();
+        let (r1, _) = shock_at(2.0).unwrap();
+        assert!(r1 > r0 && shock_at(SHOCK_LIFE + 0.1).is_none() && shock_at(-0.1).is_none());
     }
 
     #[test]
