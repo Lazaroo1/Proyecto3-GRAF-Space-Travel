@@ -1337,12 +1337,19 @@ y cada pantalla se dibuja sin huecos con texto que la fuente carga.
   (640 ángulos por 80 anillos) y cada pixel del cielo solo interpola. Eso
   bajó el costo extra de la estrella llenando la pantalla de 21 a 9 ms.
 - **Arcos de plasma y chispas** (`scene/effects.rs`): cinco arcos grandes,
-  tres arriba. Cada uno es un manojo de nueve hebras que se enroscan a
-  distintos radios (se ve deshilachado, como fuego), encendido en los pies y
-  rojo arriba, con nudos que bajan. Se anclan al borde tal como se ve desde
-  la cámara, así que siempre se recortan contra el cielo; en el estertor
-  crecen y uno de cada tres se desprende. Chispas salen despedidas del borde
-  y se apagan.
+  tres arriba. Cada uno es un manojo de quince filamentos finos que se
+  enroscan a distintos radios y se abren en abanico hacia la cima, más una
+  bruma de partículas grandes y tenues detrás que le da cuerpo sin borde
+  duro. Un ruido de valor a lo largo de cada filamento lo hace aparecer y
+  desaparecer (hilachas con huecos que corren despacio; los pies siempre
+  tienen material) y cada uno ondula por su cuenta. Encendido y amarillo en
+  los pies, rojo oscuro y más transparente arriba, con nudos que bajan.
+  Antes eran nueve hebras gruesas que se fundían en un tubo de brillo
+  parejo y se veían sólidas. Se anclan al borde tal como se ve desde la
+  cámara, así que siempre se recortan contra el cielo; en el estertor
+  crecen (y engruesan y separan sus filamentos en proporción, para que sus
+  puntos no se vean como cuentas) y uno de cada tres se desprende. Chispas
+  salen despedidas del borde y se apagan.
 - **Nebulosa** (`shaders/nebula.rs`): la capa de gas del estertor. Ver la
   sección 10.
 - **Pira**: corteza en placas de Voronoi con lava entre ellas, más del lado

@@ -23,10 +23,11 @@ const SPORE_BOX: f32 = 90.0;
 const SPORE_RISE: f32 = 8.0;
 /// Particulas del escape de la nave.
 pub const EXHAUST_COUNT: usize = 100;
-/// Protuberancias: arcos de plasma de varias hebras torcidas.
+/// Protuberancias: arcos de plasma de varias hebras torcidas. La hebra 0
+/// es la bruma (particulas grandes y tenues); las demas son filamentos finos.
 const PROMINENCE_ARCS: usize = 5;
-const PROMINENCE_STRANDS: usize = 9;
-const PROMINENCE_SEGMENTS: usize = 120;
+const PROMINENCE_STRANDS: usize = 16;
+const PROMINENCE_SEGMENTS: usize = 260;
 /// Chispas que salen despedidas del borde de la estrella.
 const STAR_EMBERS: usize = 700;
 pub const PROMINENCE_COUNT: usize =
@@ -65,6 +66,7 @@ pub fn prominences(
     for (i, p) in arcs.iter_mut().enumerate() {
         let arc = i / per_arc;
         let strand = (i / PROMINENCE_SEGMENTS) % PROMINENCE_STRANDS;
+        let haze = strand == 0;
         let s = (i % PROMINENCE_SEGMENTS) as f32 / (PROMINENCE_SEGMENTS - 1) as f32;
         let h = hash_u32(arc as u32 ^ 0xAC1D_72A1);
         // Tres arriba y los demas en cualquier parte del borde.
@@ -89,30 +91,46 @@ pub fn prominences(
             * (1.0 + 1.6 * flares + 5.0 * erupt);
         let radial = n * angle.cos() + tangent * angle.sin();
         let lift = r * (1.0 + height * wave.powf(0.9) + 0.5 * erupt * erupt);
+        // Un arco que crece (con las llamaradas) engruesa sus hebras y las
+        // separa en proporcion: si no, sus puntos se verian como cuentas.
+        let grow = (height / 0.36).max(1.0);
         // Cada hebra se enrosca a su radio y a su ritmo alrededor del eje del
-        // arco: el manojo se ve deshilachado.
+        // arco, y el manojo se abre en abanico hacia la cima: se ve
+        // deshilachado, como fuego, no como un tubo.
         let hs = hash_u32(h ^ (strand as u32 + 1) * 0x9E37);
         let twist = strand as f32 / PROMINENCE_STRANDS as f32 * std::f32::consts::TAU
-            + s * (3.0 + 6.0 * unit(hs))
-            + time * (0.3 + 0.4 * unit(hash_u32(hs)));
-        let rope = r * (0.008 + 0.024 * wave) * (0.4 + unit(hash_u32(hs ^ 5))) * (1.0 + erupt);
-        let jitter = unit(hash_u32(i as u32 ^ 0x5EED)) - 0.5;
-        let flicker = unit(hash_u32(i as u32 ^ 0x0F1C)) - 0.5;
+            + s * (2.0 + 5.0 * unit(hs))
+            + time * (0.2 + 0.35 * unit(hash_u32(hs)));
+        let rope = r * (0.006 + 0.07 * wave * wave) * (0.25 + unit(hash_u32(hs ^ 5))) * grow;
+        // Cada hebra ondula despacio por su cuenta (no como un cuerpo rigido).
+        let sway = noise1(s * 3.0 + time * 0.15, hs ^ 0x51) - 0.5;
         let offset = (side * twist.cos() + radial * twist.sin()) * rope
-            + radial * (jitter * r * 0.02 * (0.3 + wave))
-            + side * (flicker * r * 0.015 * wave);
+            + side * (sway * r * 0.05 * wave * grow);
+        // La hebra aparece y desaparece a lo largo (hilachas con huecos) y
+        // los huecos corren despacio; los pies siempre tienen material.
+        let thread = noise1(s * (5.0 + 4.0 * unit(hash_u32(hs ^ 3))) - time * 0.25, hs ^ 0x7A);
+        let present = if haze { 1.0 } else { smoothstep(0.3, 0.75, thread).max(1.0 - smoothstep(0.0, 0.18, wave)) };
         // Nudos de material que caen por el arco hacia los pies.
         let knots = 0.5 + 0.5 * (s * 22.0 - time * 1.6 + arc as f32 * 1.7).sin();
-        let foot = Vec3::new(3.2, 1.6, 0.45);
-        let crown = Vec3::new(1.6, 0.3, 0.05);
+        // Pies amarillos encendidos, cima roja oscura y mas transparente.
+        let foot = Vec3::new(3.2, 1.5, 0.4);
+        let crown = Vec3::new(1.5, 0.25, 0.04);
+        let top_fade = 1.0 - 0.55 * wave.powf(1.5);
         let brightness = strength
-            * (0.5 + 0.5 * knots)
-            * (0.4 + 0.6 * unit(hash_u32(hs ^ 9)))
-            * (0.55 + 0.45 * (1.0 - erupt));
+            * (0.45 + 0.55 * knots)
+            * (0.35 + 0.65 * unit(hash_u32(hs ^ 9)))
+            * (0.55 + 0.45 * (1.0 - erupt))
+            * present
+            * top_fade;
+        let (radius, gain) = if haze {
+            (r * (0.035 + 0.03 * wave), 0.012)
+        } else {
+            (r * (0.0035 + 0.003 * wave), 0.075)
+        };
         *p = Particle {
             pos: center + radial * lift + offset,
-            radius: r * (0.01 + 0.012 * wave) * (1.0 + 0.6 * erupt),
-            color: foot.lerp(crown, wave.powf(0.6)) * (0.1 * brightness),
+            radius: radius * grow,
+            color: foot.lerp(crown, wave.powf(0.6)) * (gain * brightness / grow.sqrt()),
         };
     }
     // Chispas: salen del borde, suben girando un poco y se apagan.
@@ -130,6 +148,16 @@ pub fn prominences(
             color: Vec3::new(3.0, 1.1, 0.25).lerp(Vec3::new(1.4, 0.2, 0.04), age) * (fade * strength),
         };
     }
+}
+
+/// Ruido de valor suave en 1D, de 0 a 1, con su semilla.
+fn noise1(x: f32, seed: u32) -> f32 {
+    let i = x.floor();
+    let f = x - i;
+    let k = i as i32 as u32;
+    let a = unit(hash_u32(k.wrapping_mul(0x9E37_79B9) ^ seed));
+    let b = unit(hash_u32(k.wrapping_add(1).wrapping_mul(0x9E37_79B9) ^ seed));
+    a + (b - a) * (f * f * (3.0 - 2.0 * f))
 }
 
 /// Lo que flota alrededor de la camara cerca del suelo de cada planeta.
