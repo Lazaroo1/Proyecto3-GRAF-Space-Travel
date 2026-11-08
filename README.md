@@ -456,6 +456,8 @@ Trabajo individual: Lázaro Díaz (24713).
   textura proyectada de esa foto (las gafas se quitaron de la imagen con un
   generador de imágenes y se modelaron aparte). Sus poses (correr, caminar,
   saltar, agacharse) se arman en código girando sus piezas.
+- El claxon de don Meyer (H en Talega Surfers) es un audio grabado,
+  `assets/sonidos/claxon_meyer.wav`, que se lee con un lector de WAV propio.
 - Las canciones de `musica/` no se incluyen en el repositorio (pesan y tienen
   derechos de autor); la marimba procedural sí es código propio.
 - Las fotografías de Júpiter y la Luna provienen de NASA; el basalto usa
