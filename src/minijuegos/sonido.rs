@@ -122,4 +122,13 @@ mod tests {
         assert!((out[out.len() / 2] - 0.305).abs() < 0.01, "{}", out[out.len() / 2]);
         assert!(decode_wav(b"no es un wav", 44_100).is_none());
     }
+
+    /// El claxon de don Meyer que va en el repositorio se lee (unos 3 s).
+    #[test]
+    fn the_horn_in_assets_is_read() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/sonidos/claxon_meyer.wav");
+        let out = load_wav(&path, 44_100).expect("se lee");
+        assert!(out.len() > 2 * 44_100, "{}", out.len());
+        assert!(out.iter().all(|s| s.abs() <= 1.0));
+    }
 }
