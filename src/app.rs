@@ -169,7 +169,7 @@ pub struct Preset {
     pub flare: Option<f64>,
 }
 
-pub const PRESETS: [Preset; 58] = [
+pub const PRESETS: [Preset; 59] = [
     Preset {
         name: "01_sistema",
         shot: Shot::Overview,
@@ -841,6 +841,19 @@ pub const PRESETS: [Preset; 58] = [
         time: 40.0,
         act: None,
         chapin: true,
+        flare: None,
+    },
+    Preset {
+        name: "72_faro_magnetar",
+        shot: Shot::Orbit {
+            body: "Faro",
+            distance: 7.0,
+            azimuth: 1.6,
+            elevation: 0.3,
+        },
+        time: 41.56,
+        act: None,
+        chapin: false,
         flare: None,
     },
 ];
@@ -2373,6 +2386,7 @@ impl App {
 
         // La bola de fuego de la gran llamarada de Faro.
         if let Some(i) = system.find("Faro").filter(|&i| !system.bodies[i].hidden) {
+            faro::sparks(&mut out, &system.bodies[i], t, self.faro_flare, camera.pos);
             faro::fireball(&mut out, &system.bodies[i], t, self.faro_flare, camera.pos);
             faro::shock(&mut out, &system.bodies[i], t, self.faro_flare, camera.pos);
         }
@@ -3086,6 +3100,7 @@ fn faro_frame<'a>(
         // se apaga al acercarse.
         halo_gain: (faro::HALO_GAIN * (1.0 + 0.5 * state.storm + 3.0 * state.fireball)) as f32
             * smoothstep(60.0, 200.0, distance as f32),
+        aura_gain: (faro::AURA_GAIN * (1.0 + 0.4 * state.storm + state.flash)) as f32,
         time: t as f32,
         derived: Default::default(),
     }

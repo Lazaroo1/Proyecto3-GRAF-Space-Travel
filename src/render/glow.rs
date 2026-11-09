@@ -36,7 +36,7 @@ pub struct GlowLine {
 
 /// Ancho del nucleo y del halo en pixeles, y brillo del halo.
 const CORE: f32 = 0.7;
-const HALO: f32 = 3.2;
+const HALO: f32 = 3.4;
 const HALO_GAIN: f32 = 0.12;
 /// Hasta donde llega el halo: tres desviaciones.
 const REACH: f32 = 3.0 * HALO;

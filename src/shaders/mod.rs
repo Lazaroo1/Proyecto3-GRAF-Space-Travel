@@ -395,7 +395,7 @@ pub fn volumes(color: Vec3, dir: Vec3, depth: f32, sky: bool, u: &Uniforms) -> V
         color += tail.light(dir, depth, u.noise);
     }
     if let Some(faro) = u.faro {
-        color += faro.beams(dir, depth) + faro.halo(dir, depth, u.noise);
+        color += faro.beams(dir, depth) + faro.halo(dir, depth, u.noise) + faro.aura(dir, depth);
     }
     // Del anillo mas lejano al mas cercano.
     match u.rings {

@@ -65,9 +65,12 @@ superficie o escapa, ninguno da vueltas.
 
 - **La corteza que se rompe**: el campo de un magnetar estresa su corteza
   hasta romperla (Thompson y Duncan 1995). La superficie es una red de placas
-  violeta oscuro con grietas que brillan, a dos escalas (ruido de Worley con
-  el dominio deformado por un ruido de gradiente); las grietas laten cada
-  placa a su ritmo y algunos puntos destellan. El borde brilla como una
+  de un azul índigo casi negro con grietas que brillan, a dos escalas (ruido
+  de Worley con el dominio deformado por un ruido de gradiente): violeta
+  rosado con el centro casi blanco, azules en unas regiones y rosa
+  anaranjado en otras más calientes (otros dos ruidos de baja frecuencia),
+  con un resplandor azul pegado a cada grieta; laten cada placa a su ritmo y
+  algunos puntos destellan. El borde brilla como una
   atmósfera porque ahí la luz sale rasante (el ángulo de emisión que da la
   lente). **Es color falso**: a millones de kelvin el visible está en la cola
   de Rayleigh-Jeans (hν ≪ kT), donde el color ya no cambia con la
@@ -92,6 +95,14 @@ superficie o escapa, ninguno da vueltas.
   lo largo del rayo es exacta: con x = t − t_c y k² = a² + q²,
   ∫ a⁴ dx/(k² + x²)² = a⁴ [x/(2k²(k² + x²)) + atan(x/k)/(2k³)]. Se apaga
   cuando la cámara se mete en ella.
+- **El aura**: pegada al disco, una franja celeste que se vuelve violeta
+  hacia afuera, medida en radios aparentes desde el borde que da la lente
+  (el ángulo más grande al que un rayo todavía toca la superficie, por
+  bisección sobre la tabla de geodésicas), así se ve igual de cerca que de
+  lejos. Los dos polos de donde salen los haces se encienden con un destello
+  blanco azulado (el de atrás se apaga). Solo cubre lo de alrededor: una cola
+  ancha lavaba todo el disco. Es de adorno, como en las ilustraciones de
+  magnetares; lo mismo que las chispas de la magnetosfera.
 
 ## La magnetosfera torcida ([scene/magnetosphere.rs](src/scene/magnetosphere.rs))
 
@@ -123,10 +134,21 @@ torsión Δφ = 2 √(C / (p (1 + p))) ∫₀¹ F^(1/p) / (1 − μ²) dμ
   visible (Kaspi y Beloborodov 2017, §5.4.4).
 - Se dibujan tres familias: los arcos cerrados junto a la estrella (pies
   entre 16° y 42°), el abanico de líneas que sale de los polos hacia los
-  haces y los arcos grandes del haz de corriente, más tenues.
+  haces (hasta 5 radios) y los arcos grandes del haz de corriente, más
+  tenues.
+- **El aspecto** (de adorno, para que se vea como plasma): cada línea tiene
+  su tono, azul eléctrico, violeta o magenta, y su carga: pocas brillan
+  fuerte y muchas apenas se ven. El brillo va y viene a lo largo (de 1.5 a 4
+  hebras por línea que corren despacio), es mayor a un par de radios que
+  pegado a la superficie y se apaga lejos (e^−(r−2.5)/3), así los lóbulos
+  quedan cerca de la estrella y se deshacen en la bruma. Lo que pasa por
+  delante del disco brilla la cuarta parte: si no, los pies de cientos de
+  líneas lo cubrían de un velo blanco. Encima suben 260 **chispas**,
+  partículas de dos pixeles que se encienden y se apagan sobre los arcos
+  cerrados.
 - Cada línea es un **hilo de luz** ([render/glow.rs](src/render/glow.rs)):
   segmentos que se suman a la imagen con un núcleo de 0.7 px y un halo
-  suave de 3.2 px, probados contra la profundidad, en el mismo pase por tiles
+  suave de 3.4 px, probados contra la profundidad, en el mismo pase por tiles
   que las partículas. Una cinta opaca tapaba lo de atrás y no podía tener
   halo. Para que las uniones de una polilínea no brillen el doble, solo los
   extremos tienen tapas. Lejos, cuando la estrella mide pocos pixeles, las

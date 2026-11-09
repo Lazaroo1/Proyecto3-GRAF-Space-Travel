@@ -12,13 +12,21 @@
 //!
 //! # La corteza que se rompe
 //! El campo de un magnetar estresa su corteza hasta romperla (Thompson y
-//! Duncan 1995): la superficie es una red de placas oscuras de color violeta
-//! con grietas que brillan, a dos escalas (Worley con el dominio deformado).
-//! El brillo sigue a la temperatura: mas en los polos magneticos que en el
-//! ecuador (Greenstein y Hartke) y las grietas se vuelven rosa y naranja en
-//! los casquetes calientes del haz de corriente. Es color falso: a millones
-//! de kelvin el ojo veria un blanco azulado parejo. El borde brilla como una
-//! atmosfera: ahi la luz sale rasante (el angulo de emision de la lente).
+//! Duncan 1995): la superficie es una red de placas de un azul indigo casi
+//! negro con grietas que brillan, a dos escalas (Worley con el dominio
+//! deformado): violeta rosado con el centro casi blanco, azules o rosa
+//! anaranjado por regiones. El brillo sigue a la temperatura: mas en los
+//! polos magneticos que en el ecuador (Greenstein y Hartke) y las grietas se
+//! vuelven rosa y naranja en los casquetes calientes del haz de corriente.
+//! Es color falso: a millones de kelvin el ojo veria un blanco azulado
+//! parejo. El borde brilla como una atmosfera: ahi la luz sale rasante (el
+//! angulo de emision de la lente).
+//!
+//! # El aura
+//! Pegada al disco, una franja celeste que se vuelve violeta hacia afuera, y
+//! un destello en cada polo de donde salen los haces (de adorno, como en las
+//! ilustraciones de magnetares). Se mide en radios aparentes desde el borde
+//! que da la lente, asi se ve igual de cerca que de lejos.
 //!
 //! # Los haces
 //! El pulsar emite en radio desde las lineas de campo abiertas, a cientos de
@@ -97,6 +105,8 @@ pub struct Faro<'a> {
     pub beam_gain: f32,
     /// Brillo de la bruma del viento.
     pub halo_gain: f32,
+    /// Brillo del aura pegada a la estrella y de los destellos de los polos.
+    pub aura_gain: f32,
     /// Supergigante relativa a la camara y distancia de Faro a ella: el
     /// viento que dispersa los haces.
     pub wind_source: Vec3,
@@ -129,6 +139,14 @@ pub struct Derived {
     pulses: [f32; 2],
     /// Por eje y por haz (norte, sur): `side` y `up`.
     frames: [[(Vec3, Vec3); 2]; 3],
+    /// Radio angular del disco que se ve (con la lente), la distancia a la
+    /// estrella y hasta que coseno llega el aura.
+    edge: f32,
+    distance: f32,
+    aura_cos: f32,
+    /// Los polos por donde salen los haces: direccion desde la camara y que
+    /// tanto se ven (el que apunta para atras se apaga).
+    poles: [(Vec3, f32); 2],
 }
 
 /// Error maximo que se le acepta a la tabla de la desviacion contra
@@ -139,19 +157,34 @@ const BEND_EPSILON: f32 = 2e-5;
 /// Muestras de la tabla.
 const BEND_SAMPLES: usize = 2048;
 
-/// Colores de la corteza: placas, grietas, grietas calientes y borde.
-const PLATE: Vec3 = Vec3::new(0.03, 0.012, 0.12);
-const PLATE_GLOW: Vec3 = Vec3::new(0.25, 0.1, 0.9);
-const CRACK: Vec3 = Vec3::new(1.0, 1.5, 4.2);
-const CRACK_HOT: Vec3 = Vec3::new(3.2, 1.0, 1.6);
-const CRACK_HOTTEST: Vec3 = Vec3::new(3.4, 1.6, 0.55);
-const RIM: Vec3 = Vec3::new(0.4, 0.35, 2.0);
+/// Colores de la corteza: placas de un azul indigo casi negro, la luz que se
+/// cuela junto a las grietas, grietas violeta rosado (o azules, por
+/// regiones) con el centro casi blanco, las de los casquetes calientes y el
+/// borde celeste.
+const PLATE: Vec3 = Vec3::new(0.01, 0.01, 0.07);
+const PLATE_GLOW: Vec3 = Vec3::new(0.02, 0.05, 0.42);
+const CRACK: Vec3 = Vec3::new(2.8, 0.7, 3.1);
+const CRACK_BLUE: Vec3 = Vec3::new(0.6, 1.1, 3.6);
+const CRACK_CORE: Vec3 = Vec3::new(2.4, 2.0, 2.8);
+const CRACK_HOT: Vec3 = Vec3::new(3.6, 1.1, 1.6);
+const CRACK_HOTTEST: Vec3 = Vec3::new(4.0, 1.9, 0.7);
+const RIM: Vec3 = Vec3::new(0.6, 1.0, 3.0);
 /// Colores de los haces: nucleo y conos.
-const BEAM_CORE: Vec3 = Vec3::new(1.5, 1.85, 2.7);
-const BEAM_CONE: Vec3 = Vec3::new(0.35, 0.6, 1.9);
+const BEAM_CORE: Vec3 = Vec3::new(1.2, 1.9, 3.0);
+const BEAM_CONE: Vec3 = Vec3::new(0.22, 0.5, 2.2);
+const BEAM_WHITE: Vec3 = Vec3::new(2.4, 2.6, 3.0);
 /// La bruma del viento: color y escala (en radios).
-const HALO: Vec3 = Vec3::new(0.42, 0.17, 1.0);
+const HALO: Vec3 = Vec3::new(0.18, 0.12, 1.0);
 const HALO_SCALE: f32 = 1.6;
+/// El aura: celeste pegada al borde y violeta mas afuera (anchos en radios
+/// aparentes), y el destello blanco azulado de los polos (ancho en radios
+/// aparentes).
+const AURA_RIM: Vec3 = Vec3::new(0.35, 0.6, 2.0);
+const AURA_RIM_WIDTH: f32 = 0.07;
+const AURA: Vec3 = Vec3::new(0.5, 0.12, 1.3);
+const AURA_WIDTH: f32 = 0.22;
+const FLARE: Vec3 = Vec3::new(2.2, 2.6, 3.6);
+const FLARE_WIDTH: f32 = 0.12;
 
 impl Faro<'_> {
     /// Saca lo que no cambia en el frame (`Derived`).
@@ -196,6 +229,23 @@ impl Faro<'_> {
                 (side, beam_axis.cross(side))
             })
         });
+        // El borde del disco que se ve: el angulo mas grande al que el rayo
+        // todavia toca la superficie (biseccion sobre la lente).
+        let (mut lo, mut hi) = (0.0f32, (apparent * 1.5).min(PI * 0.5));
+        for _ in 0..24 {
+            let mid = 0.5 * (lo + hi);
+            match self.lens.sight(mid) {
+                Sight::Surface { .. } => lo = mid,
+                Sight::Sky { .. } => hi = mid,
+            }
+        }
+        let edge = lo.max(1e-6);
+        // Los polos: un poco arriba de la superficie, donde nace cada haz.
+        let poles = [1.0f32, -1.0].map(|sign| {
+            let point = self.center + self.magnetic * (sign * self.radius * 1.08);
+            let facing = (self.magnetic * sign).dot(-to_star);
+            (point.normalize(), smoothstep(-0.75, 0.1, facing))
+        });
         self.derived = Derived {
             to_star,
             bend: bend.unwrap_or_default(),
@@ -207,8 +257,45 @@ impl Faro<'_> {
             axes,
             pulses: [self.pulse(true), self.pulse(false)],
             frames,
+            edge,
+            distance,
+            aura_cos: (edge * 4.0).min(PI).cos(),
+            poles,
         };
         self
+    }
+
+    /// El aura de la estrella a lo largo del rayo `dir`: el borde celeste,
+    /// la bruma violeta alrededor y el destello de los polos de donde salen
+    /// los haces. Se mide en radios aparentes desde el borde del disco (asi
+    /// se ve igual de cerca que de lejos) y se tapa con lo que este delante.
+    pub fn aura(&self, dir: Vec3, depth: f32) -> Vec3 {
+        let d = &self.derived;
+        if self.aura_gain <= 0.0 || dir.dot(d.to_star) < d.aura_cos {
+            return Vec3::ZERO;
+        }
+        // Algo delante de la estrella (la nave) la tapa.
+        if depth < d.distance - self.radius * 1.6 {
+            return Vec3::ZERO;
+        }
+        let s = dir.dot(d.to_star).clamp(-1.0, 1.0).acos();
+        let x = (s - d.edge) / d.edge;
+        let mut light = Vec3::ZERO;
+        if x > 0.0 {
+            light += AURA_RIM * (-x / AURA_RIM_WIDTH).exp() + AURA * (-x / AURA_WIDTH).exp();
+        }
+        for &(pole, seen) in &d.poles {
+            if seen <= 0.0 {
+                continue;
+            }
+            // Angulo entre el rayo y el polo, en radios aparentes.
+            let a = (2.0 * (1.0 - dir.dot(pole)).max(0.0)).sqrt() / d.edge;
+            let w = a / FLARE_WIDTH;
+            // Solo el punto y un poco alrededor: una cola ancha cubria todo el
+            // disco de un velo azul.
+            light += FLARE * (seen * ((-w * w).exp() + 0.05 * (-a / 0.35).exp()));
+        }
+        light * self.aura_gain
     }
 
     /// Temperatura de la superficie con normal `n` (en el mundo), en
@@ -252,21 +339,29 @@ impl Faro<'_> {
         let fine = g2 - g1;
         // Las grietas laten: cada placa a su ritmo.
         let beat = 0.75 + 0.25 * (self.time * 2.3 + f1 * 17.0).sin();
-        let crack = smoothstep(0.09, 0.0, edge) * beat + 0.45 * smoothstep(0.05, 0.0, fine);
-        // Luz que se cuela por la corteza junto a las grietas.
-        let seep = (-edge * 7.0).exp() * 0.35;
-        let mottle = 0.7 + 0.3 * warp;
+        let crack = smoothstep(0.065, 0.0, edge) * beat + 0.3 * smoothstep(0.04, 0.0, fine);
+        // El centro de cada grieta, casi blanco.
+        let core = smoothstep(0.022, 0.0, edge) * beat;
+        // Luz que se cuela por la corteza junto a las grietas: un resplandor
+        // azul pegado a ellas, y la placa oscura en medio.
+        let seep = (-edge * 12.0).exp() * 0.45 + (-fine * 20.0).exp() * 0.1;
+        let mottle = 0.6 + 0.4 * warp;
         let plate = PLATE * mottle + PLATE_GLOW * seep;
+        // Por regiones las grietas son violeta rosado o azules.
+        let region = smoothstep(-0.45, 0.25, noise.noise(p * 0.9 + Vec3::splat(7.0)));
+        let cool = CRACK_BLUE.lerp(CRACK, region);
+        // Y en unas zonas mas calientes, rosa anaranjado.
+        let heat = smoothstep(0.3, 0.6, noise.noise(p * 1.4 - Vec3::splat(3.0))) * 0.6;
         let crack_color = if hot > 0.5 {
             CRACK_HOT.lerp(CRACK_HOTTEST, (hot - 0.5) * 2.0)
         } else {
-            CRACK.lerp(CRACK_HOT, hot * 2.0)
+            cool.lerp(CRACK_HOT, (hot * 2.0).max(heat))
         };
         // Destellos sueltos: puntos donde la corteza cede.
         let sparkle = smoothstep(0.07, 0.0, g1) * (0.5 + 0.5 * (self.time * 7.0 + g2 * 31.0).sin()).powi(4) * 2.5;
-        let rim = (1.0 - cos_alpha.clamp(0.0, 1.0)).powf(2.5);
-        let surface = plate * t + crack_color * (crack * t * t) + CRACK * sparkle;
-        (surface * (self.gain * self.redshift)) + RIM * (rim * 1.4)
+        let rim = (1.0 - cos_alpha.clamp(0.0, 1.0)).powf(3.0);
+        let surface = plate * t + crack_color * (crack * t * t) + CRACK_CORE * (core * t * t * 0.7) + CRACK_BLUE * (sparkle * 0.5);
+        (surface * (self.gain * self.redshift)) + RIM * (rim * 1.6)
     }
 
     /// Luz de la superficie que la camara ve en la direccion `dir` (unitaria),
@@ -370,9 +465,11 @@ impl Faro<'_> {
         let spark = 0.35 + 0.65 * (1.0 - (k - k.round()).abs() * 2.0).powi(2);
         let cones = smoothstep(b.height * 0.5, b.height, along);
         let core = gauss(theta, b.core * 0.6) * (0.7 + 0.6 * pulse);
+        // Junto a la estrella el nucleo es casi blanco.
+        let white = (-(along / self.radius - 1.0).max(0.0) / 3.0).exp() * 0.8;
         let inner = gauss(theta - b.inner * 0.75, b.inner * 0.22) * spark;
         let outer = gauss(theta - b.outer * 0.8, b.outer * 0.2) * spark * (1.4 - pulse);
-        BEAM_CORE * (core * 1.6) + BEAM_CONE * ((0.8 * inner + 0.7 * outer) * cones)
+        BEAM_CORE.lerp(BEAM_WHITE, white) * (core * 1.6) + BEAM_CONE * ((0.8 * inner + 0.7 * outer) * cones)
     }
 
     /// Amplitud de cada pulso: cambia de una vuelta a la siguiente.
@@ -577,9 +674,10 @@ fn strands(phi: f32, s: f32) -> f32 {
                 // dos ejes: el azimut da la vuelta y la altura se repite.
                 let a = i as f32 / STRANDS as f32 * std::f32::consts::TAU;
                 let b = j as f32 / STRANDS as f32 * std::f32::consts::TAU;
-                let p = Vec3::new(a.cos() * 3.0, a.sin() * 3.0, b.cos() * 1.2 + b.sin() * 0.9);
+                let p = Vec3::new(a.cos() * 4.5, a.sin() * 4.5, b.cos() * 1.2 + b.sin() * 0.9);
                 let v = noise.fbm(p + Vec3::new(b.sin(), b.cos(), 0.0), 3);
-                table[j * STRANDS + i] = 0.4 + 1.2 * (0.5 + 0.5 * v).powi(2);
+                // Hebras marcadas: oscuras entre ellas, brillantes en medio.
+                table[j * STRANDS + i] = 0.3 + 2.0 * (0.5 + 0.5 * v).powi(3);
             }
         }
         table
