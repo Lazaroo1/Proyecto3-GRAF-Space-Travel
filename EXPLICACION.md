@@ -1098,17 +1098,25 @@ toca según la fase de los pasos, con su profundidad. Si no está el modelo,
 se dibuja un patojo con figuras. Un frame cuesta
 unos 7 ms.
 
-**El sonido**: el viento sube con la velocidad, el volcán retumba cada vez
-más, los pasos, el salto, la moneda, el pito de dos tonos de la camioneta
-que viene, el silbido de cada bomba (que baja de tono hasta caer) y su
-explosión, y mientras persiguen los cucuruchos, una marcha de procesión
+**El sonido**: de fondo, *The British Grenadiers* con pífano y tambor
+(`assets/sonidos/british_grenadiers.wav`, en mono y sin el silencio de las
+puntas, leída con el mismo lector de WAV). Empieza en la bienvenida y al
+correr sigue por donde iba, más bajita (de 0.7 a 0.3, en unos 0.4 s);
+mientras persiguen los cucuruchos baja a 0.1 para que se oiga su procesión,
+con el claxon se hace a un lado, y al terminar, un segundo de silencio y
+vuelve a empezar. Encima, el viento sube con la velocidad, el volcán retumba
+cada vez más, los pasos, el salto, la moneda, el pito de dos tonos de la
+camioneta que viene, el silbido de cada bomba (que baja de tono hasta caer)
+y su explosión, y mientras persiguen los cucuruchos, una marcha de procesión
 (bombo y un acorde grave de metales).
 
 **Pruebas**: el rayo entra a la caja por la cara que debe; cada tramo deja un
 carril libre; sin saltar la carreta se choca y saltando se pasa; por la
 escalera se sube al techo; una segunda alfombra con los cucuruchos atrás es
 perder; el piloto automático corre más de 500 m en un minuto y junta lenes;
-y cada pantalla se dibuja sin huecos con texto que la fuente carga.
+cada pantalla se dibuja sin huecos con texto que la fuente carga; y la
+canción suena desde la bienvenida, al correr sigue sin volver a empezar (más
+bajita) y al terminar da la vuelta.
 
 # Cambios de la sexta revisión
 

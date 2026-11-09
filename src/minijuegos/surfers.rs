@@ -15,6 +15,9 @@
 //!   caen bombas de lava que marcan su sombra antes de caer.
 //! - **Las teclas**: flechas o A D para cambiar de carril, arriba o W para
 //!   saltar, abajo o S para rodar (en el aire, baja de golpe).
+//! - **La cancion de fondo**: The British Grenadiers, de pifano y tambor
+//!   (`assets/sonidos/british_grenadiers.wav`), suena desde la bienvenida y
+//!   sigue al correr, mas bajita, y vuelve a empezar al terminar.
 //!
 //! **El dibujo**, en CPU por filas en paralelo: cada pixel lanza su rayo
 //! desde la camara (que mira de frente, asi `t` es la profundidad) contra el
@@ -107,6 +110,18 @@ const CHASE: f32 = 7.0;
 /// Cuanto antes de caer se ve la sombra de una bomba.
 const WARNING: f32 = 1.6;
 const RECORD: &str = "surfers_record";
+/// La cancion de fondo (The British Grenadiers, de pifano y tambor): su
+/// archivo en `assets/sonidos/`, su volumen en la bienvenida (y al perder),
+/// corriendo y mientras persiguen los cucuruchos (para que se oiga su
+/// procesion), cuanto baja mientras suena el claxon, cuanto tarda en pasar
+/// de un volumen a otro (s) y el silencio antes de volver a empezar (s).
+const SONG_FILE: &str = "british_grenadiers.wav";
+const SONG_MENU: f32 = 0.7;
+const SONG_RUN: f32 = 0.3;
+const SONG_CHASED: f32 = 0.1;
+const SONG_DUCK: f32 = 0.5;
+const SONG_GLIDE: f32 = 0.4;
+const SONG_PAUSE: f32 = 1.0;
 
 /// Lo que hay en la calle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -388,6 +403,11 @@ pub struct TalegaSurfers {
     greeter: Option<Arc<Sprite>>,
     /// El claxon de don Meyer (las muestras, a la frecuencia del juego).
     claxon: Arc<Vec<f32>>,
+    /// La cancion de fondo (igual), por donde va (la muestra, o en el
+    /// silencio antes de volver a empezar) y su volumen de ahorita.
+    song: Arc<Vec<f32>>,
+    song_at: usize,
+    song_gain: f32,
     s: f32,
     focal: f32,
     horizon: f32,
@@ -447,6 +467,9 @@ impl TalegaSurfers {
             height,
             greeter: None,
             claxon: Arc::new(Vec::new()),
+            song: Arc::new(Vec::new()),
+            song_at: 0,
+            song_gain: SONG_MENU,
             meshes: None,
             rasters: Vec::new(),
             s: height as f32 / 720.0,
@@ -494,6 +517,8 @@ impl TalegaSurfers {
         // La bienvenida: Meyer de frente, de casi todo el alto de la pantalla.
         game.greeter = personaje::greeter((0.8 * height as f32 / personaje::HEIGHT).round());
         game.claxon = Arc::new(claxon());
+        // La cancion empieza con la bienvenida (si no esta, no suena nada).
+        game.song = Arc::new(recorded(SONG_FILE).unwrap_or_default());
         // Las naves, a un decimo de la escala de la camara (de cerca se
         // agrandan poco; de lejos van los mips).
         game.fleet = flota::fleet((game.focal / 10.0).round());
@@ -1758,15 +1783,19 @@ fn greet_row(sprite: &Sprite, at: (f32, f32), height: f32, yf: f32, row: &mut [u
     }
 }
 
+/// Un sonido grabado de `assets/sonidos/` (junto al programa o en la carpeta
+/// del proyecto), a la frecuencia del juego, si esta y se entiende.
+fn recorded(name: &str) -> Option<Vec<f32>> {
+    let local = std::path::PathBuf::from("assets");
+    let dir = if local.exists() { local } else { std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets") };
+    sonido::load_wav(&dir.join("sonidos").join(name), SAMPLE_RATE)
+}
+
 /// El claxon de don Meyer: `assets/sonidos/claxon_meyer.wav` si esta; si
 /// no, uno de corneta militar sintetizado (dos notas de cuadrada suavizada,
 /// la segunda mas larga).
 fn claxon() -> Vec<f32> {
-    let dir = {
-        let local = std::path::PathBuf::from("assets");
-        if local.exists() { local } else { std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets") }
-    };
-    if let Some(samples) = sonido::load_wav(&dir.join("sonidos").join("claxon_meyer.wav"), SAMPLE_RATE) {
+    if let Some(samples) = recorded("claxon_meyer.wav") {
         return samples;
     }
     let rate = SAMPLE_RATE as f32;
@@ -2998,6 +3027,22 @@ impl Minigame for TalegaSurfers {
         let speed = if running { self.run.v / TOP_SPEED } else { 0.0 };
         let e = self.eruption();
         let chased = running && self.chase > 0.0;
+        // La cancion de fondo: suena desde la bienvenida y al correr sigue
+        // por donde iba, mas bajita; casi se apaga mientras persiguen los
+        // cucuruchos (se oye su procesion) y se hace a un lado con el
+        // claxon. Al terminar, un silencio y vuelve a empezar.
+        let song = Arc::clone(&self.song);
+        let level = if chased {
+            SONG_CHASED
+        } else if running {
+            SONG_RUN
+        } else {
+            SONG_MENU
+        };
+        let honking = self.voices.iter().any(|v| v.sfx == Sfx::Meyer);
+        let target = level * if honking { SONG_DUCK } else { 1.0 };
+        let glide = 1.0 - (-1.0 / (SONG_GLIDE * rate)).exp();
+        let lap = song.len() + (SONG_PAUSE * rate) as usize;
         for sample in out.iter_mut() {
             self.noise ^= self.noise << 13;
             self.noise ^= self.noise >> 17;
@@ -3015,6 +3060,11 @@ impl Minigame for TalegaSurfers {
                 let chord = [110.0f32, 130.8, 164.8];
                 let horn: f32 = chord.iter().map(|f| if (f * self.march).fract() < 0.5 { 1.0 } else { -1.0 }).sum();
                 x += 0.012 * horn;
+            }
+            if !song.is_empty() {
+                self.song_gain += (target - self.song_gain) * glide;
+                x += song.get(self.song_at).copied().unwrap_or(0.0) * self.song_gain;
+                self.song_at = (self.song_at + 1) % lap;
             }
             for v in &mut self.voices {
                 let t = v.n as f32 / rate;
@@ -3587,5 +3637,36 @@ mod tests {
             check(&mut g);
             g.start();
         }
+    }
+
+    /// Pide `seconds` de audio en bloques como los de la ventana y dice que
+    /// tan fuerte sono (RMS).
+    fn listen(g: &mut TalegaSurfers, seconds: f32) -> f32 {
+        let mut block = [0.0f32; 512];
+        let blocks = (seconds * SAMPLE_RATE as f32 / block.len() as f32) as usize;
+        let mut sum = 0.0;
+        for _ in 0..blocks {
+            g.audio(&mut block);
+            sum += block.iter().map(|s| s * s).sum::<f32>();
+        }
+        (sum / (blocks * block.len()) as f32).sqrt()
+    }
+
+    /// La cancion de fondo suena desde la bienvenida, al correr sigue por
+    /// donde iba (mas bajita) y al terminar vuelve a empezar.
+    #[test]
+    fn the_song_plays_from_the_welcome_and_keeps_going_while_running() {
+        let mut g = TalegaSurfers::new(160, 90, Records::in_memory());
+        assert!(g.song.len() > 140 * SAMPLE_RATE as usize, "la cancion de assets/sonidos: {} muestras", g.song.len());
+        let welcome = listen(&mut g, 4.0);
+        assert!(welcome > 0.01, "en la bienvenida suena: {welcome}");
+        let at = g.song_at;
+        g.start();
+        listen(&mut g, 2.0);
+        assert!(g.song_at > at, "sigue por donde iba: {} despues de {at}", g.song_at);
+        assert!((g.song_gain - SONG_RUN).abs() < 0.01, "corriendo, mas bajita: {}", g.song_gain);
+        g.song_at = g.song.len() - 100;
+        listen(&mut g, SONG_PAUSE + 0.5);
+        assert!(g.song_at < SAMPLE_RATE as usize, "vuelve a empezar: {}", g.song_at);
     }
 }
