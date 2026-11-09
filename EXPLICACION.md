@@ -1486,6 +1486,22 @@ Ninguna función 3D de raylib se usa: ni cámara, ni modelos, ni shaders.
   rojo de la estrella no se lava a blanco), conversión a sRGB con una tabla
   de 4096 entradas y un poco de dither.
 
+### La ventana y la pantalla completa ([main.rs](src/main.rs), `hud::Fit`)
+raylib solo muestra la imagen ya calculada, como una textura. En la ventana
+normal, la ventana mide lo mismo que el render y la imagen se pega 1:1. Con
+**F11** (o `--pantalla-completa`) la ventana pasa a medir lo del monitor,
+sin bordes y sin cambiarle la resolución, pero el render sigue al tamaño de
+`--res`: el CPU sombrea los mismos pixeles y los FPS no cambian. `Fit`
+calcula la escala `min(ancho de la pantalla / ancho del render, alto de la
+pantalla / alto del render)` y el corrimiento que la centra sin deformarla
+(con franjas si el monitor tiene otra proporción), y la textura se dibuja
+estirada con filtro bilineal. El HUD se dibuja a la resolución del monitor,
+así que se ve nítido; lo que viene en pixeles del render pasa por la misma
+escala: los nombres de los planetas y lo que ponen encima los minijuegos,
+cuyo texto usa letras cargadas a ese tamaño para no verse borroso.
+Renderizar a la resolución del monitor (1920x1080) serían 2.25 veces los
+pixeles y casi el doble de tiempo por frame.
+
 ### Paralelismo ([parallel.rs](src/parallel.rs))
 Un pool de hilos persistentes con reparto dinámico: cada hilo toma el
 siguiente trabajo de un contador atómico. El i5-12500H tiene núcleos rápidos
