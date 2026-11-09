@@ -364,11 +364,25 @@ pub fn has_volumes(u: &Uniforms) -> bool {
 /// El cielo en la direccion `dir`, curvado por la gravedad de Faro.
 #[inline]
 pub fn lensed_sky(dir: Vec3, u: &Uniforms) -> Vec3 {
-    match u.faro {
+    let stars = match u.faro {
         Some(faro) => sky(faro.bend(dir.normalize()), u),
         None => sky(dir, u),
+    };
+    // En la version chapina, de dia y dentro de una atmosfera, el cielo
+    // claro tapa las estrellas (el ojo se acostumbra a la luz): se apagan con
+    // el brillo del cielo en esa direccion. De noche siguen ahi.
+    match u.sky_view {
+        Some(view) if u.chapin => {
+            let day = view.sample(dir.normalize()).scattered.luminance();
+            stars * (1.0 - crate::math::smoothstep(DAY_SKY.0, DAY_SKY.1, day))
+        }
+        _ => stars,
     }
 }
+
+/// Desde que brillo del cielo (luz dispersada, lineal) se empiezan a apagar
+/// las estrellas y en cual ya no se ven.
+const DAY_SKY: (f32, f32) = (0.004, 0.04);
 
 /// Pasos de la atmosfera por pixel de cielo: ahi esta el detalle fino del
 /// limbo visto desde la orbita.
