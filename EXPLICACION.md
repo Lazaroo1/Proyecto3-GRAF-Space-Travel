@@ -373,6 +373,37 @@ gran llamarada.
   dormidos el bosque sube más. En Atitlán se quitó la franja de nubes
   pintada en las cimas, que se leía como nieve: el bosque sube casi hasta la
   punta y solo esta es pedregal.
+- **El aire y el lago de Atitlán** ([chapin/atitlan.rs](src/chapin/atitlan.rs)):
+  - **El cielo de día**: su atmósfera medía 30 de grueso con 8 de altura de
+    escala, y los volcanes miden hasta 125: la cámara y las cimas quedaban
+    casi en el vacío y a mediodía el cielo era negro con estrellas. Ahora
+    mide 115 con 26 de altura de escala (a 115 la densidad ya es el 1 %),
+    así que envuelve a los volcanes y a la cámara: el cielo es azul, más
+    claro hacia el horizonte, y lo lejano se pierde en la bruma. El azul
+    tiene poca profundidad óptica hacia arriba (0.0052 × 26 = 0.14) y mucha
+    intensidad: el cielo es claro pero el aire no tapa tanto a los volcanes,
+    que están lejos para su grueso.
+  - **Las estrellas de día**: en la versión chapina, dentro de una
+    atmósfera, se apagan con el brillo del cielo en esa dirección (la luz
+    dispersada que da la tabla del cielo), como cuando el ojo se acostumbra
+    a la luz; de noche siguen ahí. En OCASO no cambia nada.
+  - **El color del agua** va con la hondura: turquesa junto a la orilla,
+    azul verdoso a media hondura y azul cobalto en lo hondo; encima, el
+    reflejo con Fresnel, que ahora es del cielo azul (antes reflejaba el
+    cielo negro y el lago se veía plano).
+  - **La orilla**: el borde del agua sale del atributo de hondura
+    interpolado entre vértices, en tramos rectos que dejaban escalones. Un
+    ruido de poca amplitud lo vuelve una orilla natural (poca, porque el
+    pueblo está apenas arriba del agua y no se debe mojar; con tope de
+    lejos, porque desde el espacio la costa salía punteada), y solo se
+    calcula donde de verdad puede mover la orilla. Donde rompe hay una
+    franja de espuma que va y viene, que se apaga de lejos.
+  - **El Xocomil**: las crestas eran manchas blancas grandes (el oleaje
+    mismo pasado por un umbral) que parecían papelitos. Ahora son líneas
+    finas de través al viento (un ruido de cresta, 1 − |n|, angosto a lo
+    largo del viento), cortadas en pedazos y más donde el oleaje va alto, y
+    vetas tenues a lo largo del viento; de lejos, donde un pixel cubre
+    varias, solo aclaran el agua parejo.
 - **La columna de ceniza** ([chapin/plume.rs](src/chapin/plume.rs)): un
   volumen en la pasada de volúmenes, como el vapor de Pira. Cada explosión
   del Fuego (las mismas que encienden el cráter y tiran bombas) suelta una

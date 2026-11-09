@@ -614,7 +614,8 @@ pub const PRESETS: [Preset; 59] = [
             back: 40.0,
             lift: 0.0,
         },
-        time: 40.0,
+        // De dia, como al llegar con N (a los 40 s todavia no amanecia).
+        time: 43.0,
         act: None,
         chapin: true,
         flare: None,

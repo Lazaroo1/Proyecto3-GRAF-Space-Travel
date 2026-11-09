@@ -32,12 +32,22 @@
 //!   lanchas suben y bajan con el; su pendiente, por diferencias finitas,
 //!   inclina la normal. Encima, rizos finos que se apagan cuando un pixel
 //!   cubre varios (si no, parpadean).
-//! - **Espejo**: Fresnel de Schlick entre el azul del agua honda (o el fondo
-//!   en la orilla) y el reflejo. El rayo reflejado se intersecta con un cono
-//!   por volcan (una ecuacion cuadratica): si pega, se ve el volcan al reves
-//!   en el agua, iluminado con la normal del cono; si no, el cielo. En calma
-//!   el lago es un espejo; con el Xocomil el reflejo se rompe, salen crestas
-//!   blancas y el destello del sol se vuelve un camino ancho.
+//! - **Espejo**: Fresnel de Schlick entre el color del agua (turquesa en la
+//!   orilla, azul verdoso a media hondura y cobalto en lo hondo) y el
+//!   reflejo. El rayo reflejado se intersecta con un cono por volcan (una
+//!   ecuacion cuadratica): si pega, se ve el volcan al reves en el agua,
+//!   iluminado con la normal del cono; si no, el cielo. En calma el lago es
+//!   un espejo; con el Xocomil el reflejo se rompe y el destello del sol se
+//!   vuelve un camino ancho.
+//! - **Crestas**: lineas finas de traves al viento (un ruido de cresta,
+//!   `1 - |n|`), cortadas en pedazos y mas donde el oleaje va alto, y vetas
+//!   tenues a lo largo del viento; de lejos solo aclaran el agua.
+//! - **La orilla**: un ruido chico mueve el borde del agua (que sale del
+//!   atributo interpolado y dejaba escalones) y donde rompe hay espuma.
+//!
+//! # El aire
+//! La atmosfera envuelve a los volcanes (115 de grueso, 26 de altura de
+//! escala): de dia el cielo es azul y el lago lo refleja.
 //!
 //! # La tierra
 //! Arena volcanica negra en la orilla; milpas en parcelas (celdas de
@@ -68,14 +78,22 @@ pub fn spec() -> Spec {
     Spec {
         label: "Atitlan",
         material: Chapin::Atitlan,
-        // Aire limpio de altiplano: azul y no muy grueso.
+        // Aire limpio de altiplano que envuelve a los volcanes (el mas alto
+        // mide 125): de dia el cielo es azul, el lago lo refleja y lo lejano
+        // se pierde en la bruma. Con 30 de grueso y 8 de altura de escala la
+        // camara y las cimas quedaban casi en el vacio y el cielo era negro
+        // a mediodia. El azul tiene poca profundidad optica (0.0052 x 26 =
+        // 0.14) y mucha intensidad: el cielo es claro pero el aire no tapa
+        // tanto a los volcanes, que estan lejos para su grueso.
         atmosphere: Some(AtmosphereParams {
-            thickness: 30.0,
-            scale_height: 8.0,
-            rayleigh: Vec3::new(0.0025, 0.0065, 0.016),
-            mie: 0.0018,
+            // A 115 la densidad ya es el 1 %: mas grueso solo agrandaba el
+            // cascaron que se integra pixel por pixel desde el espacio.
+            thickness: 115.0,
+            scale_height: 26.0,
+            rayleigh: Vec3::new(0.0006, 0.0019, 0.0052),
+            mie: 0.0004,
             mie_g: 0.76,
-            intensity: 2.6,
+            intensity: 5.0,
         }),
         rings: None,
         motes: Some((Motes::Spray, 200.0)),
@@ -376,8 +394,11 @@ impl HeightField for AtitlanField {
 // El shader del planeta -------------------------------------------------------
 
 // Colores (lineales).
-const WATER_DEEP: Vec3 = Vec3::new(0.008, 0.045, 0.16);
-const WATER_SHALLOW: Vec3 = Vec3::new(0.02, 0.06, 0.07);
+/// El agua: azul cobalto en lo hondo, azul verdoso a media hondura y
+/// turquesa junto a la orilla.
+const WATER_DEEP: Vec3 = Vec3::new(0.005, 0.03, 0.15);
+const WATER_MID: Vec3 = Vec3::new(0.008, 0.07, 0.13);
+const WATER_SHALLOW: Vec3 = Vec3::new(0.02, 0.13, 0.12);
 const SAND: Vec3 = Vec3::new(0.07, 0.062, 0.055);
 const FOREST: Vec3 = Vec3::new(0.018, 0.05, 0.02);
 const FOREST_LIGHT: Vec3 = Vec3::new(0.05, 0.1, 0.035);
@@ -413,6 +434,18 @@ pub fn shade(f: &Fragment, u: &Uniforms) -> Vec3 {
     let attrs = if f.color == Vec3::ZERO { Vec3::new(DEPTH, 0.0, 0.0) } else { f.color };
     let (depth, village, summit) = (attrs.x, attrs.y, attrs.z);
     let footprint = f.pos.length() * u.pixel_angle;
+    // La orilla sale del atributo interpolado entre vertices, en tramos
+    // rectos que dejaban escalones: un ruido la vuelve una orilla natural.
+    // Poco (el pueblo esta apenas arriba del agua y no se debe mojar) y de
+    // lejos un poco mas, con tope: si no, desde el espacio la costa salia
+    // punteada. Solo se calcula donde de verdad puede mover la orilla.
+    let reach = 0.45 * (1.0 + footprint * 2.0).min(2.0);
+    let depth = if depth.abs() < reach {
+        let p = f.local;
+        depth + (u.noise.noise(p * 0.35) * 0.7 + u.noise.noise(p * 1.3 + Vec3::splat(5.1)) * 0.3) * reach
+    } else {
+        depth
+    };
     // La orilla se mezcla en una franja del ancho de un pixel: sin escalones.
     let band = (footprint * 1.5).max(0.02);
     let wet = smoothstep(-band, band, depth);
@@ -511,13 +544,29 @@ fn water(f: &Fragment, u: &Uniforms, depth: f32, footprint: f32) -> Vec3 {
     // Bajo el agua el rojo de la estrella casi no cuenta: el ojo se
     // acostumbra y el azul del lago sale de la luminancia de la luz.
     let light = sun.lerp(Vec3::splat(sun.luminance()), 0.6) * 0.6 + ambient;
-    let shallow = smoothstep(1.6, 0.1, depth);
-    let inside = WATER_DEEP.lerp(WATER_SHALLOW, shallow) * light;
+    let shallow = smoothstep(4.0, 0.3, depth);
+    let mid = smoothstep(9.0, 2.5, depth);
+    let inside = WATER_DEEP.lerp(WATER_MID, mid).lerp(WATER_SHALLOW, shallow) * light;
     let mut color = inside * (1.0 - fresnel) + reflected * fresnel;
-    // Crestas blancas con el Xocomil.
-    let crest = smoothstep(0.25, 0.5, w0 / (0.06 + 0.4 * xocomil(t)) + 0.4 * n.noise(p * 0.7 - up * t));
-    let foam = crest * smoothstep(0.35, 0.9, wind) * 0.8;
-    color = color.lerp(FOAM * (sun + ambient), foam);
+    // Donde rompe en la orilla: una franja de espuma que va y viene.
+    // De lejos se apaga: un pixel cubre muchas olas y solo parpadeaba.
+    let surf = smoothstep(0.6, 0.0, depth) * (0.55 + 0.45 * (t * 2.2 + depth * 7.0 + p.y * 0.8).sin()) * (0.35 + 0.5 * wind) * smoothstep(1.2, 0.3, footprint);
+    let mut foam = surf * 0.6;
+    // Con el Xocomil: crestas finas de traves al viento (un ruido de cresta,
+    // 1 - |n|, angosto a lo largo del viento y largo de traves), cortadas en
+    // pedazos y mas donde el oleaje va alto; y vetas a lo largo del viento.
+    // De lejos, donde un pixel cubre varias, solo aclaran el agua parejo.
+    if wind > 0.25 {
+        let clear = smoothstep(0.9, 0.18, footprint);
+        let ridge = 1.0 - n.noise(Vec3::new(p.x * 0.3, p.y * 0.55, p.z * 0.3) + Vec3::new(0.0, t * 0.6, 0.0)).abs();
+        let line = smoothstep(0.93, 0.99, ridge);
+        let pieces = smoothstep(0.0, 0.45, n.noise(p * 0.25 + Vec3::new(3.1, -t * 0.25, 1.7)));
+        let high = smoothstep(-0.3, 0.7, w0 / (0.06 + 0.4 * xocomil(t)));
+        let streaks = smoothstep(0.5, 0.85, n.noise(Vec3::new(p.x * 0.6, p.y * 0.08, p.z * 0.6) + Vec3::new(0.0, t * 0.4, 0.0))) * 0.12;
+        let near = (line * pieces * high + streaks) * clear;
+        foam = foam.max((near + 0.1 * (1.0 - clear)) * smoothstep(0.25, 0.9, wind) * 0.85);
+    }
+    color = color.lerp(FOAM * (sun + ambient), foam.min(1.0));
     let rough = 0.03 + 0.2 * wind + footprint * 0.4;
     color + glint(f, u, normal, rough) * (1.0 - foam)
 }
