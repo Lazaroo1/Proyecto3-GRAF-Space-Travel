@@ -127,19 +127,19 @@ mouse suelto (Tab) se les puede dar clic a los botones y a la barra.
 
 ## Minijuegos
 
-Cada planeta va a tener su minijuego. Cerca de su lugar, abajo aparece
-**«Enter · …»** y Enter lo abre; Esc vuelve al vuelo. Mientras se juega, el
-mundo se queda quieto: la última imagen del render se congela de fondo,
-difuminada, y el juego se dibuja encima en CPU como todo lo demás, a los
-fps de la pantalla (de 3 a 13 ms por frame según el juego; el 3D del
-sistema cuesta 50-140).
+La versión chapina tiene cuatro minijuegos (son un extra: no están en el
+menú de puntos). Cerca de su lugar, abajo aparece **«Enter · …»** y Enter
+lo abre; Esc vuelve al vuelo. Mientras se juega, el mundo se queda quieto:
+la última imagen del render se congela de fondo, difuminada, y el juego se
+dibuja encima en CPU como todo lo demás, mucho más rápido que el 3D del
+sistema (de 3 a 13 ms por frame según el juego).
 
 | | |
 | --- | --- |
 | ![La marimba de la Luna](media/65_marimba.png) | **La marimba de la Luna** (Luna de Xelajú, versión chapina; con N se llega a **La marimba**). Fichas que bajan por cuatro carriles hasta las teclas de una marimba: **D F J K**, como Piano Tiles. Vos llevás una parte del conjunto y la marimba toca lo demás: **Bajo** (fácil), **Tiple** (la melodía) o **Tiple con redobles** (difícil: las notas largas se redoblan machacando la tecla, como en la marimba de verdad; si dejás de redoblar, la nota se apaga). Lo que no tocás no suena, y se oye. La canción es el son de la marimba procedural en **tres vueltas**, cada una más rápida (119, 139 y 158 por minuto). Perfecto, bien, ok o falla según el tiempo; la racha multiplica y, si el **ánimo** del público se acaba, el público se va. Al final: «¡De a huevo!», «¡Chilero!», «Va pues», «Púchica…» o «Ni modo, otra vez», y el récord de cada parte. |
 | ![La carrera del Periférico](media/69_carrera.png) | **La carrera del Periférico** (la capital, versión chapina; se ofrece en el aire sobre la capital: con N se llega a **El Periférico**, arriba de la ciudad con el anillo de camionetas encima). Tres vueltas a una carretera mojada que flota a 400 m sobre la capital de noche (barrancos, calzadas, La Aurora y el estadio), con los volcanes en el horizonte y el Fuego en erupción, la meta bajo la Torre del Reformador (que también es el semáforo), túneles de arcos de foquitos de feria, barriletes gigantes de Sumpango, cohetes, túmulos y barandas de neón que se reflejan en el asfalto. Corrés con la nave que traés y las rivales son las otras tres clases: **la chela** (la botella que traés, o la Gallo), **el tuk-tuk**, **la camioneta** y **el colectivo**, cada una con su manejo (el tuk-tuk arranca como bala y dobla de lado; la camioneta corre más en recta pero dobla mal y echa **humo negro** que te nubla la vista). Ir pegado atrás de otra nave carga el **turbo** (rebufo, Shift); **H** es el **pito**: el tráfico de adelante se hace a un lado. Las naves son tus modelos de Blender **horneados como sprites** al empezar, con LEDs que corren, respiran y se encienden al frenar, ladeo, rebote y su turbo. Hay récord por nave. `Jugar_Carrera.cmd` (o `--carrera`) arranca ahí. |
 | ![Shucos del Reformador](media/70_shucos.png) | **Shucos del Reformador** (la capital, versión chapina; se ofrece en el suelo, junto a la Torre del Reformador: con N se llega a **El Reformador**). Una carretilla al pie de la torre, de 7 de la noche a 3 de la mañana. Llegan clientes con su pedido en un globito: **el de la U**, **el agente de la PMT** (con prisa), **la señora** que lo quiere «sin cebolla y bastante guacamol», **el del estadio** (doble salsa de tomate) y, después de la una, **el bolo de las 2 a. m.**; y cada noche, a eso de las 8 y cuarto, llega **don Meyer** (el de Talega Surfers) saludando a pedir el suyo. Arriba del mostrador **te va diciendo qué apachar en cada paso** para el cliente elegido. Armás el shuco: **1** el pan, **2-5** la carne (salchicha, longaniza, chorizo, salami: la primera vez a la plancha, la segunda al pan; cruda o quemada te la devuelven), **G R C M Y T** guacamol, repollo, cebolla, mostaza, mayonesa y salsa de tomate, **X** a la basura, **← →** a quién y **Enter** se lo das. Mal armado te lo devuelven; si tardás se van enojados; si sale rápido, dejan propina. Hay horas pico (la salida de la U y la del estadio) y con los ahorros comprás mejoras: plancha de hierro, toldo y ayudante. Todo con volumen y la luz de los focos de la carretilla; la torre, los edificios y la avenida desenfocados detrás, con sus luces como manchas, y por la avenida pasan carros, el Tuk-Tuk Elena y La Mamaneta pitando. `Jugar_Shucos.cmd` (o `--shucos`) arranca ahí. |
-| ![Talega Surfers](media/71_surfers.png) | **Talega Surfers** (Antigua, en el volcán de Fuego, versión chapina; con N se llega a **Antigua**). Te recibe **don Meyer de frente, con su saludo militar**. **Meyer** (el personaje de Blender, con su gorra, sus lentes, su guerrera beige y la cara con textura) se baja de la nave y corre saludando por la calle del Arco, en tres carriles de empedrado, entre fachadas coloniales de colores (con sus aleros, rejas voladas y zaguanes), bajo el Arco de Santa Catalina y con el Volcán de Agua al fondo, con el sol de la tarde que tira la sombra de las casas sobre la calle, iglesias y jacarandas detrás de los techos, gente en las banquetas (el de los globos, señoras con su canasta, turistas) y palomas que salen volando. Las camionetas son tu **La Mamaneta** (en tres pinturas) y los tuk-tuks tu **Tuk-Tuk Elena**, con sus LEDs encendidas, derechas en su carril y **en fila, como un convoy**: a las **paradas** se sube corriendo por su **rampa de tablones** y se sigue por los techos de toda la fila (sin rampa, se esquivan); las que **vienen de frente** no perdonan (salvo que vayás por los techos); **abajo** se agacha (en cuclillas); las camionetas y tuk-tuks **de cerca van en 3D** (su malla en perspectiva: a la par se les ve el costado y desde la rampa se ven largas), los de lejos como sprites; los **tuk-tuks** se esquivan, las **carretas de helados** se saltan y los **lazos de papel picado** se pasan rodando. Si pisás una **alfombra de aserrín**, te persiguen los **cucuruchos** (con su marcha de procesión) y si pisás otra te agarran. Atrás **el Fuego** va explotando: la ceniza oscurece todo y caen **bombas de lava** que marcan su sombra antes de caer. Los **lenes** son las monedas; cada vez se corre más rápido. **H** es el claxon de don Meyer. Hay récord. `Jugar_Surfers.cmd` (o `--surfers`) arranca ahí. |
+| ![Talega Surfers](media/71_surfers.png) | **Talega Surfers** (Antigua, en el volcán de Fuego, versión chapina; con N se llega a **Antigua**). Te recibe **don Meyer de frente, con su saludo militar**. **Meyer** (el personaje de Blender, con su gorra, sus lentes, su guerrera beige y la cara con textura) se baja de la nave y corre saludando por la calle del Arco, en tres carriles de empedrado, entre fachadas coloniales de colores (con sus aleros, rejas voladas y zaguanes), bajo el Arco de Santa Catalina y con el Volcán de Agua al fondo, con el sol de la tarde que tira la sombra de las casas sobre la calle, iglesias y jacarandas detrás de los techos, gente en las banquetas (el de los globos, señoras con su canasta, turistas) y palomas que salen volando. Las camionetas son tu **La Mamaneta** (en tres pinturas) y los tuk-tuks tu **Tuk-Tuk Elena**, con sus LEDs encendidas, derechas en su carril y **en fila, como un convoy**: a las **paradas** se sube corriendo por su **rampa de tablones** y se sigue por los techos de toda la fila (sin rampa, se esquivan); las que **vienen de frente** no perdonan (salvo que vayás por los techos); **abajo** se agacha (en cuclillas); las camionetas y tuk-tuks **de cerca van en 3D** (su malla en perspectiva: a la par se les ve el costado y desde la rampa se ven largas), los de lejos como sprites; los **tuk-tuks** se esquivan, las **carretas de helados** se saltan y los **lazos de papel picado** se pasan rodando. Si pisás una **alfombra de aserrín**, te persiguen los **cucuruchos** (con su marcha de procesión) y si pisás otra te agarran. Atrás **el Fuego** va explotando: la ceniza oscurece todo y caen **bombas de lava** que marcan su sombra antes de caer. Los **lenes** son las monedas; cada vez se corre más rápido. **H** es el claxon de don Meyer. De fondo suena *The British Grenadiers* con pífano y tambor, desde la bienvenida y, más bajita, mientras se corre. Hay récord. `Jugar_Surfers.cmd` (o `--surfers`) arranca ahí. |
 | ![La marimba en la Luna de Xelajú](media/64_la_marimba.png) | **Para jugar sin buscarla**: `Jugar_Marimba.cmd` (o `cargo run --release -- --marimba`) arranca con la marimba abierta. En el menú, ← / → ajustan el tiempo si las notas te suenan tarde (audífonos Bluetooth). Los récords quedan en `minijuegos.txt`. Cómo funciona (la pista en perspectiva hecha fila por fila, el reloj que sale del audio, el redoble): [EXPLICACION.md](EXPLICACION.md#los-minijuegos). |
 
 ## Video
@@ -193,14 +193,23 @@ Se necesita Rust (edición 2024) y CMake, que usa `raylib` para compilarse.
 cargo run --release
 ```
 
+En Windows también se puede abrir `Jugar_OCASO.cmd` (o `Jugar_Marimba.cmd`,
+`Jugar_Carrera.cmd`, `Jugar_Shucos.cmd` y `Jugar_Surfers.cmd`, que empiezan
+en un minijuego): usa `ocaso.exe` si está a la par y si no, compila con
+Cargo. **F11** pone la pantalla completa: el render sigue a su resolución
+(el CPU hace el mismo trabajo, así que los FPS no cambian) y la imagen se
+estira al mostrarla; el HUD se dibuja nítido a la resolución del monitor.
+
 Opciones:
 
 ```sh
-cargo run --release -- --res 1920x1080        # resolución del render (por defecto 1280x720)
+cargo run --release -- --res 1920x1080        # resolución del render (por defecto 1280x720; más pixeles, más lento)
+cargo run --release -- --pantalla-completa    # abre en pantalla completa (F11 vuelve a la ventana)
+cargo run --release -- --vista 24_el_ojo      # empieza en una de las vistas fijas
 cargo run --release -- --chapina              # empieza en la versión chapina
 cargo run --release -- --recorrido video.mp4  # graba el recorrido (ffmpeg); con --chapina, el chapín
 cargo run --release -- --muestra muestra.mp4  # graba el video de muestra: la ventana manejada por un guion (ffmpeg)
-cargo run --release -- --captura capturas     # las 57 vistas fijas como PNG, sin abrir ventana
+cargo run --release -- --captura capturas     # las 59 vistas fijas como PNG, sin abrir ventana
 cargo run --release -- --marimba              # arranca en la Luna de Xelajú con la marimba abierta
 cargo run --release -- --nave 8               # la nave chapina con que se empieza (7 tuk-tuk, 8 camioneta, 9 colectivo)
 cargo run --release -- --captura-marimba fotos # fotos del minijuego de la marimba, sin ventana
@@ -214,6 +223,9 @@ cargo run --release -- --bench 30             # mide cada vista fija y da median
 cargo run --release -- --wire --lod           # empieza con wireframe y colores de LOD
 cargo test --release                          # pruebas de vuelo, raster, sombras y gas volumétrico
 ```
+
+Los videos (`--recorrido`, `--muestra`) necesitan `ffmpeg` en el PATH o la
+variable `OCASO_FFMPEG` con su ruta; el juego y las capturas PNG no.
 
 ## Controles
 
@@ -252,6 +264,7 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | Otra semilla para los objetos de la superficie | F6 |
 | Congelar el frustum (ver el culling desde afuera) | F7 |
 | Resolución dinámica (encendida: mientras la imagen se mueve rápido se renderiza al 75 % y se amplía) | F8 |
+| **Pantalla completa** (el render no cambia de resolución: se estira al mostrarlo) | **F11** |
 | Silenciar | M |
 | Foto en `capturas/` | P |
 | Soltar o capturar el mouse | Tab |
@@ -259,47 +272,66 @@ cargo test --release                          # pruebas de vuelo, raster, sombra
 | Salir (en un minijuego, Esc sale del minijuego) | Esc |
 
 
-## Revision visual y vuelo
+## El vuelo
 
-En Windows se puede abrir `Jugar_OCASO.cmd`; en el paquete lleva el ejecutable,
-y en el repositorio compila con Cargo si no lo encuentra. Los controles completos
-se muestran con F1; F2 abre contadores y F9 oculta el HUD.
-
-- OCASO-1: 78.057, 24.977 y 6.243 triangulos segun distancia.
-- Jardin: hongos con nervaduras y torres abiertas con nucleos luminosos;
-  suelo con normales triplanares, cavidades y arterias animadas. El bioma
-  de llegada tiene colonias a ambos lados de un claro, colocadas sobre el
-  terreno; giran con el planeta y se pueden visitar en vuelo libre.
-- Cielo con estrellas mas finas y nebulosa; estrella roja con conveccion;
-  Gargantua con la Variante dorada y las nubes grises del Proyecto 2.
-- Orbitas mas cercanas para reducir los viajes y hacer visibles los vecinos.
-- Velocidad normal limitada a 420 u/s, turbo a 1.092 u/s; el frenado conserva
-  autoridad al bajar la velocidad de aproximacion. Con asistencia, soltar las
-  teclas detiene la nave; sin asistencia sigue de largo, pero los
-  propulsores no la pasan de la velocidad maxima. X tambien funciona sin
-  asistencia.
-- La franja exterior impide escapar indefinidamente. H (o Inicio/Home) recupera una
-  posicion segura: es una ayuda del piloto, no parte del recorrido evaluado.
-
-Vistas nuevas, accesibles tambien con AvPag/RePag (o el punto y la coma):
-
-```sh
-cargo run --release -- --vista 22_agonia
-cargo run --release -- --vista 23_jardin_biopunk
-cargo run --release -- --vista 24_el_ojo
-cargo run --release -- --captura capturas --vista 23_jardin_biopunk --res 1600x900
-cargo run --release -- --recorrido media/recorrido-ocaso.mp4
-```
-
-La grabacion necesita `ffmpeg` en PATH o la variable `OCASO_FFMPEG` apuntando
-a su ejecutable. El juego manual y las capturas PNG no lo necesitan.
-Para regenerar la nave: `blender --background --python tools/export_ship.py`.
-Se exportan geometría, UV, normales y los parámetros de los materiales;
-la iluminación se calcula con los shaders propios de Rust.
+- Velocidad normal hasta 420 u/s y turbo hasta 1 092 u/s; el frenado
+  conserva autoridad al bajar la velocidad de aproximación. Con asistencia
+  (Z), soltar las teclas detiene la nave; sin asistencia sigue de largo,
+  pero los propulsores no la pasan de la velocidad máxima. X frena en los
+  dos casos.
+- El modo local (L, encendido de entrada) se activa solo cerca de un
+  planeta: la nave sostiene su altura sobre el terreno que gira y el
+  crucero (O) le da la vuelta.
+- Una franja exterior impide escaparse del sistema. H (o Inicio) devuelve
+  a una posición segura junto a Pira sin reiniciar el tiempo: es una ayuda
+  del piloto, no parte del recorrido evaluado.
+- La nave OCASO-1 tiene tres niveles de detalle: 78 057, 24 977 y 6 243
+  triángulos según la distancia.
 
 ## Qué evaluar y dónde verlo
 
-Las vistas fijas se generan con `--captura` (nombres entre paréntesis).
+**Requisitos** (sin ellos no se evalúa):
+
+1. **Pipeline propio en CPU.** raylib solo abre la ventana, lee el teclado
+   y el mouse, muestra el framebuffer como textura, pone el texto 2D del
+   HUD y reproduce el sonido; no se usa nada de su 3D, modelos, cámara,
+   materiales, shaders ni física.
+2. **El sol, la nave y los planetas.** Ocaso es el sol; los planetas orbitan
+   y giran en función del tiempo, no de los frames. Naves modeladas por mí
+   en Blender: La Mamaneta, el Tuk-Tuk Elena, el Colectivo Q.5 y las seis
+   botellas (en la versión chapina: V y después 1 a 9).
+3. **Acercarse y alejarse** de cualquier planeta sin pantalla de carga ni
+   cambio de escena, con la cámara libre.
+4. **Modelos** OBJ con matrices de modelo, vista y proyección, prueba de
+   profundidad y shaders de fragmentos propios.
+5. **Entrega**: el código, los modelos, estas instrucciones y los videos
+   del recorrido ([Video](#video)).
+
+**En corto** (el detalle, en la tabla de abajo):
+
+| Punto del menú | Pts | Dónde verlo | Código |
+| --- | --- | --- | --- |
+| 5 planetas: Pira, Jardín, Vigía, Argos y Párpado (y Faro, la estrella de neutrones) | 50 | N los visita uno por uno; vistas 02 a 08 y 32 | [scene/system.rs](src/scene/system.rs), [shaders/](src/shaders) |
+| 4 tipos de modelos propios en la superficie (hay 21) | 20 | N: los géiseres, el claro, el nido, el espejo | [scene/props.rs](src/scene/props.rs) |
+| Distribución procedural con semilla | 10 | F6, o T → semilla | [scene/props.rs](src/scene/props.rs) |
+| Posición y orientación sobre la superficie que gira | 5 | Cualquier superficie | [scene/props.rs](src/scene/props.rs) |
+| 4 shaders propios (hay más de 10) | 24 | Todas las vistas | [shaders/](src/shaders) |
+| Shader animado | 8 | La estrella late; el vórtice de Vigía gira | [shaders/sun.rs](src/shaders/sun.rs), [shaders/vigia.rs](src/shaders/vigia.rs) |
+| Mapeo de normales | 8 | La nave y la roca de cerca (09, 05, 12) | [shaders/textures.rs](src/shaders/textures.rs) |
+| Deformación con ruido | 10 | F3 (wireframe) | [terrain/shapes.rs](src/terrain/shapes.rs) |
+| Generación de geometría antes de rasterizar | 10 | F3, F4 | [terrain/](src/terrain) |
+| Modo local | 8 | L, O | [scene/ship.rs](src/scene/ship.rs) |
+| Aceleración, frenado y giro progresivos | 8 | Volar | [scene/ship.rs](src/scene/ship.rs) |
+| Gravedad | 10 | Z (sin asistencia) y Y (ruta predicha); G la apaga | [scene/ship.rs](src/scene/ship.rs) |
+| Colisión | 4 | Bajar a la superficie | [scene/ship.rs](src/scene/ship.rs) |
+| Descarte antes de rasterizar | 7 | F2 (contadores), F7 (frustum congelado) | [render/pipeline.rs](src/render/pipeline.rs), [terrain/](src/terrain) |
+| Niveles de detalle | 8 | F4 (colores), F5 (apagarlo) y F2 | [terrain/](src/terrain), [scene/props.rs](src/scene/props.rs) |
+| Presentación | 10 | El final con J, el HUD y la ayuda (F1) | [hud.rs](src/hud.rs) |
+
+En vivo, el panel **T** cambia el radio de un planeta, su órbita, su giro,
+la intensidad de su shader y la semilla de los objetos ([abajo](#en-la-demostración-cambiar-parámetros-en-vivo)).
+
+**El detalle.** Las vistas fijas se generan con `--captura` (nombres entre paréntesis).
 
 | Característica del menú | Cómo está hecho | Dónde verlo |
 | --- | --- | --- |
@@ -366,15 +398,25 @@ dibujos (malla + matriz + material)
   mundo se guarda en `f64` y se dibuja relativo a la cámara.
 - Un pool de hilos propio con reparto dinámico (el i5-12500H tiene núcleos
   de dos tamaños).
-- El costo depende mucho de la vista (`--bench 10`). En un i5-12500H a
-  1280x720, casi todas las vistas tardan entre 25 y 75 ms por frame; el
-  bosque de Jardín de cerca y Gargantúa, entre 120 y 150 ms; la vista de
-  cine del ojo (24), unos 300 ms.
+- El costo depende mucho de la vista (`--bench 3`, medido el 9 de
+  noviembre en un i5-12500H a 1280x720, conectado): las vistas de la versión
+  chapina tardan de 33 a 60 ms por frame; las de OCASO, de 60 a 115 ms; las
+  superficies de Jardín de cerca, unos 170 ms; Gargantúa, 125 ms (de 215 a
+  230 mientras se come a Pira), y la vista de cine del ojo (24), unos
+  280 ms. Volando, la resolución dinámica (F8) da de 1.5 a 1.65 veces esos
+  FPS mientras la imagen se mueve rápido; para ir más fluido se puede bajar
+  el render (`--res 960x540`) y estirarlo con F11. `ms_total` mide el frame
+  completo (terreno, sombras, gas y dibujo) después de calentar cada vista.
 - Todos los hilos redondean a cero los floats desnormalizados (FTZ/DAZ): un
   `exp` muy negativo deja valores tan chicos que cada operación con ellos
   cuesta cientos de ciclos.
-- FXAA en CPU suaviza las diagonales despues del tonemap; F3/F4 lo omiten
-  para mantener legibles las aristas y los colores de depuracion.
+- FXAA en CPU suaviza las diagonales después del tonemap; F3/F4 lo omiten
+  para mantener legibles las aristas y los colores de depuración.
+- En pantalla completa (F11) la ventana mide lo del monitor, pero el render
+  no cambia de tamaño: la textura se estira con filtro bilineal al
+  mostrarla (centrada y sin deformarla), el HUD se dibuja a la resolución
+  del monitor y lo que va en pixeles del render (los nombres de los
+  planetas, el texto de los minijuegos) se pasa por la misma escala.
 
 | Carpeta | Contenido |
 | --- | --- |
@@ -388,7 +430,7 @@ dibujos (malla + matriz + material)
 | [src/parallel.rs](src/parallel.rs) | Pool de hilos persistentes |
 
 
-### Materiales y luz de esta revisión
+### Materiales y luz
 
 La nave usa los colores, texturas empacadas, rugosidad y metalicidad del
 Blender original. La BRDF Cook–Torrance combina GGX, Smith y Fresnel de
@@ -405,12 +447,6 @@ kepleriana. Se conserva el Doppler y la curva de exposición del Proyecto 2.
 La tabla de geodésicas acelera el cielo lejano. La vista `24_el_ojo` usa
 la elevación de 2°, distancia de 21.5 rs y FOV de 34° de la vista original.
 El cielo y los planetas pertenecen al sistema del Proyecto 3.
-
-El perfil predeterminado prioriza detalle visual, también por debajo de
-30 FPS. `ms_total` mide el frame completo de la app, incluyendo terreno,
-sombras, actualización del gas y dibujo. El coste de carga inicial se
-separa con calentamiento. Gargantúa volumétrico es la vista más costosa;
-la resolución se puede bajar con `--res 960x540`.
 
 Para reexportar la nave con Blender 5.2:
 
@@ -437,8 +473,8 @@ Trabajo individual: Lázaro Díaz (24713).
 - Reutilizo código propio: el pool de hilos, el color de cuerpo negro, la
   curva de tonemap, el bloom y la relatividad de Gargantúa vienen de mi
   Proyecto 2; el lector OBJ parte del lab 4.
-- La nave OCASO-1 se creo para este proyecto en Blender con asistencia de IA
-  a partir de las referencias aportadas. Su fuente esta en `assets/source/`.
+- La nave OCASO-1 se creó para este proyecto en Blender con asistencia de IA
+  a partir de las referencias aportadas. Su fuente está en `assets/source/`.
   El exportador conserva UV, normales, materiales PBR y tres niveles de detalle.
   Dos láminas de efectos transparentes (campo anular y HUD holográfico) se
   excluyen del modelo opaco: evitamos que tapen el reactor como discos sólidos.
@@ -458,6 +494,9 @@ Trabajo individual: Lázaro Díaz (24713).
   saltar, agacharse) se arman en código girando sus piezas.
 - El claxon de don Meyer (H en Talega Surfers) es un audio grabado,
   `assets/sonidos/claxon_meyer.wav`, que se lee con un lector de WAV propio.
+- La canción de fondo de Talega Surfers es una grabación de *The British
+  Grenadiers* (marcha tradicional del siglo XVIII) con pífano y tambor,
+  `assets/sonidos/british_grenadiers.wav`, pasada a mono.
 - Las canciones de `musica/` no se incluyen en el repositorio (pesan y tienen
   derechos de autor); la marimba procedural sí es código propio.
 - Las fotografías de Júpiter y la Luna provienen de NASA; el basalto usa

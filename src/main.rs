@@ -72,11 +72,15 @@ struct Options {
     chapina: bool,
     /// Grabar el video de muestra (la ventana manejada por un guion).
     reel: Option<PathBuf>,
+    /// Abrir en pantalla completa (como apachar F11).
+    fullscreen: bool,
 }
 
 const USAGE: &str = "\
 uso: ocaso [opciones]
   --res ANCHOxALTO      resolucion del render (por defecto 1280x720)
+  --pantalla-completa   abre en pantalla completa (F11 cambia); el render
+                        sigue a su resolucion y se estira al mostrarlo
   --captura CARPETA     guarda vistas fijas como PNG sin abrir ventana
   --vista NOMBRE       inicia o captura solo la vista elegida
   --recorrido MP4      graba vuelo, acercamiento, vuelta y alejamiento (ffmpeg)
@@ -114,6 +118,7 @@ fn parse_args() -> Result<Options, String> {
         ship: None,
         chapina: false,
         reel: None,
+        fullscreen: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -132,6 +137,7 @@ fn parse_args() -> Result<Options, String> {
                 options.mode = Mode::Capture(PathBuf::from(dir));
             }
             "--chapina" => options.chapina = true,
+            "--pantalla-completa" => options.fullscreen = true,
             "--muestra" => {
                 options.reel = Some(PathBuf::from(args.next().ok_or("--muestra espera un archivo .mp4")?));
             }
@@ -280,7 +286,17 @@ fn run_window(options: &Options) -> Result<(), String> {
     let mut texture = rl
         .load_texture_from_image(&thread, &image)
         .map_err(|e| format!("no se pudo crear la textura: {e:?}"))?;
-    let fonts = hud::Fonts::load(&mut rl, &thread);
+    let fonts = hud::Fonts::load(&mut rl, &thread, 1.0);
+    // Pantalla completa (F11): la ventana sin bordes del tamano del monitor,
+    // sin cambiarle la resolucion. El render no cambia de tamano (el CPU
+    // hace lo mismo): la textura se estira con filtro bilineal al mostrarla
+    // y el texto de los minijuegos usa letras cargadas a esa escala. El
+    // video de muestra graba la ventana, asi que ahi no se usa.
+    let mut smooth = false;
+    let mut game_fonts: Option<hud::Fonts> = None;
+    if options.fullscreen && reel.is_none() {
+        rl.toggle_borderless_windowed();
+    }
     let mut hud = hud::Hud {
         help: false,
         stats: false,
@@ -339,6 +355,20 @@ fn run_window(options: &Options) -> Result<(), String> {
 
     while !rl.window_should_close() {
         let dt = if reel.is_some() { muestra::DT } else { rl.get_frame_time() };
+        if reel.is_none() && rl.is_key_pressed(KeyboardKey::KEY_F11) {
+            rl.toggle_borderless_windowed();
+            if captured {
+                rl.disable_cursor();
+            }
+            // Al cambiar la ventana, el mouse trae un salto.
+            skip_mouse = true;
+        }
+        let fit = hud::Fit::new((options.width, options.height), (rl.get_screen_width(), rl.get_screen_height()));
+        if (fit.scale != 1.0) != smooth {
+            smooth = fit.scale != 1.0;
+            let filter = if smooth { TextureFilter::TEXTURE_FILTER_BILINEAR } else { TextureFilter::TEXTURE_FILTER_POINT };
+            texture.set_texture_filter(&thread, filter);
+        }
         if let Some(r) = reel.as_mut() {
             let Some(action) = r.advance() else { break };
             use muestra::Action;
@@ -424,10 +454,19 @@ fn run_window(options: &Options) -> Result<(), String> {
                 .map_err(|e| format!("no se pudo actualizar la textura: {e:?}"))?;
             let overlay = game.overlay();
             let done = game.done();
+            // Estirado, su texto va con letras de ese tamano (se cargan una
+            // vez por escala).
+            if fit.scale != 1.0 && game_fonts.as_ref().is_none_or(|f| f.scale() != fit.scale) {
+                game_fonts = Some(hud::Fonts::load(&mut rl, &thread, fit.scale));
+            }
+            let letters = match &game_fonts {
+                Some(f) if fit.scale != 1.0 => f,
+                _ => &fonts,
+            };
             let mut d = rl.begin_drawing(&thread);
             d.clear_background(Color::BLACK);
-            d.draw_texture(&texture, 0, 0, Color::WHITE);
-            hud::minigame(&mut d, &fonts, &overlay);
+            hud::frame(&mut d, &texture, fit);
+            hud::minigame(&mut d, letters, &overlay, fit);
             if let Some(r) = reel.as_mut() {
                 r.grab()?;
             }
@@ -678,9 +717,9 @@ fn run_window(options: &Options) -> Result<(), String> {
         let fps = rl.get_fps();
         let mut d = rl.begin_drawing(&thread);
         d.clear_background(Color::BLACK);
-        d.draw_texture(&texture, 0, 0, Color::WHITE);
+        hud::frame(&mut d, &texture, fit);
         let view = chapin.then(|| player.view());
-        hud::draw(&mut d, &app, fps, &hud, &tweaks, &fonts, view.as_ref());
+        hud::draw(&mut d, &app, fps, &hud, &tweaks, &fonts, view.as_ref(), fit);
         if let Some(r) = reel.as_mut() {
             r.grab()?;
         }

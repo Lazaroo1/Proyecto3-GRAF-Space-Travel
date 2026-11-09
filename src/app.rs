@@ -1175,7 +1175,9 @@ impl App {
         if self.system.sites.is_empty() {
             return;
         }
-        self.next_site = (self.next_site + 1) % self.system.sites.len();
+        // Al principio no se ha visitado ninguno (`usize::MAX`): el primero
+        // es el 0, tambien en debug, donde `+ 1` se desbordaria.
+        self.next_site = self.next_site.wrapping_add(1) % self.system.sites.len();
         let site = self.system.sites[self.next_site];
         // En la version chapina se llega de dia (ahi no hay final que se
         // adelante); en OCASO, a la hora que sea.

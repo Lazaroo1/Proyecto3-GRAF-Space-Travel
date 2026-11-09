@@ -41,6 +41,48 @@ pub struct Hud {
     pub prompt: Option<&'static str>,
 }
 
+/// Como cabe la imagen del render en la ventana: a que escala y desde donde
+/// (centrada y sin deformarla). En la ventana normal mide lo mismo que el
+/// render (escala 1, en la esquina); en pantalla completa (F11) se estira
+/// hasta llenar el monitor y el render sigue a su resolucion, asi que el
+/// CPU hace el mismo trabajo: solo cambia el tamano con que se muestra.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fit {
+    pub scale: f32,
+    pub x: f32,
+    pub y: f32,
+}
+
+impl Fit {
+    pub fn new(render: (usize, usize), screen: (i32, i32)) -> Self {
+        let (rw, rh) = (render.0 as f32, render.1 as f32);
+        let (sw, sh) = (screen.0 as f32, screen.1 as f32);
+        let scale = (sw / rw).min(sh / rh);
+        Self {
+            scale,
+            x: ((sw - rw * scale) * 0.5).round(),
+            y: ((sh - rh * scale) * 0.5).round(),
+        }
+    }
+
+    /// Un punto del render en la pantalla.
+    pub fn point(&self, x: f32, y: f32) -> (f32, f32) {
+        (self.x + x * self.scale, self.y + y * self.scale)
+    }
+}
+
+/// La imagen del render en la pantalla: tal cual en la ventana o estirada
+/// (con el filtro bilineal que le pone `main`) en pantalla completa.
+pub fn frame(d: &mut RaylibDrawHandle, texture: &Texture2D, fit: Fit) {
+    let (w, h) = (texture.width() as f32, texture.height() as f32);
+    if fit.scale == 1.0 {
+        d.draw_texture(texture, fit.x as i32, fit.y as i32, Color::WHITE);
+    } else {
+        let to = Rectangle::new(fit.x, fit.y, w * fit.scale, h * fit.scale);
+        d.draw_texture_pro(texture, Rectangle::new(0.0, 0.0, w, h), to, Vector2::new(0.0, 0.0), 0.0, Color::WHITE);
+    }
+}
+
 /// Segundos que dura el titulo al empezar.
 const INTRO: f32 = 7.0;
 /// Segundos que dura un aviso.
@@ -85,19 +127,32 @@ const WARN: Color = Color::new(255, 118, 92, 255);
 /// Las letras del HUD, una por estilo.
 pub struct Fonts {
     fonts: Vec<WeakFont>,
+    /// El tamano de cada atlas (el de `STYLES` por la escala).
+    sizes: Vec<f32>,
+    scale: f32,
     /// Si la letra tiene tildes (la de raylib no).
     unicode: bool,
 }
 
 impl Fonts {
-    pub fn load(rl: &mut RaylibHandle, thread: &RaylibThread) -> Self {
+    /// Las letras a `scale` veces su tamano (1 para el HUD; en pantalla
+    /// completa, los minijuegos se estiran y su texto va con letras cargadas
+    /// a ese tamano, para que se vea nitido). El titulo no se escala: se
+    /// dibuja a cualquier tamano desde su atlas de 120.
+    pub fn load(rl: &mut RaylibHandle, thread: &RaylibThread, scale: f32) -> Self {
+        let sizes: Vec<f32> = STYLES
+            .iter()
+            .map(|&(style, _, size)| if matches!(style, Style::Title) { size } else { (size * scale).round() })
+            .collect();
         let mut fonts = Vec::new();
-        for (_, file, size) in STYLES {
+        for (&(_, file, _), &size) in STYLES.iter().zip(&sizes) {
             match load_font(rl, thread, file, size) {
                 Some(font) => fonts.push(font),
                 None => {
                     return Self {
                         fonts: STYLES.iter().map(|_| rl.get_font_default()).collect(),
+                        sizes,
+                        scale,
                         unicode: false,
                     };
                 }
@@ -105,12 +160,18 @@ impl Fonts {
         }
         Self {
             fonts,
+            sizes,
+            scale,
             unicode: true,
         }
     }
 
+    pub fn scale(&self) -> f32 {
+        self.scale
+    }
+
     fn font(&self, style: Style) -> (&WeakFont, f32) {
-        (&self.fonts[style as usize], STYLES[style as usize].2)
+        (&self.fonts[style as usize], self.sizes[style as usize])
     }
 
     /// El texto como se puede dibujar: sin tildes con la letra de raylib y,
@@ -197,7 +258,12 @@ fn triangle(d: &mut RaylibDrawHandle, a: Vector2, b: Vector2, c: Vector2, color:
 
 /// Un panel redondeado con su borde.
 fn panel(d: &mut RaylibDrawHandle, rect: Rectangle) {
-    let roundness = (20.0 / rect.height.min(rect.width)).min(1.0);
+    rounded_panel(d, rect, 20.0);
+}
+
+/// Un panel con las esquinas de `radius` pixeles.
+fn rounded_panel(d: &mut RaylibDrawHandle, rect: Rectangle, radius: f32) {
+    let roundness = (radius / rect.height.min(rect.width)).min(1.0);
     d.draw_rectangle_rounded(rect, roundness, 10, PANEL);
     d.draw_rectangle_rounded_lines_ex(rect, roundness, 10, 1.0, EDGE);
 }
@@ -265,6 +331,7 @@ pub fn draw(
     tweaks: &Tweaks,
     fonts: &Fonts,
     player: Option<&PlayerView>,
+    fit: Fit,
 ) {
     let width = d.get_screen_width() as f32;
     let height = d.get_screen_height() as f32;
@@ -371,7 +438,8 @@ pub fn draw(
         let nw = fonts.width(name, Style::Bold);
         let dw = fonts.width(&distance, Style::Small);
         let w = nw + 8.0 + dw + 20.0;
-        let (x, y) = (m.x, m.y);
+        // La marca sale en pixeles del render: en pantalla completa, estirada.
+        let (x, y) = fit.point(m.x, m.y);
         let rect = Rectangle::new((x - w * 0.5).round(), y - 40.0, w.round(), 26.0);
         let below = Rectangle::new(rect.x, rect.y, rect.width, 40.0);
         if below.check_collision_recs(flight) {
@@ -412,6 +480,7 @@ pub fn draw(
             "R: rebobinar   ·   [ ]: −30 / +30 s".to_string(),
             "RePág / AvPág o , / .: vistas fijas   ·   F3: wireframe   ·   F4: colores de LOD   ·   F5: LOD".to_string(),
             "F6: otra semilla   ·   F7: congelar frustum   ·   F1: ayuda   ·   F2: estadísticas   ·   F9: ocultar todo".to_string(),
+            "F8: resolución dinámica   ·   F11: pantalla completa".to_string(),
         ];
         let top = lines_panel(d, fonts, 12.0, 12.0, &lines, Some(height));
         bottom = bottom.min(top - 14.0);
@@ -468,14 +537,21 @@ pub fn draw(
 }
 
 /// Lo que pone encima un minijuego: texto con sombra (para que se lea sobre
-/// lo que sea), paneles como los del HUD y barras.
-pub fn minigame(d: &mut RaylibDrawHandle, fonts: &Fonts, overlay: &Overlay) {
+/// lo que sea), paneles como los del HUD y barras. Viene en pixeles del
+/// render: en pantalla completa se estira igual que el juego (`fonts` son
+/// las letras cargadas a esa escala).
+pub fn minigame(d: &mut RaylibDrawHandle, fonts: &Fonts, overlay: &Overlay, fit: Fit) {
     let rgba = |c: [u8; 4]| Color::new(c[0], c[1], c[2], c[3]);
+    let s = fit.scale;
+    let place = |x: f32, y: f32, w: f32, h: f32| {
+        let (x, y) = fit.point(x, y);
+        Rectangle::new(x, y, w * s, h * s)
+    };
     for item in &overlay.items {
         match item {
-            Item::Panel { x, y, w, h } => panel(d, Rectangle::new(*x, *y, *w, *h)),
+            Item::Panel { x, y, w, h } => rounded_panel(d, place(*x, *y, *w, *h), 20.0 * s),
             Item::Bar { x, y, w, h, fill, color, vertical } => {
-                let rect = Rectangle::new(*x, *y, *w, *h);
+                let rect = place(*x, *y, *w, *h);
                 let round = (12.0 / rect.width.min(rect.height)).min(1.0);
                 let fill = fill.clamp(0.0, 1.0);
                 if fill < 1.0 {
@@ -499,16 +575,18 @@ pub fn minigame(d: &mut RaylibDrawHandle, fonts: &Fonts, overlay: &Overlay) {
                     Font::Heading => (Style::Heading, 24.0),
                     Font::Big(size) => (Style::Title, *size),
                 };
+                let size = size * s;
                 let w = fonts.width_at(text, style, size);
+                let (x, y) = fit.point(*x, *y);
                 let x = match align {
-                    Align::Left => *x,
+                    Align::Left => x,
                     Align::Center => x - w * 0.5,
                     Align::Right => x - w,
                 };
                 let shadow = Color::new(0, 0, 0, (color[3] as f32 * 0.55) as u8);
-                let drop = (size / 18.0).clamp(1.0, 3.0);
+                let drop = (size / 18.0).clamp(1.0, (3.0 * s).max(1.0));
                 fonts.draw_at(d, text, x + drop, y + drop, style, size, shadow);
-                fonts.draw_at(d, text, x, *y, style, size, rgba(*color));
+                fonts.draw_at(d, text, x, y, style, size, rgba(*color));
             }
         }
     }
@@ -824,5 +902,21 @@ mod tests {
             }
         }
         assert_eq!(scientific(4.83e-11, 2), "4.83×10⁻¹¹");
+    }
+
+    /// En la ventana el render va 1:1; en pantalla completa se estira sin
+    /// deformarse y, si el monitor no es 16:9, queda centrado con franjas.
+    #[test]
+    fn the_render_fits_the_screen_without_stretching() {
+        assert_eq!(Fit::new((1280, 720), (1280, 720)), Fit { scale: 1.0, x: 0.0, y: 0.0 });
+        let full = Fit::new((1280, 720), (1920, 1080));
+        assert_eq!(full, Fit { scale: 1.5, x: 0.0, y: 0.0 });
+        assert_eq!(full.point(640.0, 360.0), (960.0, 540.0));
+        // Un monitor 16:10: franjas arriba y abajo.
+        let tall = Fit::new((1280, 720), (1920, 1200));
+        assert_eq!((tall.scale, tall.x, tall.y), (1.5, 0.0, 60.0));
+        // Uno ultra ancho: franjas a los lados.
+        let wide = Fit::new((1280, 720), (2560, 1080));
+        assert_eq!((wide.scale, wide.x, wide.y), (1.5, 320.0, 0.0));
     }
 }

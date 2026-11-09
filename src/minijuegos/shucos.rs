@@ -794,7 +794,7 @@ fn counter_top(lay: &Layout, x: f32, y: f32) -> (Vec3, f32) {
         return (Vec3::new(0.42, 0.43, 0.46) * (0.55 + 0.5 * (1.0 - t)) + BULB * (0.55 * hl), 0.15 * hl);
     }
     let v = ((y - lip) / (h - lip)).clamp(0.0, 1.0);
-    let grain = (unit(hash_u32(y as u32 * 2_654_435_761)) - 0.5) * 0.045 + (value_noise(x / (90.0 * s), y / (3.0 * s)) - 0.5) * 0.04;
+    let grain = (unit(hash_u32((y as u32).wrapping_mul(2_654_435_761))) - 0.5) * 0.045 + (value_noise(x / (90.0 * s), y / (3.0 * s)) - 0.5) * 0.04;
     let base = STEEL * (0.56 + 0.26 * v) + Vec3::splat(grain);
     let fresnel = 0.25 + 0.75 * (1.0 - v).powi(3);
     let mut refl = Vec3::new(0.12, 0.08, 0.14) * fresnel;

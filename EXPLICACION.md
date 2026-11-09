@@ -1098,17 +1098,25 @@ toca según la fase de los pasos, con su profundidad. Si no está el modelo,
 se dibuja un patojo con figuras. Un frame cuesta
 unos 7 ms.
 
-**El sonido**: el viento sube con la velocidad, el volcán retumba cada vez
-más, los pasos, el salto, la moneda, el pito de dos tonos de la camioneta
-que viene, el silbido de cada bomba (que baja de tono hasta caer) y su
-explosión, y mientras persiguen los cucuruchos, una marcha de procesión
+**El sonido**: de fondo, *The British Grenadiers* con pífano y tambor
+(`assets/sonidos/british_grenadiers.wav`, en mono y sin el silencio de las
+puntas, leída con el mismo lector de WAV). Empieza en la bienvenida y al
+correr sigue por donde iba, más bajita (de 0.7 a 0.3, en unos 0.4 s);
+mientras persiguen los cucuruchos baja a 0.1 para que se oiga su procesión,
+con el claxon se hace a un lado, y al terminar, un segundo de silencio y
+vuelve a empezar. Encima, el viento sube con la velocidad, el volcán retumba
+cada vez más, los pasos, el salto, la moneda, el pito de dos tonos de la
+camioneta que viene, el silbido de cada bomba (que baja de tono hasta caer)
+y su explosión, y mientras persiguen los cucuruchos, una marcha de procesión
 (bombo y un acorde grave de metales).
 
 **Pruebas**: el rayo entra a la caja por la cara que debe; cada tramo deja un
 carril libre; sin saltar la carreta se choca y saltando se pasa; por la
 escalera se sube al techo; una segunda alfombra con los cucuruchos atrás es
 perder; el piloto automático corre más de 500 m en un minuto y junta lenes;
-y cada pantalla se dibuja sin huecos con texto que la fuente carga.
+cada pantalla se dibuja sin huecos con texto que la fuente carga; y la
+canción suena desde la bienvenida, al correr sigue sin volver a empezar (más
+bajita) y al terminar da la vuelta.
 
 # Cambios de la sexta revisión
 
@@ -1477,6 +1485,22 @@ Ninguna función 3D de raylib se usa: ni cámara, ni modelos, ni shaders.
 - **Tonemap**: curva ACES aplicada al canal máximo (conserva el tono: el
   rojo de la estrella no se lava a blanco), conversión a sRGB con una tabla
   de 4096 entradas y un poco de dither.
+
+### La ventana y la pantalla completa ([main.rs](src/main.rs), `hud::Fit`)
+raylib solo muestra la imagen ya calculada, como una textura. En la ventana
+normal, la ventana mide lo mismo que el render y la imagen se pega 1:1. Con
+**F11** (o `--pantalla-completa`) la ventana pasa a medir lo del monitor,
+sin bordes y sin cambiarle la resolución, pero el render sigue al tamaño de
+`--res`: el CPU sombrea los mismos pixeles y los FPS no cambian. `Fit`
+calcula la escala `min(ancho de la pantalla / ancho del render, alto de la
+pantalla / alto del render)` y el corrimiento que la centra sin deformarla
+(con franjas si el monitor tiene otra proporción), y la textura se dibuja
+estirada con filtro bilineal. El HUD se dibuja a la resolución del monitor,
+así que se ve nítido; lo que viene en pixeles del render pasa por la misma
+escala: los nombres de los planetas y lo que ponen encima los minijuegos,
+cuyo texto usa letras cargadas a ese tamaño para no verse borroso.
+Renderizar a la resolución del monitor (1920x1080) serían 2.25 veces los
+pixeles y casi el doble de tiempo por frame.
 
 ### Paralelismo ([parallel.rs](src/parallel.rs))
 Un pool de hilos persistentes con reparto dinámico: cada hilo toma el
