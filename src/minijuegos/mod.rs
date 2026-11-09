@@ -108,6 +108,11 @@ pub trait Minigame {
     fn demo_input(&mut self, _dt: f64) -> Keys {
         Keys::default()
     }
+    /// Si la musica del vuelo (el reproductor de la version chapina) sigue
+    /// sonando mientras se juega. Los que tienen su propia musica la pausan.
+    fn keeps_music(&self) -> bool {
+        false
+    }
 }
 
 /// Los minijuegos que hay.
@@ -168,6 +173,28 @@ pub fn start(kind: Kind, app: &App) -> Box<dyn Minigame> {
         Kind::Shucos => Box::new(shucos::Shucos::new(width, height, records)),
         Kind::Surfers => Box::new(surfers::TalegaSurfers::new(width, height, records)),
     }
+}
+
+/// Como `start`, pero mientras se arma un minijuego que tarda (la carrera
+/// hornea las naves, cerca de un segundo) llama a `wait` una y otra vez en
+/// este hilo: asi el reproductor sigue llenando su stream y la musica no se
+/// corta al entrar. La carrera se arma en otro hilo (que tambien usa el pool).
+pub fn start_while(kind: Kind, app: &App, mut wait: impl FnMut()) -> Box<dyn Minigame> {
+    if kind != Kind::Carrera {
+        return start(kind, app);
+    }
+    let records = Records::load(records_path());
+    std::thread::scope(|scope| {
+        let baking = scope.spawn(|| {
+            crate::parallel::flush_denormals();
+            race(app, records)
+        });
+        while !baking.is_finished() {
+            wait();
+            std::thread::sleep(std::time::Duration::from_millis(4));
+        }
+        Box::new(baking.join().expect("se horneo la carrera")) as Box<dyn Minigame>
+    })
 }
 
 /// La carrera con las naves chapinas: la chela es la botella que se trae (o

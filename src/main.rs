@@ -440,14 +440,39 @@ fn run_window(options: &Options) -> Result<(), String> {
                 // Sin audio, su reloj igual tiene que avanzar.
                 None => game.audio(&mut vec![0.0; (dt * audio::SAMPLE_RATE as f32) as usize]),
             }
+            // La carrera se corre con la musica del vuelo: el reproductor
+            // sigue, con sus teclas, y si le toca a la marimba procedural el
+            // sintetizador solo toca esa. Los demas tienen su propia musica.
+            let music = game.keeps_music() && app.system.version == scene::Version::Chapin;
+            player.set_active(music);
+            if music && reel.is_none() {
+                if rl.is_key_pressed(KeyboardKey::KEY_K) {
+                    player.toggle();
+                }
+                if rl.is_key_pressed(KeyboardKey::KEY_I) {
+                    player.next();
+                }
+                if rl.is_key_pressed(KeyboardKey::KEY_U) {
+                    player.previous();
+                }
+                if rl.is_key_pressed(KeyboardKey::KEY_MINUS) || rl.is_key_pressed(KeyboardKey::KEY_KP_SUBTRACT) {
+                    player.change_volume(-0.1);
+                }
+                if rl.is_key_pressed(KeyboardKey::KEY_EQUAL) || rl.is_key_pressed(KeyboardKey::KEY_KP_ADD) {
+                    player.change_volume(0.1);
+                }
+            }
+            player.update(dt);
+            let marimba = music && player.marimba();
             if let Some(stream) = stream.as_mut() {
-                synth.set(audio::AudioParams { master: 0.0, ..audio::AudioParams::default() });
+                let master = if marimba && !app.muted { 0.8 } else { 0.0 };
+                let level = if marimba { 0.55 } else { 0.0 };
+                synth.set(audio::AudioParams { master, marimba: level, ..audio::AudioParams::default() });
                 while stream.is_processed() {
                     synth.fill(&mut block);
                     let _ = stream.update(&block);
                 }
             }
-            player.set_active(false);
             game.draw(&mut game_frame);
             texture
                 .update_texture(&game_frame)
@@ -483,7 +508,13 @@ fn run_window(options: &Options) -> Result<(), String> {
         // Un minijuego pedido el frame pasado: ya se vio el aviso, se abre
         // (la carrera tarda un par de segundos en hornear las naves).
         if let Some(kind) = opening.take() {
-            minigame = Some(minijuegos::start(kind, &app));
+            // Mientras se hornean las naves, la musica sigue sonando.
+            let mut last = std::time::Instant::now();
+            minigame = Some(minijuegos::start_while(kind, &app, || {
+                let now = std::time::Instant::now();
+                player.update((now - last).as_secs_f32());
+                last = now;
+            }));
             continue;
         }
         hud.prompt = minijuegos::available(&app).map(minijuegos::Kind::prompt);

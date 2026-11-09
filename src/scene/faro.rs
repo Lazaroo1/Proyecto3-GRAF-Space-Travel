@@ -26,7 +26,7 @@ use std::f64::consts::{PI, TAU};
 use std::sync::OnceLock;
 
 use super::Body;
-use crate::math::{DQuat, DVec3, Vec3};
+use crate::math::{DQuat, DVec3, Vec3, smoothstep};
 use crate::render::{GlowLine, Particle};
 
 /// Constantes fisicas en cgs.
@@ -68,7 +68,10 @@ pub const CAROUSEL_TURNS: f64 = 37.4;
 /// Brillo de los haces en el viento y del destello directo.
 pub const BEAM_GAIN: f64 = 1500.0;
 /// Brillo de la bruma del viento alrededor de la estrella.
-pub const HALO_GAIN: f64 = 0.4;
+pub const HALO_GAIN: f64 = 0.2;
+/// Brillo del aura pegada a la estrella (borde celeste, bruma violeta y el
+/// destello de los polos).
+pub const AURA_GAIN: f64 = 1.0;
 pub const GLARE_GAIN: f64 = 8.0;
 /// Voltaje de la descarga en el haz de corriente, en 1e9 V (Beloborodov
 /// 2009: 1e9 a 1e10 V).
@@ -456,34 +459,30 @@ struct LineSet {
 /// que suben hacia el haz) y los arcos grandes del haz de corriente.
 const LINE_SETS: [LineSet; 3] = [
     LineSet { azimuths: 32, feet: 3, from_deg: 16.0, to_deg: 42.0, reach: f64::INFINITY, samples: 56, gain: 1.0 },
-    LineSet { azimuths: 28, feet: 2, from_deg: 3.0, to_deg: 9.0, reach: 9.0, samples: 28, gain: 0.9 },
+    LineSet { azimuths: 20, feet: 2, from_deg: 3.0, to_deg: 9.0, reach: 5.0, samples: 28, gain: 0.45 },
     // (Sus colatitudes salen del casquete del momento.)
-    LineSet { azimuths: 18, feet: 1, from_deg: 0.0, to_deg: 0.0, reach: f64::INFINITY, samples: 72, gain: 0.35 },
+    LineSet { azimuths: 18, feet: 1, from_deg: 0.0, to_deg: 0.0, reach: f64::INFINITY, samples: 72, gain: 0.25 },
 ];
 /// Brillo de las lineas y de la bola de fuego.
-const PLASMA_GAIN: f32 = 0.8;
+const PLASMA_GAIN: f32 = 0.5;
+/// Las chispas que brillan sobre los lobulos: cuantas y que tan fuerte.
+const SPARK_COUNT: usize = 260;
+const SPARK_GAIN: f32 = 1.3;
 const FIREBALL_GAIN: f32 = 150.0;
 /// Particulas de la bola de fuego.
 const FIREBALL_COUNT: usize = 2400;
 
-/// Color del plasma a `r` radios de la estrella: blanco azulado junto a ella
-/// (donde los pares son densos y calientes), azul, violeta y morado afuera.
-fn plasma_tint(r: f32) -> Vec3 {
-    let stops = [
-        (1.0, Vec3::new(1.0, 1.45, 3.2)),
-        (2.0, Vec3::new(0.3, 0.75, 3.0)),
-        (4.5, Vec3::new(0.35, 0.45, 2.6)),
-        (9.0, Vec3::new(0.65, 0.25, 1.9)),
-        (30.0, Vec3::new(0.5, 0.15, 1.1)),
-    ];
-    let mut color = stops[0].1;
-    for w in stops.windows(2) {
-        if r >= w[0].0 {
-            let k = ((r - w[0].0) / (w[1].0 - w[0].0)).min(1.0);
-            color = w[0].1.lerp(w[1].1, k);
-        }
-    }
-    color
+/// Color del plasma a `r` radios de la estrella en una linea de tono `hue`
+/// (0 a 1): blanco azulado junto a ella (donde los pares son densos y
+/// calientes) y, mas afuera, el de la linea: azul electrico, violeta o
+/// magenta.
+fn plasma_tint(r: f32, hue: f32) -> Vec3 {
+    let blue = Vec3::new(0.22, 0.55, 3.0);
+    let violet = Vec3::new(0.85, 0.28, 2.6);
+    let magenta = Vec3::new(1.5, 0.32, 2.2);
+    let own = if hue < 0.55 { blue.lerp(violet, hue / 0.55) } else { violet.lerp(magenta, (hue - 0.55) / 0.45) };
+    let white = Vec3::new(1.1, 1.45, 3.2);
+    white.lerp(own, smoothstep(1.0, 2.0, r))
 }
 
 /// Las lineas de campo de la magnetosfera torcida, como hilos de luz
@@ -506,6 +505,24 @@ pub fn field_lines(out: &mut Vec<GlowLine>, body: &Body, t: f64, flare: Option<f
     // Del marco magnetico (z sobre el eje) al mundo relativo a la camara, en km.
     let to_world = |p: DVec3| -> Vec3 {
         (center + crust.rotate((e1 * p.x + e2 * p.y + m * p.z) * RADIUS)).as_vec3()
+    };
+    // Lo que pasa por delante del disco (visto desde la camara) brilla
+    // menos: si no, los pies de cientos de lineas lo cubren de un velo
+    // blanco y no se ven las grietas. El disco se ve un poco mas grande que
+    // la estrella por la lente.
+    let (to_center, center_distance) = {
+        let c = center.as_vec3();
+        let d = c.length().max(1e-3);
+        (c / d, d)
+    };
+    let disc = RADIUS as f32 * 1.3;
+    let veil = |q: Vec3| -> f32 {
+        let ahead = q.dot(to_center);
+        if ahead <= 0.0 || ahead >= center_distance {
+            return 1.0;
+        }
+        let off = (q - to_center * ahead).length() * (center_distance / ahead);
+        1.0 - 0.75 * smoothstep(disc, disc * 0.8, off)
     };
     // Mientras las lineas estan abiertas se estiran hacia afuera; ahi
     // llevan el plasma de la llamarada y brillan mas, no menos.
@@ -536,10 +553,15 @@ pub fn field_lines(out: &mut Vec<GlowLine>, body: &Body, t: f64, flare: Option<f
                 let flicker = 0.75 + 0.5 * uniform(line ^ (((t * 12.0) as i64) << 20), 0xF11C);
                 let gap = ((phi_f - s.burst_site + PI).rem_euclid(TAU) - PI).abs();
                 let burst = 1.0 + s.burst.min(60.0) * 0.12 * (-(gap / 0.5).powi(2)).exp();
-                // Unas lineas llevan mas plasma que otras.
-                let load = 0.45 + 0.55 * uniform(line, 0xC0DE);
+                // Unas lineas llevan mucho mas plasma que otras: pocas
+                // brillan fuerte y muchas apenas se ven.
+                let load = 0.2 + 1.1 * uniform(line, 0xC0DE).powi(2);
                 let strength = (activity * flicker * burst * load) as f32 * fade * PLASMA_GAIN * set.gain * density;
                 let phase = uniform(line, 0x9A5E);
+                // Su tono (casi todas azules o violeta, unas magenta) y las
+                // hebras: el brillo va y viene a lo largo, corriendo despacio.
+                let hue = uniform(line, 0x4E7).powf(1.3) as f32;
+                let wisp_count = 1.5 + 2.5 * uniform(line, 0x3157);
                 // Las dos mitades de una linea abierta se dibujan por separado.
                 let halves: &[(f64, f64)] = if set.reach.is_finite() { &[(0.0, 0.5), (1.0, 0.5)] } else { &[(0.0, 1.0)] };
                 for &(start, end) in halves {
@@ -564,13 +586,21 @@ pub fn field_lines(out: &mut Vec<GlowLine>, body: &Body, t: f64, flare: Option<f
                             p += shake * (tremor * (r - 1.0) * d as f64);
                         }
                         let packets = 0.65 + 0.35 * ((TAU * (3.0 * d as f64 - 0.6 * t + phase)).sin() as f32).powi(3);
-                        let near = 0.25 + 1.4 * (-(r as f32 - 1.0) / 1.6).exp();
+                        // Mas brillo a un par de radios que pegado a la superficie: asi
+                        // las lineas que pasan por delante no lavan el disco.
+                        let near = 0.35 + 0.8 * (-((r as f32 - 2.0) / 1.4).powi(2)).exp();
                         // Las abiertas se apagan al alejarse.
                         let open_fade = if set.reach.is_finite() { 1.0 - (r / set.reach) as f32 } else { 1.0 };
                         // Al reconectarse, la cima de cada linea se enciende.
                         let cusp = 1.0 + 4.0 * s.reconnect as f32 * d.powi(6);
-                        points.push(to_world(p));
-                        colors.push(plasma_tint(r as f32) * (near * packets * strength * open_fade * cusp));
+                        let wave = (0.5 + 0.5 * (TAU * (along * wisp_count + phase * 3.0) + 0.25 * t).sin()) as f32;
+                        let wisp = 0.3 + 0.7 * wave * wave;
+                        // Lejos de la estrella se deshacen en la bruma: los
+                        // lobulos quedan cerca y no cruzan toda la pantalla.
+                        let far = (-((r as f32 - 2.5).max(0.0)) / 3.0).exp();
+                        let q = to_world(p);
+                        points.push(q);
+                        colors.push(plasma_tint(r as f32, hue) * (near * packets * strength * open_fade * cusp * wisp * far * veil(q)));
                     }
                     let n = points.len();
                     for k in 1..n {
@@ -586,6 +616,45 @@ pub fn field_lines(out: &mut Vec<GlowLine>, body: &Body, t: f64, flare: Option<f
                 }
             }
         }
+    }
+}
+
+/// Chispas que se encienden y se apagan sobre las lineas cerradas y van
+/// subiendo despacio por ellas, como polvo de plasma: son de adorno (como en
+/// las ilustraciones de magnetares), en las mismas lineas que se dibujan.
+pub fn sparks(out: &mut Vec<Particle>, body: &Body, t: f64, flare: Option<f64>, camera: DVec3) {
+    let center = body.position(t) - camera;
+    // De lejos la estrella es un punto y no se verian.
+    if center.length() > RADIUS * 150.0 {
+        return;
+    }
+    let s = state(t, flare);
+    let crust = crust_at(body, t, flare);
+    let (m, e1, e2) = magnetic_frame();
+    let set = &LINE_SETS[0];
+    for k in 0..SPARK_COUNT {
+        let id = ((k as i64) << 12) ^ 0x5BA4;
+        let i = ((uniform(id, 0x11) * set.azimuths as f64) as usize).min(set.azimuths - 1);
+        let j = ((uniform(id, 0x22) * set.feet as f64) as usize).min(set.feet - 1);
+        // La misma linea que dibuja `field_lines` (las de la primera familia).
+        let line = ((i * set.feet + j) as i64) << 8;
+        let phi_f = TAU * (i as f64 + 0.6 * uniform(line, 0xA21)) / set.azimuths as f64;
+        let spread = (j as f64 + uniform(line, 0x7E7)) / set.feet as f64;
+        let theta_f = (set.from_deg + (set.to_deg - set.from_deg) * spread).to_radians();
+        let along = (uniform(id, 0x33) + t * (0.004 + 0.012 * uniform(id, 0x44))).fract();
+        let mut p = super::magnetosphere::line_point(s.shape, theta_f, phi_f, along);
+        let r = p.length();
+        p = p * ((1.0 + (r - 1.0) * s.inflate) / r);
+        let world = center + crust.rotate((e1 * p.x + e2 * p.y + m * p.z) * RADIUS);
+        let twinkle = (0.5 + 0.5 * (TAU * (t * (0.4 + 1.1 * uniform(id, 0x55)) + uniform(id, 0x66))).sin()).powi(6) as f32;
+        let far = (-((r as f32 - 2.0).max(0.0)) / 3.0).exp();
+        let tint = if uniform(id, 0x77) < 0.6 { Vec3::new(0.7, 0.95, 2.2) } else { Vec3::new(1.4, 0.7, 2.2) };
+        out.push(Particle {
+            pos: world.as_vec3(),
+            // Unos dos pixeles a cualquier distancia.
+            radius: (world.length() * 0.004) as f32,
+            color: tint * (SPARK_GAIN * twinkle * far),
+        });
     }
 }
 
