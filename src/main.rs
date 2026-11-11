@@ -286,14 +286,17 @@ fn run_window(options: &Options) -> Result<(), String> {
     let mut texture = rl
         .load_texture_from_image(&thread, &image)
         .map_err(|e| format!("no se pudo crear la textura: {e:?}"))?;
-    let fonts = hud::Fonts::load(&mut rl, &thread, 1.0);
+    // Las letras del HUD, a la escala con que se ve la imagen (se vuelven a
+    // cargar si cambia: F11), y lo que el HUD hornea en CPU.
+    let first_fit = hud::Fit::new((options.width, options.height), (rl.get_screen_width(), rl.get_screen_height()));
+    let mut fonts = hud::Fonts::load(&mut rl, &thread, hud::ui_scale(options.height, first_fit));
+    let art = hud::Art::new();
     // Pantalla completa (F11): la ventana sin bordes del tamano del monitor,
     // sin cambiarle la resolucion. El render no cambia de tamano (el CPU
     // hace lo mismo): la textura se estira con filtro bilineal al mostrarla
-    // y el texto de los minijuegos usa letras cargadas a esa escala. El
-    // video de muestra graba la ventana, asi que ahi no se usa.
+    // y el HUD crece con ella. El video de muestra graba la ventana, asi
+    // que ahi no se usa.
     let mut smooth = false;
-    let mut game_fonts: Option<hud::Fonts> = None;
     if options.fullscreen && reel.is_none() {
         rl.toggle_borderless_windowed();
     }
@@ -315,6 +318,7 @@ fn run_window(options: &Options) -> Result<(), String> {
     // dispositivo de audio, el juego sigue sin sonido.
     // El video genera su sonido aparte: sin dispositivo, no suena dos veces.
     let audio_device = if reel.is_none() { RaylibAudio::init_audio_device().ok() } else { None };
+
     let mut stream = audio_device.as_ref().map(|device| {
         device.set_audio_stream_buffer_size_default(AUDIO_BLOCK as i32);
         let stream = device.new_audio_stream(audio::SAMPLE_RATE, 32, 1);
@@ -369,6 +373,12 @@ fn run_window(options: &Options) -> Result<(), String> {
             let filter = if smooth { TextureFilter::TEXTURE_FILTER_BILINEAR } else { TextureFilter::TEXTURE_FILTER_POINT };
             texture.set_texture_filter(&thread, filter);
         }
+        let scale = hud::ui_scale(options.height, fit);
+        if scale != fonts.scale() {
+            fonts = hud::Fonts::load(&mut rl, &thread, scale);
+        }
+        art.trim();
+        let ui = hud::Ui { fonts: &fonts, art: &art, thread: &thread, fit };
         if let Some(r) = reel.as_mut() {
             let Some(action) = r.advance() else { break };
             use muestra::Action;
@@ -479,19 +489,10 @@ fn run_window(options: &Options) -> Result<(), String> {
                 .map_err(|e| format!("no se pudo actualizar la textura: {e:?}"))?;
             let overlay = game.overlay();
             let done = game.done();
-            // Estirado, su texto va con letras de ese tamano (se cargan una
-            // vez por escala).
-            if fit.scale != 1.0 && game_fonts.as_ref().is_none_or(|f| f.scale() != fit.scale) {
-                game_fonts = Some(hud::Fonts::load(&mut rl, &thread, fit.scale));
-            }
-            let letters = match &game_fonts {
-                Some(f) if fit.scale != 1.0 => f,
-                _ => &fonts,
-            };
             let mut d = rl.begin_drawing(&thread);
             d.clear_background(Color::BLACK);
             hud::frame(&mut d, &texture, fit);
-            hud::minigame(&mut d, letters, &overlay, fit);
+            hud::minigame(&mut d, &ui, &overlay);
             if let Some(r) = reel.as_mut() {
                 r.grab()?;
             }
@@ -609,7 +610,7 @@ fn run_window(options: &Options) -> Result<(), String> {
             if !captured && rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
                 let mouse = rl.get_mouse_position();
                 let screen = (rl.get_screen_width(), rl.get_screen_height());
-                match hud::player_hit(screen, (mouse.x, mouse.y)) {
+                match hud::player_hit(screen, fonts.scale(), (mouse.x, mouse.y)) {
                     Some(hud::PlayerHit::Previous) => player.previous(),
                     Some(hud::PlayerHit::Toggle) => player.toggle(),
                     Some(hud::PlayerHit::Next) => player.next(),
@@ -750,7 +751,7 @@ fn run_window(options: &Options) -> Result<(), String> {
         d.clear_background(Color::BLACK);
         hud::frame(&mut d, &texture, fit);
         let view = chapin.then(|| player.view());
-        hud::draw(&mut d, &app, fps, &hud, &tweaks, &fonts, view.as_ref(), fit);
+        hud::draw(&mut d, &ui, &app, fps, &hud, &tweaks, view.as_ref());
         if let Some(r) = reel.as_mut() {
             r.grab()?;
         }
@@ -1314,3 +1315,4 @@ fn music_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("musica")
     }
 }
+

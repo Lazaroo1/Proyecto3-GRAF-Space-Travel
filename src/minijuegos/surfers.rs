@@ -41,7 +41,7 @@ use super::personaje::{self, RUN_FRAMES};
 use super::sonido;
 use super::posproceso::{self, Posproceso};
 use std::sync::Arc;
-use super::{Align, Font, Keys, Minigame, Overlay, Records};
+use super::{Align, Font, Keys, Minigame, Overlay, Paint, Records};
 use crate::audio::SAMPLE_RATE;
 use crate::math::{Vec3, fast_exp, hash_u32, smoothstep};
 use crate::parallel;
@@ -3308,18 +3308,17 @@ impl Minigame for TalegaSurfers {
         match self.screen {
             Screen::Menu => {
                 // La bienvenida: Meyer a la izquierda (se dibuja con el
-                // frame) y el panel a la derecha.
-                let (pw, ph) = (600.0 * s, 470.0 * s);
-                let (px, py) = (w - pw - 40.0 * s, 60.0 * s);
+                // frame) y el cartel a la derecha.
+                let (pw, ph) = (600.0 * s, 500.0 * s);
+                let (px, py) = (w - pw - 40.0 * s, 56.0 * s);
                 let cx = px + pw * 0.5;
-                o.panel(px, py, pw, ph);
-                o.text("¡Bienvenido a", cx, py + 16.0 * s, Font::Heading, dim, Align::Center);
-                o.text("Talega Surfers!", cx, py + 46.0 * s, Font::Big(52.0 * s), accent, Align::Center);
-                o.text("Don Meyer te saluda. Antigua Guatemala, la calle del Arco,", cx, py + 112.0 * s, Font::Body, dim, Align::Center);
-                o.text("y el Fuego explotando atrás.", cx, py + 136.0 * s, Font::Body, dim, Align::Center);
+                o.card(px, py, pw, ph);
+                o.text("¡Bienvenido a", cx, py + 44.0 * s, Font::Heading, dim, Align::Center);
+                o.sign("Talega Surfers!", cx, py + 66.0 * s, 64.0 * s, Paint::Sun, Align::Center);
+                o.text("Don Meyer te saluda en la calle del Arco, en Antigua,", cx, py + 146.0 * s, Font::Body, dim, Align::Center);
+                o.text("con el Fuego explotando atrás.", cx, py + 169.0 * s, Font::Body, dim, Align::Center);
+                o.keys("[←][→] carril   [↑] saltar   [↓] rodar   [H] el claxon de don Meyer", cx, py + 208.0 * s, Align::Center);
                 let lines = [
-                    "← →: carril   ·   ↑: saltar   ·   ↓: rodar",
-                    "H: el claxon de don Meyer",
                     "Subite por las rampas y corré por los techos de las camionetas",
                     "Las que vienen de frente no perdonan; las carretas se saltan",
                     "Los lazos de papel picado se pasan rodando",
@@ -3327,20 +3326,22 @@ impl Minigame for TalegaSurfers {
                     "Mirá la sombra de las bombas del Fuego antes de que caigan",
                 ];
                 for (i, line) in lines.iter().enumerate() {
-                    o.text(*line, cx, py + 178.0 * s + i as f32 * 30.0 * s, Font::Body, cream, Align::Center);
+                    o.text(*line, cx, py + 250.0 * s + i as f32 * 28.0 * s, Font::Body, cream, Align::Center);
                 }
-                let best = match self.best {
-                    Some(b) => format!("Récord: {b} puntos"),
-                    None => "Todavía no hay récord".to_string(),
-                };
-                o.text(best, cx, py + ph - 66.0 * s, Font::Bold, accent, Align::Center);
-                o.text("Enter: correr   ·   Esc: salir", cx, py + ph - 34.0 * s, Font::Small, cream, Align::Center);
+                match self.best {
+                    Some(b) => {
+                        o.text("Tu récord", cx, py + ph - 100.0 * s, Font::Small, dim, Align::Center);
+                        o.sign(format!("{b} puntos"), cx, py + ph - 86.0 * s, 34.0 * s, Paint::Cream, Align::Center);
+                    }
+                    None => o.text("Todavía no hay récord: estrenalo", cx, py + ph - 84.0 * s, Font::Bold, accent, Align::Center),
+                }
+                o.keys("[Enter] correr   [Esc] salir", cx, py + ph - 40.0 * s, Align::Center);
             }
             Screen::Running | Screen::Over => {
-                o.panel(16.0 * s, 16.0 * s, 210.0 * s, 92.0 * s);
-                o.text(format!("{} m", self.run.z as i64), 32.0 * s, 24.0 * s, Font::Heading, cream, Align::Left);
-                o.text(format!("{} lenes", self.lenes), 210.0 * s, 26.0 * s, Font::Bold, accent, Align::Right);
-                o.text(format!("{} puntos", self.score()), 32.0 * s, 62.0 * s, Font::Body, dim, Align::Left);
+                o.panel(16.0 * s, 16.0 * s, 230.0 * s, 104.0 * s);
+                o.text(format!("{} m", self.run.z as i64), 34.0 * s, 36.0 * s, Font::Big(34.0 * s), cream, Align::Left);
+                o.text(format!("{} lenes", self.lenes), 230.0 * s, 44.0 * s, Font::Bold, accent, Align::Right);
+                o.text(format!("{} puntos", self.score()), 34.0 * s, 82.0 * s, Font::Body, dim, Align::Left);
                 if self.chase > 0.0 && self.screen == Screen::Running {
                     o.text("¡Te persiguen los cucuruchos!", w - 20.0 * s, 24.0 * s, Font::Heading, [220, 160, 255, 255], Align::Right);
                     o.bar(w - 260.0 * s, 58.0 * s, 240.0 * s, 8.0 * s, self.chase / CHASE, [170, 90, 220, 255], false);
@@ -3354,17 +3355,15 @@ impl Minigame for TalegaSurfers {
             }
         }
         if self.screen == Screen::Over {
-            let (pw, ph) = (560.0 * s, 300.0 * s);
-            let (px, py) = ((w - pw) * 0.5, 150.0 * s);
-            o.panel(px, py, pw, ph);
-            o.text(self.reason, w * 0.5, py + 18.0 * s, Font::Big(36.0 * s), accent, Align::Center);
-            let lines = [format!("Corriste {} m", self.run.z as i64), format!("Lenes: {}", self.lenes), format!("Puntos: {}", self.score())];
-            for (i, line) in lines.iter().enumerate() {
-                o.text(line.clone(), w * 0.5, py + 86.0 * s + i as f32 * 34.0 * s, if i == 2 { Font::Heading } else { Font::Body }, if i == 2 { accent } else { cream }, Align::Center);
-            }
-            let best = self.best.map_or(String::new(), |b| format!("Récord: {b}"));
-            o.text(best, w * 0.5, py + ph - 66.0 * s, Font::Bold, dim, Align::Center);
-            o.text("Enter: otra vez   ·   Esc: al menú", w * 0.5, py + ph - 34.0 * s, Font::Small, cream, Align::Center);
+            let (pw, ph) = (560.0 * s, 344.0 * s);
+            let (px, py) = ((w - pw) * 0.5, 140.0 * s);
+            o.card(px, py, pw, ph);
+            o.sign(self.reason, w * 0.5, py + 44.0 * s, 42.0 * s, Paint::Rose, Align::Center);
+            o.text(format!("Corriste {} m   ·   {} lenes", self.run.z as i64, self.lenes), w * 0.5, py + 112.0 * s, Font::Body, cream, Align::Center);
+            o.sign(format!("{} puntos", self.score()), w * 0.5, py + 142.0 * s, 52.0 * s, Paint::Sun, Align::Center);
+            let best = self.best.map_or(String::new(), |b| if b <= self.score() && self.score() > 0 { "¡Récord nuevo!".to_string() } else { format!("Tu récord: {b} puntos") });
+            o.text(best, w * 0.5, py + ph - 88.0 * s, Font::Bold, accent, Align::Center);
+            o.keys("[Enter] otra vez   [Esc] al menú", w * 0.5, py + ph - 46.0 * s, Align::Center);
         }
         o
     }

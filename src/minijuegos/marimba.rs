@@ -34,7 +34,7 @@
 use std::f32::consts::{PI, TAU};
 
 use super::lienzo::{self, cover, diamond, halo, over, round_box};
-use super::{Align, Font, Keys, Minigame, Overlay, Records};
+use super::{Align, Font, Keys, Minigame, Overlay, Paint, Records};
 use crate::audio::SAMPLE_RATE;
 use crate::marimba::{self as son, Instrument, Mallet, Role};
 use crate::math::{Perlin, Vec3, hash_u32, smoothstep};
@@ -1099,31 +1099,30 @@ impl Minigame for MarimbaTiles {
 
         match self.screen {
             Screen::Menu => {
-                let pw = 620.0 * s;
-                let ph = 404.0 * s;
-                let (px, py) = ((w - pw) * 0.5, 40.0 * s);
-                o.panel(px, py, pw, ph);
-                o.text("La marimba de la Luna", w * 0.5, py + 14.0 * s, Font::Big(52.0 * s), accent, Align::Center);
-                o.text("Luna de Xelajú  ·  el son de la marimba procedural, en tres vueltas", w * 0.5, py + 80.0 * s, Font::Body, dim, Align::Center);
+                let pw = 650.0 * s;
+                let ph = 446.0 * s;
+                let (px, py) = ((w - pw) * 0.5, 30.0 * s);
+                o.card(px, py, pw, ph);
+                o.sign("La marimba de la Luna", w * 0.5, py + 42.0 * s, 54.0 * s, Paint::Sun, Align::Center);
+                o.text("Luna de Xelajú  ·  el son de la marimba procedural, en tres vueltas", w * 0.5, py + 110.0 * s, Font::Body, dim, Align::Center);
                 for (i, level) in Level::ALL.into_iter().enumerate() {
-                    let y = py + 120.0 * s + i as f32 * 76.0 * s;
+                    let y = py + 148.0 * s + i as f32 * 70.0 * s;
                     let chosen = i == self.choice;
                     if chosen {
-                        o.bar(px + 18.0 * s, y - 6.0 * s, pw - 36.0 * s, 68.0 * s, 1.0, [255, 204, 120, 34], false);
+                        o.bar(px + 22.0 * s, y - 6.0 * s, pw - 44.0 * s, 64.0 * s, 1.0, [250, 200, 70, 40], false);
                     }
                     let color = if chosen { accent } else { cream };
-                    o.text(if chosen { "»" } else { " " }, px + 30.0 * s, y, Font::Heading, accent, Align::Left);
-                    o.text(level.name(), px + 54.0 * s, y, Font::Heading, color, Align::Left);
+                    o.text(if chosen { "»" } else { " " }, px + 36.0 * s, y, Font::Heading, accent, Align::Left);
+                    o.text(level.name(), px + 60.0 * s, y, Font::Heading, color, Align::Left);
                     let record = match self.records.get(level.record()) {
                         Some(r) => format!("récord {}", thousands(r)),
                         None => "sin récord".to_string(),
                     };
-                    o.text(record, px + pw - 30.0 * s, y + 4.0 * s, Font::Small, dim, Align::Right);
-                    o.text(level.blurb(), px + 54.0 * s, y + 31.0 * s, Font::Body, dim, Align::Left);
+                    o.text(record, px + pw - 36.0 * s, y + 4.0 * s, Font::Small, if chosen { accent } else { dim }, Align::Right);
+                    o.text(level.blurb(), px + 60.0 * s, y + 30.0 * s, Font::Body, dim, Align::Left);
                 }
-                let offset = format!("Ajuste de tiempo (← →): {:+} ms   ·   subilo si las notas te suenan tarde", self.offset_ms);
-                o.text(offset, w * 0.5, py + ph - 52.0 * s, Font::Small, dim, Align::Center);
-                o.text("D F J K: las teclas (probalas)   ·   ↑ ↓: elegir   ·   Enter: tocar   ·   Esc: salir", w * 0.5, py + ph - 28.0 * s, Font::Small, cream, Align::Center);
+                o.keys(format!("[←][→] ajuste de tiempo: {:+} ms (subilo si las notas te suenan tarde)", self.offset_ms), w * 0.5, py + ph - 74.0 * s, Align::Center);
+                o.keys("[D][F][J][K] las teclas (probalas)   [↑][↓] elegir   [Enter] tocar   [Esc] salir", w * 0.5, py + ph - 42.0 * s, Align::Center);
             }
             Screen::Playing | Screen::Results => self.playing_overlay(&mut o),
         }
@@ -1149,25 +1148,25 @@ impl MarimbaTiles {
         let Some(song) = &self.song else { return };
 
         // El puntaje y la racha, arriba a la izquierda.
-        o.panel(16.0 * s, 16.0 * s, 250.0 * s, 112.0 * s);
-        o.text("Puntaje", 32.0 * s, 26.0 * s, Font::Small, dim, Align::Left);
-        o.text(thousands(self.stats.score), 32.0 * s, 42.0 * s, Font::Big(46.0 * s), cream, Align::Left);
+        o.panel(16.0 * s, 16.0 * s, 250.0 * s, 124.0 * s);
+        o.text("Puntaje", 34.0 * s, 38.0 * s, Font::Small, dim, Align::Left);
+        o.text(thousands(self.stats.score), 34.0 * s, 52.0 * s, Font::Big(46.0 * s), cream, Align::Left);
         let combo = if self.stats.combo > 0 {
             format!("Racha {}   ×{}", self.stats.combo, self.stats.multiplier())
         } else {
             "Racha 0".to_string()
         };
-        o.text(combo, 32.0 * s, 96.0 * s, Font::Bold, accent, Align::Left);
+        o.text(combo, 34.0 * s, 106.0 * s, Font::Bold, accent, Align::Left);
 
         // La cancion, la vuelta y cuanto falta, arriba a la derecha.
         let lap = song.laps.iter().take(3).filter(|&&t| self.clock >= t).count().max(1);
-        let (pw, px) = (300.0 * s, w - 316.0 * s);
-        o.panel(px, 16.0 * s, pw, 92.0 * s);
-        o.text("Son de la Luna", px + 16.0 * s, 24.0 * s, Font::Heading, accent, Align::Left);
+        let (pw, px) = (310.0 * s, w - 326.0 * s);
+        o.panel(px, 16.0 * s, pw, 106.0 * s);
+        o.text("Son de la Luna", px + 18.0 * s, 36.0 * s, Font::Heading, accent, Align::Left);
         let bpm = son::BPM * LAPS[lap - 1];
-        o.text(format!("{}   ·   vuelta {lap} de 3   ·   {bpm:.0} por minuto", self.level.name().split(" · ").next().unwrap_or("")), px + 16.0 * s, 56.0 * s, Font::Small, dim, Align::Left);
+        o.text(format!("{}   ·   vuelta {lap} de 3   ·   {bpm:.0} por minuto", self.level.name().split(" · ").next().unwrap_or("")), px + 18.0 * s, 68.0 * s, Font::Small, dim, Align::Left);
         let progress = ((self.clock - song.laps[0]) / (song.laps[3] - song.laps[0])).clamp(0.0, 1.0) as f32;
-        o.bar(px + 16.0 * s, 84.0 * s, pw - 32.0 * s, 6.0 * s, progress, accent, false);
+        o.bar(px + 18.0 * s, 96.0 * s, pw - 36.0 * s, 6.0 * s, progress, accent, false);
 
         // El animo del publico, a la izquierda de la pista.
         let cheer = self.stats.cheer.clamp(0.0, 1.0) as f32;
@@ -1213,7 +1212,7 @@ impl MarimbaTiles {
             o.text(text, st.cx, st.height as f32 * 0.3, Font::Big(40.0 * s), color, Align::Center);
         }
         if self.screen == Screen::Playing {
-            o.text("Esc: dejar de tocar", w - 16.0 * s, st.height as f32 - 30.0 * s, Font::Small, [200, 190, 176, 150], Align::Right);
+            o.keys("[Esc] dejar de tocar", w - 16.0 * s, st.height as f32 - 34.0 * s, Align::Right);
         }
     }
 
@@ -1225,12 +1224,12 @@ impl MarimbaTiles {
         let dim = [200, 190, 176, 210];
         let accent = [255, 204, 120, 255];
         let stats = &self.stats;
-        let (pw, ph) = (520.0 * s, 330.0 * s);
-        let (px, py) = ((w - pw) * 0.5, 120.0 * s);
-        o.panel(px, py, pw, ph);
-        let headline = if stats.failed { [255, 130, 100, 255] } else { accent };
-        o.text(verdict(stats), w * 0.5, py + 16.0 * s, Font::Big(50.0 * s), headline, Align::Center);
-        o.text(format!("{}   ·   {}", self.level.name(), thousands(stats.score)), w * 0.5, py + 86.0 * s, Font::Heading, cream, Align::Center);
+        let (pw, ph) = (560.0 * s, 384.0 * s);
+        let (px, py) = ((w - pw) * 0.5, 100.0 * s);
+        o.card(px, py, pw, ph);
+        o.sign(verdict(stats), w * 0.5, py + 42.0 * s, 48.0 * s, if stats.failed { Paint::Rose } else { Paint::Jade }, Align::Center);
+        o.text(self.level.name(), w * 0.5, py + 108.0 * s, Font::Body, dim, Align::Center);
+        o.sign(thousands(stats.score), w * 0.5, py + 128.0 * s, 56.0 * s, Paint::Cream, Align::Center);
         let record = if self.new_record {
             "¡Récord nuevo!".to_string()
         } else if stats.failed {
@@ -1241,7 +1240,7 @@ impl MarimbaTiles {
                 None => String::new(),
             }
         };
-        o.text(record, w * 0.5, py + 122.0 * s, Font::Bold, if self.new_record { accent } else { dim }, Align::Center);
+        o.text(record, w * 0.5, py + 200.0 * s, Font::Bold, if self.new_record { accent } else { dim }, Align::Center);
         let [p, g, k, m] = stats.counts;
         let lines = [
             format!("Precisión {:.0} %   ·   racha máxima {}", stats.accuracy() * 100.0, stats.best_combo),
@@ -1249,9 +1248,9 @@ impl MarimbaTiles {
             if self.level == Level::Redoble { format!("Golpes de redoble {}", stats.rolls) } else { String::new() },
         ];
         for (i, line) in lines.iter().enumerate() {
-            o.text(line.as_str(), w * 0.5, py + 166.0 * s + i as f32 * 30.0 * s, Font::Body, cream, Align::Center);
+            o.text(line.as_str(), w * 0.5, py + 234.0 * s + i as f32 * 28.0 * s, Font::Body, cream, Align::Center);
         }
-        o.text("Enter: otra vez   ·   Esc: elegir otra parte", w * 0.5, py + ph - 36.0 * s, Font::Small, dim, Align::Center);
+        o.keys("[Enter] otra vez   [Esc] elegir otra parte", w * 0.5, py + ph - 44.0 * s, Align::Center);
     }
 
     /// Lo que se necesita para dibujar este frame (solo lectura, para las

@@ -21,7 +21,7 @@ pub const WIPE: f32 = 1.6;
 /// Ancho de la franja del borde, en fracciones de media diagonal.
 const BAND: f32 = 0.26;
 /// Cuadros de motivos alrededor de la franja.
-const CELLS: f32 = 20.0;
+pub(crate) const CELLS: f32 = 20.0;
 /// Cuanto de la franja ocupa cada orilla de picos.
 pub(crate) const EDGE: f32 = 0.17;
 
