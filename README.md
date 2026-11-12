@@ -435,6 +435,10 @@ dibujos (malla + matriz + material)
 - Todos los hilos redondean a cero los floats desnormalizados (FTZ/DAZ): un
   `exp` muy negativo deja valores tan chicos que cada operación con ellos
   cuesta cientos de ciclos.
+- Las capturas, las fotos (P) y las imágenes de `media/` se guardan como PNG
+  comprimidos con un deflate propio ([render/zlib.rs](src/render/zlib.rs):
+  LZ77 con cadenas de hash y Huffman dinámico; y filtros de PNG por fila):
+  una captura de 1280x720 pesa ~1.1 MB en vez de 2.7.
 - FXAA en CPU suaviza las diagonales después del tonemap y, en la misma
   pasada, donde no hay bordes se **afila** la imagen (la idea del CAS de
   AMD: un peso negativo con la cruz de vecinos que se afloja donde ya hay
@@ -486,9 +490,11 @@ Para reexportar la nave con Blender 5.2:
 
 El exportador también escribe `ship-materials.txt` y sus seis mapas RGB8.
 Las imágenes se leen, filtran y muestrean en Rust; no se usan texturas 3D
-ni shaders de GPU. El archivo `.rgb` contiene ancho y alto `u32` LE,
-seguidos por tres bytes RGB por pixel. Solo los mapas de color se decodifican
-desde sRGB; normal, rugosidad y AO permanecen lineales.
+ni shaders de GPU. Las imágenes van en PNG RGB de 8 bits (sin pérdida), que
+se leen con el lector propio ([render/png.rs](src/render/png.rs) y el inflate
+de [render/zlib.rs](src/render/zlib.rs)), todas a la vez, cada una en su
+hilo. Solo los mapas de color se decodifican desde sRGB; normal, rugosidad y
+AO permanecen lineales.
 
 ## Integrantes y contribuciones
 

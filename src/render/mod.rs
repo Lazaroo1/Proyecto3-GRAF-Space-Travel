@@ -30,6 +30,7 @@ mod glow;
 mod particles;
 mod pipeline;
 pub mod png;
+pub mod zlib;
 mod post;
 mod raster;
 mod reflections;
