@@ -434,12 +434,14 @@ fn run_window(options: &Options) -> Result<(), String> {
             hud.age += dt;
             let keys = if reel.is_some() { game.demo_input(dt as f64) } else { read_game_keys(&rl) };
             game.update(dt as f64, &keys);
+            // En el video, el sonido del juego de este frame (se manda abajo,
+            // con la marimba si le toca).
+            let mut reel_samples = None;
             match game_stream.as_mut() {
                 _ if reel.is_some() => {
-                    let r = reel.as_mut().unwrap();
-                    let mut samples = vec![0.0f32; r.samples()];
+                    let mut samples = vec![0.0f32; reel.as_ref().unwrap().samples()];
                     game.audio(&mut samples);
-                    r.push_audio(&samples);
+                    reel_samples = Some(samples);
                 }
                 Some(stream) => {
                     while stream.is_processed() {
@@ -474,14 +476,27 @@ fn run_window(options: &Options) -> Result<(), String> {
             }
             player.update(dt);
             let marimba = music && player.marimba();
+            let master = if marimba && !app.muted { 0.8 } else { 0.0 };
+            let level = if marimba { 0.55 } else { 0.0 };
             if let Some(stream) = stream.as_mut() {
-                let master = if marimba && !app.muted { 0.8 } else { 0.0 };
-                let level = if marimba { 0.55 } else { 0.0 };
                 synth.set(audio::AudioParams { master, marimba: level, ..audio::AudioParams::default() });
                 while stream.is_processed() {
                     synth.fill(&mut block);
                     let _ = stream.update(&block);
                 }
+            }
+            // En el video no hay canciones (no hay dispositivo de audio): en
+            // la carrera suena la marimba, como cuando le toca en el juego.
+            if let (Some(r), Some(mut samples)) = (reel.as_mut(), reel_samples) {
+                if marimba {
+                    synth.set(audio::AudioParams { master, marimba: level, ..audio::AudioParams::default() });
+                    let mut music = vec![0.0f32; samples.len()];
+                    synth.fill(&mut music);
+                    for (s, m) in samples.iter_mut().zip(&music) {
+                        *s += m;
+                    }
+                }
+                r.push_audio(&samples);
             }
             game.draw(&mut game_frame);
             texture

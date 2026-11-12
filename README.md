@@ -153,7 +153,7 @@ un cartel oscuro con **esquinas de corchete** (como el HUD del vuelo), su
 nombre en un **rótulo pintado** como los de las camionetas y las teclas. Mientras se juega, el mundo se queda quieto:
 la última imagen del render se congela de fondo, difuminada, y el juego se
 dibuja encima en CPU como todo lo demás, mucho más rápido que el 3D del
-sistema (de 3 a 13 ms por frame según el juego).
+sistema (de 3 a 15 ms por frame según el juego).
 
 | | |
 | --- | --- |
@@ -165,19 +165,22 @@ sistema (de 3 a 13 ms por frame según el juego).
 
 ## Video
 
-**[El video de muestra](media/muestra.mp4)** (4 min 12 s, con sonido): la
-ventana del juego tal cual, con su HUD, manejada por un guion
-(`--muestra`). Pasa con **N** por cada lugar de OCASO (el claro de Jardín,
-los géiseres de Pira, el nido de Argos, el espejo de Párpado y Faro, con su
-gran llamarada) con el crucero rodeando el planeta; el final de la estrella
-(el estertor, el colapso, la onda gravitacional, Gargantúa comiéndose a Pira
-y El Ojo); la **V** a la versión chapina, y otra vez **N** por cada lugar
-(Antigua, Tikal, Panajachel, San Andrés Xecul, El Reformador, Semuc, la
-Luna de Xelajú y El Periférico), abriendo con **Enter** y jugando solos los
-cuatro minijuegos: Talega Surfers, los shucos, la marimba y la carrera. El
-tiempo avanza fijo (1/30 s por frame), así que el video va en tiempo real
-aunque cada frame se tarde lo suyo; el sonido es el que genera el juego (el
-sintetizador y el de los minijuegos; las canciones del reproductor no).
+**[El video de muestra](media/muestra.mp4)** (4 min 18 s, con sonido): la
+ventana del juego tal cual, con su HUD de piloto, manejada por un guion
+(`--muestra`). Empieza con la bienvenida de OCASO y pasa con **N** por cada
+lugar (el claro de Jardín, los géiseres de Pira, el nido de Argos, el espejo
+de Párpado y Faro, con su gran llamarada entera: la torsión, el pico, la
+onda de choque y las líneas que se reconectan) con el crucero rodeando el
+planeta; sigue el final de la estrella (el estertor, el colapso, la onda
+gravitacional, Gargantúa comiéndose a Pira y El Ojo); la **V** a la versión
+chapina, con la cortina de la faja y GUATEMALA, y otra vez **N** por cada
+lugar (Antigua, Tikal, Panajachel, San Andrés Xecul, El Reformador, Semuc,
+la Luna de Xelajú y El Periférico), abriendo con **Enter** y jugando solos
+los cuatro minijuegos: Talega Surfers, los shucos, la marimba y la carrera.
+El tiempo avanza fijo (1/30 s por frame), así que el video va en tiempo real
+aunque cada frame se tarde lo suyo. El sonido es el que genera el juego: el
+sintetizador, el de los minijuegos y, en la versión chapina, la marimba
+procedural (las canciones de `musica/` no se graban).
 
 Y dos recorridos continuos, uno por versión, con todo lo que pide el
 requisito 5: **vuelo espacial, acercamiento, una vuelta completa al planeta
@@ -216,8 +219,9 @@ cargo run --release
 
 En Windows también se puede abrir `Jugar_OCASO.cmd` (o `Jugar_Marimba.cmd`,
 `Jugar_Carrera.cmd`, `Jugar_Shucos.cmd` y `Jugar_Surfers.cmd`, que empiezan
-en un minijuego): usa `ocaso.exe` si está a la par y si no, compila con
-Cargo. **F11** pone la pantalla completa: el render sigue a su resolución
+en un minijuego, y `Ver_Gargantua.cmd` y `Ver_Jardin.cmd`, que empiezan en
+El Ojo y sobre la superficie de Jardín): usa `ocaso.exe` si está a la par y
+si no, compila con Cargo. **F11** pone la pantalla completa: el render sigue a su resolución
 (el CPU hace el mismo trabajo, así que los FPS no cambian) y la imagen se
 estira al mostrarla; el HUD crece con ella y sus letras se cargan a ese
 tamaño, así que se ve nítido.
@@ -459,7 +463,13 @@ dibujos (malla + matriz + material)
 | [src/terrain](src/terrain) | Cubo-esfera con quadtree, LOD, faldones y las funciones de altura de cada planeta |
 | [src/scene](src/scene) | Cuerpos celestes, ciclo, la física de Faro y su magnetosfera, objetos de la superficie, física de la nave, trayectoria, partículas, cámara y lector OBJ |
 | [src/math](src/math) | Vectores, matrices, cuaterniones, ruido, cuerpo negro, relatividad y las tablas de geodésicas (Gargantúa y Faro) |
-| [src/audio.rs](src/audio.rs) | Sintetizador del sonido |
+| [src/gargantua_p2](src/gargantua_p2) | El gas volumétrico de Gargantúa traído del Proyecto 2 |
+| [src/chapin](src/chapin) | La versión chapina: el relieve, los shaders, los objetos y los lugares de cada cuerpo, Kinich Ajaw y la columna de ceniza del Fuego |
+| [src/minijuegos](src/minijuegos) | Los cuatro minijuegos, su marco común, el horneado de las naves como sprites, el raster de las mallas cercanas y el posproceso |
+| [src/hud](src/hud) | El HUD de piloto, la ayuda, los paneles y la bienvenida horneada en CPU (las letras con su distancia con signo) |
+| [src/app.rs](src/app.rs) | El estado del juego: la nave, la cámara, los lugares (N), las vistas fijas y lo que se manda a dibujar cada frame |
+| [src/audio.rs](src/audio.rs), [src/marimba.rs](src/marimba.rs), [src/player.rs](src/player.rs) | Sintetizador del sonido, la marimba procedural y el reproductor de la versión chapina |
+| [src/muestra.rs](src/muestra.rs) | El guion del video de muestra (`--muestra`) |
 | [src/tweaks.rs](src/tweaks.rs) | Panel de ajustes en vivo |
 | [src/parallel.rs](src/parallel.rs) | Pool de hilos persistentes |
 
@@ -488,7 +498,8 @@ Para reexportar la nave con Blender 5.2:
 & 'C:\Program Files\Blender Foundation\Blender 5.2\blender.exe' --background --python tools/export_ship.py
 ```
 
-El exportador también escribe `ship-materials.txt` y sus seis mapas RGB8.
+El exportador también escribe `ship-materials.txt` y sus ocho mapas
+(`assets/textures/ship-00.png` a `ship-07.png`).
 Las imágenes se leen, filtran y muestrean en Rust; no se usan texturas 3D
 ni shaders de GPU. Las imágenes van en PNG RGB de 8 bits (sin pérdida), que
 se leen con el lector propio ([render/png.rs](src/render/png.rs) y el inflate

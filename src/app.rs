@@ -1384,7 +1384,9 @@ impl App {
         let t = self.sim_time;
         let body = &self.system.bodies[i];
         let distance = (self.ship.world_pos - body.position(t)).length();
-        if distance > 8000.0 {
+        // Cerca: dentro de su esfera de influencia (1800 u, 900 km, donde el
+        // HUD ya dice "sobre Faro"). Con 8000 salia en casi todo el sistema.
+        if distance > body.soi {
             return None;
         }
         let model = faro::model();
