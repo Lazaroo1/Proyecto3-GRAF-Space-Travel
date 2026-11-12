@@ -21,7 +21,7 @@ use super::stats::TriCounters;
 use super::{Draw, View, TILE};
 use crate::math::{Vec2, Vec3, Vec4};
 use crate::scene::NO_TANGENT;
-use crate::shaders::atmosphere::{integrate_all, Fog};
+use crate::shaders::atmosphere::{integrate_all, AerialLut, Fog};
 use crate::shaders::{self, Uniforms};
 
 /// Bits de subpixel del punto fijo: 1/256 de pixel.
@@ -91,7 +91,7 @@ impl Varyings {
 
 /// Pasos de la atmosfera por vertice. Basta con pocos: la atmosfera cambia
 /// suave y el resultado se interpola entre vertices.
-const FOG_STEPS: usize = 5;
+pub const FOG_STEPS: usize = 5;
 
 /// Vertice ya transformado: coordenadas de clip y atributos.
 #[derive(Clone, Copy, Debug, Default)]
@@ -180,6 +180,7 @@ pub fn transform_vertices(
     draws: &[Draw],
     view: &View,
     uniforms: &Uniforms,
+    aerial: Option<&AerialLut>,
 ) {
     let end = first + out.len();
     let mut k = visible.partition_point(|v| v.vert_offset + v.vert_count <= first);
@@ -206,15 +207,19 @@ pub fn transform_vertices(
             }
             // Modelo: al mundo relativo a la camara. Vista y proyeccion: a clip.
             let world = draw.model.transform_affine(position);
-            // Atmosfera entre la camara y el vertice (aerial perspective).
+            let clip = view.view_proj.transform_point(world);
+            // Atmosfera entre la camara y el vertice (aerial perspective): de
+            // la tabla de la vista si la hay (ver `AerialLut`), o integrada.
             let fog = if uniforms.atmospheres.is_empty() {
                 Fog::CLEAR
             } else {
-                let distance = world.length();
-                integrate_all(uniforms.atmospheres, world / distance, distance, uniforms.sun_light, FOG_STEPS)
+                aerial.and_then(|lut| lut.lookup(world, clip)).unwrap_or_else(|| {
+                    let distance = world.length();
+                    integrate_all(uniforms.atmospheres, world / distance, distance, uniforms.sun_light, FOG_STEPS)
+                })
             };
             out[global - first] = ClipVertex {
-                clip: view.view_proj.transform_point(world),
+                clip,
                 var: Varyings {
                     pos: world,
                     normal: draw.normal.mul_vec(mesh.normals[i]),

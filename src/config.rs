@@ -13,6 +13,11 @@ pub const FOV_Y_DEGREES: f64 = 58.0;
 pub const NEAR_PLANE: f64 = 0.05;
 pub const EXPOSURE: f32 = 1.0;
 
+/// Cuanto se afila la imagen final donde no hay bordes (0 nada, 1 mucho; ver
+/// `render::antialias`): devuelve el detalle que suavizan el filtrado de las
+/// texturas, el FXAA y la resolucion dinamica.
+pub const SHARPEN: f32 = 0.4;
+
 /// Bloom: luminancia HDR desde la que algo empieza a brillar, intensidad del
 /// halo, niveles de la piramide, radio y sigma del blur y caida entre niveles.
 pub const BLOOM_THRESHOLD: f32 = 1.1;

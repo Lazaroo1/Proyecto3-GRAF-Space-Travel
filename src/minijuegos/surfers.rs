@@ -3099,6 +3099,8 @@ impl Minigame for TalegaSurfers {
     }
 
     fn draw(&mut self, rgba: &mut [u8]) {
+        // Las pasadas del minijuego van con 3/4 de los hilos (ver `parallel::light`).
+        let _light = crate::parallel::light();
         let cam = self.camera();
         let width = self.width;
         // Las cajas de lo que hay en la calle y donde caen en la pantalla.

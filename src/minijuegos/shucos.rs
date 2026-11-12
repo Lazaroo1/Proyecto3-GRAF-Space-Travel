@@ -2672,6 +2672,8 @@ impl Minigame for Shucos {
     }
 
     fn draw(&mut self, rgba: &mut [u8]) {
+        // Las pasadas del minijuego van con 3/4 de los hilos (ver `parallel::light`).
+        let _light = crate::parallel::light();
         let lay = self.lay;
         let width = lay.width;
         let deco = self.deco();

@@ -1552,9 +1552,13 @@ agregó los siguientes puntos para explicar en la demostración:
   El shader deforma sus coordenadas alrededor de una tormenta que sigue a la
   nave. La vegetación de Jardín se desvanece progresivamente a gran altitud
   para conservar la lectura del planeta desde órbita.
-- **FXAA** (`render/antialias.rs`): identifica diagonales por luminancia y
-  combina muestras bilineales del framebuffer RGBA. Funciona en CPU; la GPU
-  sigue recibiendo solamente la imagen 2D final.
+- **FXAA y afilado** (`render/antialias.rs`): identifica diagonales por
+  luminancia y combina muestras bilineales del framebuffer RGBA; donde no
+  hay borde afila (CAS: `(c + w (n + s + e + o)) / (1 + 4 w)` con
+  `w = -sqrt(min(m, 255 - M) / M) / lerp(8, 5, nitidez)`, `m` y `M` el
+  minimo y el maximo de la luma en la cruz, nitidez 0.4 en `config::SHARPEN`).
+  La luma de cada fila se calcula una vez. Funciona en CPU; la GPU sigue
+  recibiendo solamente la imagen 2D final.
 - **Recorrido**: `--recorrido` usa el mismo integrador de 120 Hz y los mismos
   controles. El piloto se acerca, frena, rodea Jardin, se aleja y vuelve a
   frenar. La exportacion corre a simulacion x3 y no representa FPS en vivo.
@@ -1656,7 +1660,12 @@ pixeles y casi el doble de tiempo por frame.
 ### Paralelismo ([parallel.rs](src/parallel.rs))
 Un pool de hilos persistentes con reparto dinámico: cada hilo toma el
 siguiente trabajo de un contador atómico. El i5-12500H tiene núcleos rápidos
-y lentos; con reparto fijo, los rápidos esperarían a los lentos.
+y lentos; con reparto fijo, los rápidos esperarían a los lentos. El 3D usa
+todos los hilos lógicos menos uno: con los shaders de ahora, 15 o 16 hilos
+dan cada vista de 5 a 10 % más rápido que 12 (medido alternando corridas,
+porque la laptop se calienta). Los minijuegos piden 3/4 (`parallel::light`,
+un tope que se pone mientras dibujan): sus pasadas son cortas y de memoria,
+y con todos los hilos la carrera salía 10 % más lenta.
 
 ## 3. Los planetas
 
@@ -1876,6 +1885,16 @@ del sol). La profundidad óptica hacia la estrella sale de una tabla de
 atmósfera se integra por vértice (perspectiva aérea) y se interpola; el cielo,
 por pixel, o desde una tabla del cielo de 64×96 cuando la cámara está dentro
 de la atmósfera.
+
+Con más de 250 000 vértices (la superficie de Jardín con sus hongos y corales
+pasa de 600 000) la perspectiva aérea sale de una **tabla de la vista**
+(`AerialLut`, la idea del "Aerial Perspective LUT" de Hillaire): 48×27
+columnas que cubren la pantalla con un cuarto de margen a cada lado y 32
+profundidades por columna, solo donde puede haber atmósfera (entre la más
+cercana y la más lejana; si la cámara está adentro, juntas cerca, `(k/n)²`).
+Son unas 41 000 integraciones por frame en vez de una por vértice, y cada
+vértice interpola entre los ocho nodos que lo rodean; los que caen afuera
+(detrás de la cámara) se integran aparte.
 
 ## 10. El ciclo y Gargantúa
 

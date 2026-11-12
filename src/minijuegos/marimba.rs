@@ -1069,6 +1069,8 @@ impl Minigame for MarimbaTiles {
     }
 
     fn draw(&mut self, rgba: &mut [u8]) {
+        // Las pasadas del minijuego van con 3/4 de los hilos (ver `parallel::light`).
+        let _light = crate::parallel::light();
         let st = self.stage;
         let frame = self.frame();
         let background = &self.background;

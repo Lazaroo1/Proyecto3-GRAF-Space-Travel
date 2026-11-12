@@ -379,7 +379,7 @@ Además, fuera del menú:
 - **Faro** ([src/scene/faro.rs](src/scene/faro.rs), [src/scene/magnetosphere.rs](src/scene/magnetosphere.rs), [src/shaders/faro.rs](src/shaders/faro.rs), [src/math/neutron.rs](src/math/neutron.rs)): la estrella de neutrones de arriba; su lente, su magnetosfera, sus estallidos y su llamarada son funciones puras del tiempo, así que también se rebobinan.
 - **El ciclo** ([src/scene/cycle.rs](src/scene/cycle.rs)): una función pura del tiempo y del instante en que se presionó J, por eso se puede rebobinar.
 - **Nebulosa del estertor** ([src/shaders/nebula.rs](src/shaders/nebula.rs)): una cáscara que se expande; cada rayo la corta en a lo más dos puntos, ahí se evalúan filamentos de ruido, y el borde brilla más porque se ve de canto.
-- **Atmósferas** con dispersión de Rayleigh y Mie, perspectiva aérea por vértice y una tabla del cielo cuando la cámara está adentro.
+- **Atmósferas** con dispersión de Rayleigh y Mie, perspectiva aérea por vértice (tabulada sobre la vista cuando hay muchos vértices) y una tabla del cielo cuando la cámara está adentro.
 - **Hilos de luz** ([src/render/glow.rs](src/render/glow.rs)): segmentos aditivos con núcleo y halo, probados contra la profundidad; son las líneas de campo de Faro.
 - **Partículas** aditivas con profundidad: los arcos de plasma de la estrella, las fuentes de lava de los géiseres, brasas, gotas de líquido y destellos alrededor de la nave según el planeta, la bola de fuego de Faro, el destello de sus haces, esporas que brillan de noche y el fuego de los motores.
 - **Cola de Pira** ([src/shaders/tail.rs](src/shaders/tail.rs)): un volumen marchado a lo largo de una parábola que sale del lado de noche, lejos de la estrella; el polvo brilla más a contraluz (Henyey-Greenstein).
@@ -402,7 +402,7 @@ y el factor de LOD.
 dibujos (malla + matriz + material)
  -> culling por objeto: esfera envolvente contra el frustum
  -> vértices: deformación, objeto -> mundo relativo a la cámara -> clip,
-    atmósfera por vértice                                           (paralelo)
+    atmósfera por vértice (de una tabla de la vista si hay muchos)  (paralelo)
  -> triángulos: descarte, recorte, setup y reparto en tiles        (paralelo)
  -> mapa de sombras ortográfico 1024x1024, por franjas            (paralelo)
  -> raster por tiles de 64x64 al visibility buffer                (paralelo)
@@ -417,7 +417,9 @@ dibujos (malla + matriz + material)
 - Profundidad invertida en `f32` con el plano lejano en el infinito; el
   mundo se guarda en `f64` y se dibuja relativo a la cámara.
 - Un pool de hilos propio con reparto dinámico (el i5-12500H tiene núcleos
-  de dos tamaños).
+  de dos tamaños): el 3D usa todos los hilos lógicos menos uno (de 5 a
+  10 % más rápido que con 12 de 16) y los minijuegos, 3/4 (sus pasadas son
+  de memoria y ahí el hyperthreading estorba).
 - El costo depende mucho de la vista (`--bench 3`, medido el 9 de
   noviembre en un i5-12500H a 1280x720, conectado): las vistas de la versión
   chapina tardan de 33 a 60 ms por frame; las de OCASO, de 60 a 115 ms; las
@@ -430,8 +432,12 @@ dibujos (malla + matriz + material)
 - Todos los hilos redondean a cero los floats desnormalizados (FTZ/DAZ): un
   `exp` muy negativo deja valores tan chicos que cada operación con ellos
   cuesta cientos de ciclos.
-- FXAA en CPU suaviza las diagonales después del tonemap; F3/F4 lo omiten
-  para mantener legibles las aristas y los colores de depuración.
+- FXAA en CPU suaviza las diagonales después del tonemap y, en la misma
+  pasada, donde no hay bordes se **afila** la imagen (la idea del CAS de
+  AMD: un peso negativo con la cruz de vecinos que se afloja donde ya hay
+  contraste), para devolver el detalle que suavizan el filtrado y la
+  resolución dinámica; F3/F4 lo omiten para mantener legibles las aristas y
+  los colores de depuración.
 - En pantalla completa (F11) la ventana mide lo del monitor, pero el render
   no cambia de tamaño: la textura se estira con filtro bilineal al
   mostrarla (centrada y sin deformarla), el HUD crece con ella (sus letras

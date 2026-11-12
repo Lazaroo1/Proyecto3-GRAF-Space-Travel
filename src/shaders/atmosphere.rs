@@ -203,6 +203,108 @@ pub fn integrate_all(atmospheres: &[AtmosphereFrame], dir: Vec3, depth: f32, sun
     })
 }
 
+/// La neblina de las atmosferas tabulada sobre la vista, para los vertices
+/// (la idea del "Aerial Perspective LUT" de Hillaire, 2020): cuando hay
+/// muchos vertices (la superficie de Jardin con sus hongos y corales pasa del
+/// millon), integrar cada uno cuesta mas que integrar una rejilla de
+/// columnas que cubre la pantalla (con un margen de un cuarto a cada lado,
+/// para los triangulos que salen de ella) y, en cada columna, varias
+/// profundidades; cada vertice solo interpola entre los ocho nodos que lo
+/// rodean. La neblina cambia despacio con la direccion y la distancia, asi
+/// que no se distingue de integrarla en cada vertice.
+///
+/// La profundidad solo se reparte donde puede haber atmosfera: antes de la
+/// mas cercana no hay nada (`Fog::CLEAR`) y despues de la mas lejana ya no
+/// cambia. Si la camara esta adentro de una, las profundidades se juntan
+/// cerca (`(k / n)^2`), donde estan casi todos los vertices.
+pub struct AerialLut {
+    data: Vec<Fog>,
+    z0: f32,
+    z1: f32,
+    power: f32,
+}
+
+/// Columnas a lo ancho y a lo alto, y profundidades por columna.
+const AERIAL_X: usize = 48;
+const AERIAL_Y: usize = 27;
+const AERIAL_Z: usize = 32;
+/// Cuanto se sale la rejilla de la pantalla a cada lado (en fracciones de
+/// la pantalla).
+const AERIAL_MARGIN: f32 = 0.25;
+
+impl Default for AerialLut {
+    fn default() -> Self {
+        Self { data: Vec::new(), z0: 0.0, z1: 0.0, power: 1.0 }
+    }
+}
+
+impl AerialLut {
+    /// Llena la tabla para la vista con ejes `forward`, `right` y `up`
+    /// (escalados por las tangentes del campo de vision, como `View`).
+    pub fn build(&mut self, atmospheres: &[AtmosphereFrame], forward: Vec3, right: Vec3, up: Vec3, sun_light: Vec3, steps: usize) {
+        let (mut z0, mut z1) = (f32::MAX, 0.0f32);
+        for a in atmospheres {
+            let top = a.model.radius + a.model.params.thickness;
+            let d = a.center.length();
+            z0 = z0.min((d - top).max(0.0));
+            z1 = z1.max(d + top);
+        }
+        self.z0 = z0.min(z1);
+        self.z1 = z1.max(self.z0 + 1e-3);
+        self.power = if self.z0 <= 0.0 { 2.0 } else { 1.0 };
+        let (z0, z1, power) = (self.z0, self.z1, self.power);
+        self.data.resize(AERIAL_X * AERIAL_Y * AERIAL_Z, Fog::CLEAR);
+        parallel::chunks_mut(&mut self.data, AERIAL_Z, 16 * AERIAL_Z, |column, out| {
+            let (i, j) = (column % AERIAL_X, column / AERIAL_X);
+            let span = 1.0 + 2.0 * AERIAL_MARGIN;
+            let u = -AERIAL_MARGIN + span * i as f32 / (AERIAL_X - 1) as f32;
+            let v = -AERIAL_MARGIN + span * j as f32 / (AERIAL_Y - 1) as f32;
+            let dir = (forward + right * (u * 2.0 - 1.0) + up * (1.0 - v * 2.0)).normalize();
+            for (k, fog) in out.iter_mut().enumerate() {
+                let depth = z0 + (z1 - z0) * (k as f32 / (AERIAL_Z - 1) as f32).powf(power);
+                *fog = integrate_all(atmospheres, dir, depth, sun_light, steps);
+            }
+        });
+    }
+
+    /// La neblina hasta el punto `world` (relativo a la camara) que cae en
+    /// `clip`, o `None` si queda afuera de la rejilla (detras de la camara
+    /// o muy afuera de la pantalla): ese se integra aparte.
+    #[inline]
+    pub fn lookup(&self, world: Vec3, clip: crate::math::Vec4) -> Option<Fog> {
+        if !(clip.w > 1e-6) || self.data.is_empty() {
+            return None;
+        }
+        let span = 1.0 + 2.0 * AERIAL_MARGIN;
+        let u = (clip.x / clip.w + 1.0) * 0.5;
+        let v = (1.0 - clip.y / clip.w) * 0.5;
+        let fi = (u + AERIAL_MARGIN) / span * (AERIAL_X - 1) as f32;
+        let fj = (v + AERIAL_MARGIN) / span * (AERIAL_Y - 1) as f32;
+        if !(fi >= 0.0 && fj >= 0.0 && fi <= (AERIAL_X - 1) as f32 && fj <= (AERIAL_Y - 1) as f32) {
+            return None;
+        }
+        let depth = world.length();
+        if depth <= self.z0 {
+            return Some(Fog::CLEAR);
+        }
+        let t = ((depth - self.z0) / (self.z1 - self.z0)).min(1.0);
+        let t = if self.power == 2.0 { t.sqrt() } else { t };
+        let fk = t * (AERIAL_Z - 1) as f32;
+        let (i, j, k) = ((fi as usize).min(AERIAL_X - 2), (fj as usize).min(AERIAL_Y - 2), (fk as usize).min(AERIAL_Z - 2));
+        let (ti, tj, tk) = (fi - i as f32, fj - j as f32, fk - k as f32);
+        let at = |i: usize, j: usize| {
+            let base = (j * AERIAL_X + i) * AERIAL_Z + k;
+            let (a, b) = (&self.data[base], &self.data[base + 1]);
+            (a.scattered.lerp(b.scattered, tk), a.transmittance.lerp(b.transmittance, tk))
+        };
+        let mix = |a: (Vec3, Vec3), b: (Vec3, Vec3), t: f32| (a.0.lerp(b.0, t), a.1.lerp(b.1, t));
+        let top = mix(at(i, j), at(i + 1, j), ti);
+        let bottom = mix(at(i, j + 1), at(i + 1, j + 1), ti);
+        let (scattered, transmittance) = mix(top, bottom, tj);
+        Some(Fog { scattered, transmittance })
+    }
+}
+
 const VIEW_AZIMUTH: usize = 64;
 const VIEW_ZENITH: usize = 96;
 const VIEW_STEPS: usize = 10;
