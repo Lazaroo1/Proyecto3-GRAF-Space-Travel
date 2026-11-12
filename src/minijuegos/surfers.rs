@@ -2405,8 +2405,11 @@ impl TalegaSurfers {
                 items.push((near, 7, i));
             }
         }
-        // El papel picado de adorno, de alero a alero, cada 36 m.
-        let first = ((cam.pos.z + 1.0) / 36.0).ceil() as i32;
+        // El papel picado de adorno, de alero a alero, cada 36 m (el `k` en
+        // `36 k + 18`): desde el primero que queda adelante de la camara.
+        // (Contado desde `36 k` el de los ultimos 18 m antes de pasarle por
+        // debajo se dejaba de dibujar: desaparecia justo de cerca.)
+        let first = ((cam.pos.z + 0.8 - 18.0) / 36.0).ceil() as i32;
         for k in first..first + 4 {
             let near = k as f32 * 36.0 + 18.0 - cam.pos.z;
             if near > 0.8 {
@@ -3096,6 +3099,8 @@ impl Minigame for TalegaSurfers {
     }
 
     fn draw(&mut self, rgba: &mut [u8]) {
+        // Las pasadas del minijuego van con 3/4 de los hilos (ver `parallel::light`).
+        let _light = crate::parallel::light();
         let cam = self.camera();
         let width = self.width;
         // Las cajas de lo que hay en la calle y donde caen en la pantalla.

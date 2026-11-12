@@ -31,7 +31,9 @@
 //! - **Mapeo de tonos** al guardar (`1 - e^(-x)` y gamma 2.2): los colores
 //!   del `.mtl` son lineales.
 
-use crate::math::{Vec3, hash_u32, smoothstep};
+use std::sync::OnceLock;
+
+use crate::math::{Vec3, fast_exp, fast_pow, hash_u32, smoothstep};
 use crate::parallel;
 use crate::scene::{Mesh, Surface};
 
@@ -405,6 +407,131 @@ pub fn bake(mesh: &Mesh, finish: Finish, yaws: &[f32], elevation: f32, meters: f
     bake_all(&jobs)
 }
 
+/// Una nave para dibujarla en 3D de cerca (ver `carrera`): un sprite es una
+/// imagen sin perspectiva y, de cerca y a un lado de la camara, una nave
+/// larga girada se veia atravesada en la calle. La malla va en metros, con
+/// el origen en el suelo bajo su centro y la nariz hacia `-z` (como al
+/// hornear).
+///
+/// Se sombrea por vertice: la luz del horneado solo depende de la normal
+/// vista desde su camara (la vista es fija, `+z`), asi que cada vertice se
+/// sombrea una vez por frame (`vertex`) y cada pixel interpola su luz
+/// lineal y su emision y les pone el tono (`pixel`). Una camioneta pegada
+/// a la camara cubre cientos de miles de pixeles y tiene unos 15 000
+/// vertices; sus caras son planas, asi que sale igual.
+pub struct Solid {
+    pub finish: Finish,
+    pub positions: Vec<Vec3>,
+    pub normals: Vec<Vec3>,
+    pub colors: Vec<Vec3>,
+    pub indices: Vec<[u32; 3]>,
+    /// La clase de pieza y su valor de cada vertice (su `uv`; -1 en las
+    /// botellas, que no la traen).
+    parts: Vec<(f32, f32)>,
+    /// Donde empieza su largo (`z` mas chica), su largo y su alto (m).
+    z0: f32,
+    length: f32,
+    pub tall: f32,
+}
+
+impl Solid {
+    pub fn new(mesh: &Mesh, finish: Finish, meters: f32) -> Self {
+        let bottom = mesh_bottom(mesh);
+        let positions: Vec<Vec3> = mesh.positions.iter().map(|&p| Vec3::new(p.x, p.y - bottom, p.z) * meters).collect();
+        let (lo, hi) = positions.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), &p| (lo.min(p), hi.max(p)));
+        let parts = (0..positions.len())
+            .map(|i| {
+                let uv = mesh.uvs.get(i).copied().unwrap_or_default();
+                if finish == Finish::Vehicle { (uv.x, uv.y) } else { (-1.0, uv.y) }
+            })
+            .collect();
+        let n = positions.len();
+        let fill = |v: &[Vec3], fallback: Vec3| (0..n).map(|i| v.get(i).copied().unwrap_or(fallback)).collect::<Vec<_>>();
+        Self {
+            finish,
+            normals: fill(&mesh.normals, Vec3::Y),
+            colors: fill(&mesh.colors, Vec3::splat(0.7)),
+            positions,
+            indices: mesh.indices.iter().copied().filter(|t| t.iter().all(|&i| (i as usize) < n)).collect(),
+            parts,
+            z0: lo.z,
+            length: (hi.z - lo.z).max(1e-6),
+            tall: (hi.y - lo.y).max(1e-6),
+        }
+    }
+
+    /// El vertice `i` con `n` su normal vista como la ve la camara del
+    /// horneado (z hacia ella): su luz lineal, lo que emite (lineal, sin
+    /// animar) y su byte de patron y fase (0 si no es LED). Es lo de una
+    /// muestra de `bake_one`.
+    pub fn vertex(&self, i: usize, n: Vec3) -> (Vec3, Vec3, u8) {
+        let (pos, color) = (self.positions[i], self.colors[i]);
+        let (class, value) = self.parts[i];
+        // (La celda de las burbujas solo la usa la botella.)
+        let cell = if self.finish == Finish::Bottle {
+            let q = pos * (120.0 / self.length);
+            (hash_u32((q.x.floor() as i32 as u32).wrapping_mul(0x9E37_79B9) ^ (q.y.floor() as i32 as u32).wrapping_mul(0x85EB_CA6B) ^ (q.z.floor() as i32 as u32).wrapping_mul(0xC2B2_AE35)) >> 8) as f32 * (1.0 / 16_777_216.0)
+        } else {
+            1.0
+        };
+        let inside = Inside { level: pos.y / self.tall, cell };
+        let (lit, e) = shade::<Fast>(self.finish, class, value, color, n, inside);
+        let tag = if self.finish == Finish::Vehicle && Surface::from_code(class) == Surface::Light { led_tag(color, self.normals[i], pos, self.z0, self.length) } else { 0 };
+        (lit, e, tag)
+    }
+}
+
+/// Un pixel de una nave en 3D (ver `Solid`): de la luz lineal y la emision
+/// interpoladas y el byte de su LED, el color con tono y la luz de la LED
+/// con tono (sin animar: el juego la multiplica por su tabla), como el
+/// cuerpo y el `glow` de un sprite donde la LED llena el pixel (con su
+/// nucleo blanco; el halo va aparte).
+#[inline]
+pub fn pixel(lit: Vec3, e: Vec3, tag: u8) -> (Vec3, Vec3) {
+    let base = tone_with::<Fast>(lit);
+    if !(e.max_element() > 1e-6) {
+        return (base, Vec3::ZERO);
+    }
+    let led = if tag >> 6 == PATTERN_STOP {
+        STOP_RED * (tone_with::<Fast>(lit + e) - base).max_element()
+    } else {
+        let lum = 0.2126 * e.x + 0.7152 * e.y + 0.0722 * e.z;
+        tone_with::<Fast>(lit + e.lerp(Vec3::splat(lum * 1.2), 0.4)) - base
+    };
+    (base, led.max(Vec3::ZERO))
+}
+
+/// Lo que una LED le da a su halo: su luz por lo que brilla su patron en
+/// promedio (`HALO_WEIGHT`).
+#[inline]
+pub fn halo_source(e: Vec3, tag: u8) -> Vec3 {
+    e * HALO_WEIGHT[(tag >> 6) as usize & 3]
+}
+
+/// El halo de las LEDs de una imagen de `w` x `h` (ver `bake_one`): de la
+/// luz de cada LED (`src`, ya por su `HALO_WEIGHT`), cuanto cubre la nave
+/// (`alpha`) y donde hay LED (`led`, 0 o 1). Los radios del horneado (2 y
+/// 7 pixeles del sprite) van por `radius` (pixeles de esta imagen por
+/// pixel del sprite). Devuelve el halo ya con su tono (`tone_vivid`).
+pub(crate) fn led_halo(src: &[Vec3], alpha: &[f32], led: &[Vec3], w: usize, h: usize, radius: f32) -> Vec<Vec3> {
+    let r = |px: f32| ((px * radius).round() as usize).max(1);
+    let mut short = src.to_vec();
+    for _ in 0..2 {
+        short = box_blur(&short, w, h, r(2.0));
+    }
+    let mut wide = src.to_vec();
+    for _ in 0..3 {
+        wide = box_blur(&wide, w, h, r(7.0));
+    }
+    let density = box_blur(led, w, h, r(7.0));
+    (0..w * h)
+        .map(|i| {
+            let crowd = smoothstep(0.05, 0.3, density[i].x);
+            tone_vivid_with::<Fast>(short[i] * (0.55 * (1.0 - 0.3 * crowd)) + wide[i] * (0.08 * (1.0 - 0.8 * crowd) * (1.0 - 0.85 * alpha[i])))
+        })
+        .collect()
+}
+
 /// Lo que el sombreado de la botella necesita saber de la muestra: a que
 /// altura del modelo esta (0 abajo, 1 arriba) y un numero al azar de su
 /// celda en el modelo (las burbujas).
@@ -543,7 +670,7 @@ fn bake_one(mesh: &Mesh, finish: Finish, yaw: f32, elevation: f32, meters: f32, 
         let cell = (hash_u32((q.x.floor() as i32 as u32).wrapping_mul(0x9E37_79B9) ^ (q.y.floor() as i32 as u32).wrapping_mul(0x85EB_CA6B) ^ (q.z.floor() as i32 as u32).wrapping_mul(0xC2B2_AE35)) >> 8) as f32
             * (1.0 / 16_777_216.0);
         let inside = Inside { level: (pos.y - mlo.y) / tall, cell };
-        let (surface, emission) = shade(finish, class, uv.y, color, normal, inside);
+        let (surface, emission) = shade::<Exact>(finish, class, uv.y, color, normal, inside);
         lit[s] = surface;
         glow[s] = emission;
         if finish == Finish::Vehicle && Surface::from_code(class) == Surface::Light {
@@ -832,8 +959,67 @@ fn byte(v: f32) -> u8 {
 /// Mapeo de tonos y gamma: de luz lineal a lo que se ve.
 #[inline]
 fn tone(c: Vec3) -> Vec3 {
-    let t = |v: f32| (1.0 - (-v.max(0.0) * 1.4).exp()).powf(1.0 / 2.2);
-    Vec3::new(t(c.x), t(c.y), t(c.z))
+    tone_with::<Exact>(c)
+}
+
+/// Las cuentas caras del sombreado: exactas (al hornear, una vez) o
+/// rapidas (las naves en 3D de cada frame, `math::fast_pow`, error de unos
+/// 3e-4: no se distingue en 8 bits).
+pub(crate) trait Maths {
+    fn exp(x: f32) -> f32;
+    fn pow(x: f32, p: f32) -> f32;
+    /// La curva de `tone` en un canal.
+    fn tone(v: f32) -> f32 {
+        Self::pow(1.0 - Self::exp(-v.max(0.0) * 1.4), 1.0 / 2.2)
+    }
+}
+
+pub(crate) struct Exact;
+pub(crate) struct Fast;
+
+impl Maths for Exact {
+    #[inline(always)]
+    fn exp(x: f32) -> f32 {
+        x.exp()
+    }
+    #[inline(always)]
+    fn pow(x: f32, p: f32) -> f32 {
+        x.powf(p)
+    }
+}
+
+impl Maths for Fast {
+    #[inline(always)]
+    fn exp(x: f32) -> f32 {
+        fast_exp(x)
+    }
+    #[inline(always)]
+    fn pow(x: f32, p: f32) -> f32 {
+        fast_pow(x, p)
+    }
+    /// De una tabla indexada con los bits del `f32` (el exponente y los 7
+    /// bits altos de la mantisa: tramos de 1/128 relativo de `2^-16` a
+    /// `2^5`, con el mismo detalle en lo oscuro que en lo claro), en el
+    /// centro de cada tramo. Menos de un paso de 8 bits de error.
+    #[inline(always)]
+    fn tone(v: f32) -> f32 {
+        const FIRST: i32 = 111 << 7;
+        const SIZE: usize = 21 << 7;
+        static LUT: OnceLock<Vec<f32>> = OnceLock::new();
+        let lut = LUT.get_or_init(|| {
+            (0..SIZE)
+                .map(|i| if i == 0 { 0.0 } else { Exact::tone(f32::from_bits((((i as i32 + FIRST) as u32) << 16) | 0x8000)) })
+                .collect()
+        });
+        let i = ((v.max(0.0).to_bits() >> 16) as i32 - FIRST).clamp(0, SIZE as i32 - 1);
+        lut[i as usize]
+    }
+}
+
+/// `tone` con las cuentas de `M`.
+#[inline]
+fn tone_with<M: Maths>(c: Vec3) -> Vec3 {
+    Vec3::new(M::tone(c.x), M::tone(c.y), M::tone(c.z))
 }
 
 /// El tono de un halo conservando su color: el del maximo, `tone(max)`,
@@ -843,12 +1029,18 @@ fn tone(c: Vec3) -> Vec3 {
 /// lila).
 #[inline]
 fn tone_vivid(c: Vec3) -> Vec3 {
+    tone_vivid_with::<Exact>(c)
+}
+
+/// `tone_vivid` con las cuentas de `M`.
+#[inline]
+fn tone_vivid_with<M: Maths>(c: Vec3) -> Vec3 {
     let top = c.max_element();
     if !(top > 1e-6) {
         return Vec3::ZERO;
     }
-    let t = tone(Vec3::splat(top)).x;
-    let r = |v: f32| (v.max(0.0) / top).powf(0.6);
+    let t = M::tone(top);
+    let r = |v: f32| M::pow(v.max(0.0) / top, 0.6);
     Vec3::new(r(c.x), r(c.y), r(c.z)) * t
 }
 
@@ -872,10 +1064,10 @@ const AMBIENT: Vec3 = Vec3::new(0.05, 0.055, 0.08);
 /// El cielo de noche que se refleja: oscuro arriba, el resplandor naranja
 /// de la ciudad abajo y una franja tenue de luz de los postes. (Con la
 /// franja a 0.6 los vidrios, que la reflejan de lleno, salian color crema.)
-fn environment(r: Vec3) -> Vec3 {
+fn environment<M: Maths>(r: Vec3) -> Vec3 {
     let up = r.y;
     let sky = Vec3::new(0.04, 0.05, 0.1).lerp(Vec3::new(0.25, 0.14, 0.08), ((-up) * 2.0).clamp(0.0, 1.0));
-    let band = (-((up - 0.15) / 0.08).powi(2)).exp();
+    let band = M::exp(-((up - 0.15) / 0.08).powi(2));
     sky + Vec3::new(1.0, 0.7, 0.4) * (0.12 * band)
 }
 
@@ -888,20 +1080,22 @@ fn amber_glass(c: Vec3) -> bool {
 }
 
 /// El color de una muestra y la luz que emite (aparte, para el resplandor).
-fn shade(finish: Finish, class: f32, value: f32, albedo: Vec3, n: Vec3, inside: Inside) -> (Vec3, Vec3) {
+fn shade<M: Maths>(finish: Finish, class: f32, value: f32, albedo: Vec3, n: Vec3, inside: Inside) -> (Vec3, Vec3) {
     let v = Vec3::Z;
     let r = n * (2.0 * n.dot(v)) - v;
     let fresnel = 0.04 + 0.96 * (1.0 - n.dot(v).max(0.0)).powi(5);
-    let diffuse = |albedo: Vec3| {
-        albedo * (AMBIENT + MOON_LIGHT * n.dot(MOON.normalize()).max(0.0) + LAMP_LIGHT * n.dot(LAMP.normalize()).max(0.0) * 0.6)
-    };
+    // Las direcciones de las luces y sus medios vectores con la vista (que
+    // es fija, `+z`), una vez.
+    static LIGHTS: OnceLock<[Vec3; 4]> = OnceLock::new();
+    let [moon, lamp, half_moon, half_lamp] = *LIGHTS.get_or_init(|| {
+        let (m, l) = (MOON.normalize(), LAMP.normalize());
+        [m, l, (m + Vec3::Z).normalize(), (l + Vec3::Z).normalize()]
+    });
+    let diffuse = |albedo: Vec3| albedo * (AMBIENT + MOON_LIGHT * n.dot(moon).max(0.0) + LAMP_LIGHT * n.dot(lamp).max(0.0) * 0.6);
     let specular = |rough: f32| {
         let power = 2.0 / (rough * rough).max(0.003) - 2.0;
-        let blinn = |l: Vec3| {
-            let h = (l.normalize() + v).normalize();
-            n.dot(h).max(0.0).powf(power) * (power + 8.0) / 25.0
-        };
-        MOON_LIGHT * blinn(MOON) * 0.5 + LAMP_LIGHT * blinn(LAMP) * 0.4
+        let blinn = |h: Vec3| M::pow(n.dot(h).max(0.0), power) * (power + 8.0) / 25.0;
+        MOON_LIGHT * blinn(half_moon) * 0.5 + LAMP_LIGHT * blinn(half_lamp) * 0.4
     };
     if finish == Finish::Bottle {
         // (Las botellas no traen la clase de pieza en la `uv`: el vidrio
@@ -929,31 +1123,34 @@ fn shade(finish: Finish, class: f32, value: f32, albedo: Vec3, n: Vec3, inside: 
             let back = amber * ((1.28 * edge * edge + 0.05 * rim + 0.25 * n.z.max(0.0)) * if beer { 0.7 } else { 1.0 });
             let streak = smoothstep(0.93, 0.99, n.dot(Vec3::new(-0.55, 0.15, 0.82).normalize()));
             let bubble = if beer && inside.cell < 0.004 { 0.6 } else { 0.0 };
-            let sky = environment(r) * Vec3::new(1.0, 0.75, 0.45) * (fresnel * 0.8);
+            let sky = environment::<M>(r) * Vec3::new(1.0, 0.75, 0.45) * (fresnel * 0.8);
             let c = diffuse(albedo) * 0.15 + back + sky + Vec3::new(1.0, 0.9, 0.75) * (streak * 0.9) + Vec3::splat(bubble);
             return (c, Vec3::ZERO);
         }
         // La etiqueta y la tapa: pintura con un especular bajo.
-        return (diffuse(albedo) * 1.3 + specular(0.3) * 0.3 + environment(r) * (fresnel * 0.6), Vec3::ZERO);
+        return (diffuse(albedo) * 1.3 + specular(0.3) * 0.3 + environment::<M>(r) * (fresnel * 0.6), Vec3::ZERO);
     }
     match Surface::from_code(class) {
         Surface::Light => (albedo * 0.2, albedo * value),
         Surface::Metal => {
             let rough = (value * 0.7).max(0.14);
-            (albedo * (environment(r) * 1.4 + specular(rough) * 1.5), Vec3::ZERO)
+            (albedo * (environment::<M>(r) * 1.4 + specular(rough) * 1.5), Vec3::ZERO)
         }
         // El vidrio: el cielo con Fresnel y un brillo ancho y tenue. (Con un
         // especular fino y fuerte, `specular(0.08) 0.5`, un vidrio plano
         // de cara a la luz de los postes, que aqui es una direccion y no un
         // punto, se encendia entero: la ventana de atras del colectivo
         // salia color crema.)
-        Surface::Glass => (albedo * 0.5 + environment(r) * (0.15 + 0.85 * fresnel) + specular(0.3) * 0.12, Vec3::ZERO),
+        Surface::Glass => (albedo * 0.5 + environment::<M>(r) * (0.15 + 0.85 * fresnel) + specular(0.3) * 0.12, Vec3::ZERO),
         Surface::Rubber => (diffuse(albedo), Vec3::ZERO),
         Surface::Paint => {
             let rough = value.clamp(0.2, 0.8);
             let gloss = ((0.5 - rough) / 0.2).clamp(0.0, 1.0);
             let base = diffuse(albedo) * 1.6 + specular(rough) * albedo.max(Vec3::splat(0.04));
-            (base + (environment(r) * fresnel + specular(0.1) * 0.3) * gloss, Vec3::ZERO)
+            if gloss <= 0.0 {
+                return (base, Vec3::ZERO);
+            }
+            (base + (environment::<M>(r) * fresnel + specular(0.1) * 0.3) * gloss, Vec3::ZERO)
         }
     }
 }

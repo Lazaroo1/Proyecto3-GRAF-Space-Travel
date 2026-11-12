@@ -62,6 +62,10 @@ pub const TILE: usize = 64;
 pub const TILE_PIXELS: usize = TILE * TILE;
 /// Vertices por trabajo de la etapa de vertices.
 const VERTS_PER_JOB: usize = 2048;
+/// Desde cuantos vertices la neblina de las atmosferas se tabula en la vista
+/// en vez de integrarse en cada uno (la tabla son unas 41 000 integraciones).
+const AERIAL_MIN_VERTICES: usize = 250_000;
+
 /// Filas por trabajo del tonemap: bloques chicos reparten mejor entre hilos.
 const POST_ROWS: usize = 8;
 
@@ -165,6 +169,8 @@ pub struct Renderer {
     /// Imagen final por filas, RGBA8, lista para subir a la textura.
     rgba: Vec<u8>,
     aa_scratch: Vec<u8>,
+    /// La neblina de las atmosferas sobre la vista, para los vertices.
+    aerial: crate::shaders::atmosphere::AerialLut,
     visible: Vec<VisibleDraw>,
     verts: Vec<ClipVertex>,
     chunks: Vec<TriChunk>,
@@ -207,6 +213,7 @@ impl Renderer {
             reflection_scratch: vec![Vec3::ZERO; tiles * TILE_PIXELS],
             rgba: vec![0; width * height * 4],
             aa_scratch: vec![0; width * height * 4],
+            aerial: Default::default(),
             visible: Vec::new(),
             verts: Vec::new(),
             chunks: Vec::new(),
@@ -285,11 +292,18 @@ impl Renderer {
         }
         stats.vertices = vert_total as u32;
 
-        // 2. Vertices.
+        // 2. Vertices. Con muchos, la neblina de las atmosferas sale de una
+        //    tabla de la vista (ver `AerialLut`).
+        let aerial = if !uniforms.atmospheres.is_empty() && vert_total > AERIAL_MIN_VERTICES {
+            self.aerial.build(uniforms.atmospheres, view.forward, view.right, view.up, uniforms.sun_light, pipeline::FOG_STEPS);
+            Some(&self.aerial)
+        } else {
+            None
+        };
         self.verts.resize(vert_total, ClipVertex::default());
         let visible = &self.visible;
         parallel::chunks_mut(&mut self.verts, VERTS_PER_JOB, VERTS_PER_JOB, |job, out| {
-            pipeline::transform_vertices(job * VERTS_PER_JOB, out, visible, draws, view, uniforms);
+            pipeline::transform_vertices(job * VERTS_PER_JOB, out, visible, draws, view, uniforms, aerial);
         });
         let t_vertex = Instant::now();
 
@@ -440,7 +454,7 @@ impl Renderer {
         if !uniforms.debug.wireframe && !uniforms.debug.lod_colors {
             let src = &self.rgba;
             parallel::chunks_mut(&mut self.aa_scratch, block, block, |index, out| {
-                antialias::rows(index * POST_ROWS, out, src, width, height);
+                antialias::rows(index * POST_ROWS, out, src, width, height, config::SHARPEN);
             });
             std::mem::swap(&mut self.rgba, &mut self.aa_scratch);
         }

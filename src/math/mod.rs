@@ -64,6 +64,36 @@ pub fn fast_exp(x: f32) -> f32 {
     f32::from_bits(((i as i32 + 127) as u32) << 23) * p
 }
 
+/// `log2(x)` rapido para `x > 0` (error menor que 1e-6): el exponente sale
+/// de los bits del `f32` y la mantisa `m`, llevada a `[1/sqrt 2, sqrt 2)`,
+/// con `ln m = 2 atanh(s) = 2 (s + s^3/3 + s^5/5 + s^7/7)`,
+/// `s = (m - 1) / (m + 1)` (con `|s| < 0.172` el termino que falta es de
+/// 3e-8). Con `x = 0` da -127.
+#[inline]
+pub fn fast_log2(x: f32) -> f32 {
+    let bits = x.to_bits();
+    let mut e = ((bits >> 23) & 0xff) as i32 - 127;
+    let mut m = f32::from_bits((bits & 0x007f_ffff) | 0x3f80_0000);
+    if m > std::f32::consts::SQRT_2 {
+        m *= 0.5;
+        e += 1;
+    }
+    let s = (m - 1.0) / (m + 1.0);
+    let s2 = s * s;
+    let ln = 2.0 * s * (1.0 + s2 * (1.0 / 3.0 + s2 * (0.2 + s2 * (1.0 / 7.0))));
+    e as f32 + ln * std::f32::consts::LOG2_E
+}
+
+/// `x^p` rapido para `x >= 0` (error relativo de unos 3e-4, el de
+/// `fast_exp`): `2^(p log2 x)`.
+#[inline]
+pub fn fast_pow(x: f32, p: f32) -> f32 {
+    if x <= 0.0 {
+        return if p == 0.0 { 1.0 } else { 0.0 };
+    }
+    fast_exp(p * fast_log2(x) * std::f32::consts::LN_2)
+}
+
 /// Factor de suavizado exponencial independiente de los fps: con `rate` en
 /// 1/s, avanzar `1 - e^(-rate*dt)` por frame da el mismo movimiento a 30 o a
 /// 300 fps. Un `lerp(a, b, 0.1)` fijo por frame no lo da.
@@ -75,6 +105,24 @@ pub fn smoothing(rate: f64, dt: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fast_pow_matches_the_library() {
+        for i in 1..4000 {
+            let x = i as f32 / 4000.0 * 3.0;
+            assert!((fast_log2(x) - x.log2()).abs() < 2e-6, "{x}");
+            for p in [0.45f32, 1.0 / 2.2, 0.6, 5.0, 40.0, 600.0] {
+                // (Los exponentes altos son de brillos especulares: la base
+                // es un coseno, hasta 1. `fast_exp` se topa en 2^126.)
+                if p > 50.0 && x > 1.0 {
+                    continue;
+                }
+                let (a, b) = (fast_pow(x, p), x.powf(p));
+                assert!((a - b).abs() <= 1e-3 * b + 1e-30, "{x}^{p}: {a} {b}");
+            }
+        }
+        assert_eq!(fast_pow(0.0, 2.0), 0.0);
+    }
 
     #[test]
     fn fast_atan2_matches_the_library() {

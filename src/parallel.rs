@@ -42,6 +42,8 @@ struct Job<'a> {
     next: AtomicUsize,
     /// Hilos del pool que se unieron y aun no terminan.
     attached: AtomicUsize,
+    /// Cuantos hilos del pool pueden unirse (ver `light`).
+    max_attached: usize,
     panic: Mutex<Option<Panic>>,
 }
 
@@ -107,11 +109,12 @@ impl Pool {
 
 /// Hilos del pool. `OCASO_HILOS` la fija a mano para medir el escalado.
 ///
-/// Por defecto se usan 3/4 de los hilos logicos cuando hay muchos. Medido en
-/// un i5-12500H (12 nucleos, 16 hilos): con 12 hilos el shading tarda lo
-/// mismo que con 16 y el bloom baja de 5.5 a 2 ms. Los hilos extra del
-/// hyperthreading no agregan calculo en este renderer y en las pasadas cortas
-/// solo compiten por la cache de su nucleo.
+/// Por defecto, todos los hilos logicos menos uno (que queda para el sistema,
+/// el audio y raylib; el hilo que pide el trabajo tambien trabaja). Medido en
+/// un i5-12500H (12 nucleos, 16 hilos) con los shaders de ahora (noviembre),
+/// alternando corridas: con 15 o 16 hilos cada vista sale de 5 a 10 % mas
+/// rapido que con 12 (Pira 84-87 ms contra 94-104, Gargantua 116-120 contra
+/// 125-136). Antes, con shaders mas livianos, 12 y 16 daban lo mismo.
 fn worker_count() -> usize {
     if let Some(n) = std::env::var("OCASO_HILOS").ok().and_then(|v| v.parse().ok()) {
         if n > 0 {
@@ -119,7 +122,7 @@ fn worker_count() -> usize {
         }
     }
     let logical = thread::available_parallelism().map_or(1, |n| n.get());
-    if logical >= 12 { logical * 3 / 4 } else { logical }
+    if logical >= 8 { logical - 1 } else { logical }
 }
 
 /// Redondea a cero los floats desnormalizados (FTZ y DAZ). Un `exp` muy
@@ -168,7 +171,11 @@ fn worker(pool: &'static Pool) {
             // SAFETY: el llamador no destruye el trabajo hasta que `attached`
             // vuelve a cero, y este hilo lo incremento antes de soltar el candado.
             let job = unsafe { &*(slot.job as *const Job<'static>) };
-            job.attached.fetch_add(1, Ordering::AcqRel);
+            if job.attached.fetch_add(1, Ordering::AcqRel) >= job.max_attached {
+                // Ya hay suficientes (ver `light`): este no se une.
+                job.attached.fetch_sub(1, Ordering::AcqRel);
+                continue;
+            }
             job
         };
         job.work();
@@ -198,6 +205,30 @@ pub fn workers() -> usize {
     Pool::shared().workers
 }
 
+/// Tope de hilos por pasada (0: todos). Ver `light`.
+static LIMIT: AtomicUsize = AtomicUsize::new(0);
+
+/// Mientras vive, las pasadas usan solo 3/4 de los hilos logicos (si hay
+/// muchos). Para los minijuegos: sus pasadas son cortas y de memoria, y con
+/// los hilos del hyperthreading compitiendo por la cache de su nucleo la
+/// carrera salia 10 % mas lenta que con 12 de 16. El 3D, que es calculo,
+/// gana con todos (ver `worker_count`).
+#[must_use]
+pub fn light() -> Light {
+    let logical = thread::available_parallelism().map_or(1, |n| n.get());
+    let n = if logical >= 12 { logical * 3 / 4 } else { 0 };
+    Light(LIMIT.swap(n, Ordering::Relaxed))
+}
+
+/// Ver `light`: al soltarse vuelve el tope de antes.
+pub struct Light(usize);
+
+impl Drop for Light {
+    fn drop(&mut self) {
+        LIMIT.store(self.0, Ordering::Relaxed);
+    }
+}
+
 /// Ejecuta `f(0..count)` repartido entre todos los hilos y espera a que
 /// terminen. Si `f` entra en panic, el panic se relanza aqui.
 pub fn for_each(count: usize, f: impl Fn(usize) + Sync) {
@@ -206,11 +237,13 @@ pub fn for_each(count: usize, f: impl Fn(usize) + Sync) {
         (0..count).for_each(f);
         return;
     }
+    let limit = LIMIT.load(Ordering::Relaxed);
     let job = Job {
         run: &f,
         count,
         next: AtomicUsize::new(0),
         attached: AtomicUsize::new(0),
+        max_attached: if limit == 0 { usize::MAX } else { limit.saturating_sub(1) },
         panic: Mutex::new(None),
     };
     let address = &job as *const Job as usize;

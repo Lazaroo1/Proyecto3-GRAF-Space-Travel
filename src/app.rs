@@ -907,6 +907,9 @@ pub struct App {
     pub freeze: Option<Camera>,
     /// Nombres de los cuerpos en pantalla: posicion en pixeles y distancia.
     pub markers: Vec<Marker>,
+    /// Para la cinta de rumbo del HUD: hacia donde mira la camara y donde
+    /// queda cada cuerpo.
+    pub compass: Compass,
     /// Cinta con las aristas del frustum congelado.
     frustum_mesh: Mesh,
     disk_gas: crate::gargantua_p2::disk::GasTexture,
@@ -1110,6 +1113,7 @@ impl App {
             shutter: 1.0 / 30.0,
             freeze: None,
             markers: Vec::new(),
+            compass: Compass::default(),
             frustum_mesh: Mesh::default(),
             disk_gas: crate::gargantua_p2::disk::GasTexture::new(),
             clouds: shaders::CoronaClouds::default(),
@@ -1771,6 +1775,7 @@ impl App {
         self.build_frustum(&camera, pixel_angle_of(&camera, self.renderer.height()));
         // Los marcadores del HUD van sobre la ventana: a tamano completo.
         self.markers = markers(&self.system, &self.timeline, t, &camera, &camera.view(full_w, full_h), full_w, full_h);
+        self.compass = Compass::of(&self.system, t, &camera);
 
         let show_ship = self.camera_mode == CameraMode::Chase;
         let pixel_angle = 2.0 * (camera.fov_y * 0.5).tan() / self.renderer.height() as f64;
@@ -2847,6 +2852,36 @@ pub struct Marker {
     pub x: f32,
     pub y: f32,
     pub distance: f64,
+}
+
+/// El rumbo, como en una brujula sobre el plano de las orbitas (`y`
+/// arriba): en grados de 0 a 360 desde `-z` (hacia donde mira la camara al
+/// empezar), creciendo hacia `+x` (a la derecha). La cinta de arriba del HUD
+/// lo muestra con los cuerpos encima.
+#[derive(Clone, Debug, Default)]
+pub struct Compass {
+    /// Hacia donde mira la camara.
+    pub heading: f32,
+    /// Cada cuerpo que se ve: su nombre y su rumbo desde la camara.
+    pub bodies: Vec<(&'static str, f32)>,
+}
+
+impl Compass {
+    /// El rumbo de una direccion, o `None` si va casi vertical.
+    fn bearing(v: DVec3) -> Option<f32> {
+        (v.x.hypot(v.z) > 1e-6 * v.length().max(1e-12)).then(|| (v.x.atan2(-v.z).to_degrees() as f32).rem_euclid(360.0))
+    }
+
+    fn of(system: &System, t: f64, camera: &Camera) -> Self {
+        let heading = Self::bearing(camera.rot.forward()).unwrap_or(0.0);
+        let bodies = system
+            .bodies
+            .iter()
+            .filter(|b| !b.hidden)
+            .filter_map(|b| Some((b.label, Self::bearing(b.position(t) - camera.pos)?)))
+            .collect();
+        Self { heading, bodies }
+    }
 }
 
 /// Angulo que cubre un pixel con esta camara.
