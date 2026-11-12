@@ -216,10 +216,10 @@ pub fn race(app: &App, records: Records) -> carrera::Carrera {
     let meters = |class: Class, index: usize| class.length() / ships[index].length as f32;
     let vehicle = |class: Class, index: usize| {
         let ship = &ships[index];
-        Model { mesh: &app.system.meshes[ship.lods[0]], finish: Finish::Vehicle, meters: meters(class, index), name: ship.name }
+        Model { mesh: &app.system.meshes[ship.lods[0]], near: &app.system.meshes[ship.lods[2]], finish: Finish::Vehicle, meters: meters(class, index), name: ship.name }
     };
     let models = [
-        Model { mesh: &chela, finish: Finish::Bottle, meters: meters(Class::Chela, bottle), name: ships[bottle].name },
+        Model { mesh: &chela, near: &chela, finish: Finish::Bottle, meters: meters(Class::Chela, bottle), name: ships[bottle].name },
         vehicle(Class::TukTuk, 6),
         vehicle(Class::Camioneta, 7),
         vehicle(Class::Colectivo, 8),
@@ -235,7 +235,7 @@ pub fn race(app: &App, records: Records) -> carrera::Carrera {
             (mesh, i)
         })
         .collect();
-    let can_models: Vec<Model> = cans.iter().map(|(mesh, i)| Model { mesh, finish: Finish::Bottle, meters: meters(Class::Chela, *i), name: ships[*i].name }).collect();
+    let can_models: Vec<Model> = cans.iter().map(|(mesh, i)| Model { mesh, near: mesh, finish: Finish::Bottle, meters: meters(Class::Chela, *i), name: ships[*i].name }).collect();
     let sky = |dir: crate::math::Vec3| app.system.sky.sample(dir);
     let (width, height) = app.frame_size();
     carrera::Carrera::new(models, &can_models, player, &sky, width, height, records)
