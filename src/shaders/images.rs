@@ -1,4 +1,6 @@
-//! Lectura, bilineal y mipmaps de imagenes en CPU. RGB8 con dimensiones LE.
+//! Lectura, bilineal y mipmaps de imagenes en CPU. Las imagenes son PNG RGB
+//! de 8 bits (`render::png`, sin perdida); se leen todas a la vez, cada una
+//! en su hilo.
 use crate::math::{Vec2, Vec3};
 use std::{
     path::Path,
@@ -25,19 +27,20 @@ fn table() -> &'static [f32; 256] {
     static T: OnceLock<[f32; 256]> = OnceLock::new();
     T.get_or_init(|| std::array::from_fn(|i| linear(i as u8)))
 }
-/// Lee un `.rgb`: ancho y alto `u32` LE y tres bytes por pixel.
-fn read_rgb(path: &Path) -> Result<Level<3>, String> {
-    let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    if b.len() < 8 {
-        return Err("imagen sin cabecera".into());
-    }
-    let w = u32::from_le_bytes(b[..4].try_into().unwrap()) as usize;
-    let h = u32::from_le_bytes(b[4..8].try_into().unwrap()) as usize;
-    if w == 0 || h == 0 || w > 16384 || h > 16384 || b.len() != 8 + w * h * 3 {
-        return Err(format!("imagen RGB invalida: {}", path.display()));
-    }
-    let data = b[8..].chunks_exact(3).map(|p| [p[0], p[1], p[2]]).collect();
-    Ok(Level { w, h, data })
+/// Lee un PNG RGB.
+fn read_png(path: &Path) -> Result<Level<3>, String> {
+    let (w, h, rgb) = crate::render::png::read_rgb(path)?;
+    let data = rgb.chunks_exact(3).map(|p| [p[0], p[1], p[2]]).collect();
+    Ok(Level { w: w as usize, h: h as usize, data })
+}
+
+/// Lee varios PNG de `base` a la vez, cada uno en su hilo (lo que mas tarda
+/// es descomprimirlos), en el orden de `names`.
+fn read_all(base: &Path, names: &[&str]) -> Result<Vec<Level<3>>, String> {
+    std::thread::scope(|scope| {
+        let jobs: Vec<_> = names.iter().map(|name| scope.spawn(move || read_png(&base.join(name)))).collect();
+        jobs.into_iter().map(|job| job.join().map_err(|_| "no se pudo leer una imagen".to_string())?).collect()
+    })
 }
 /// Piramide de mipmaps por promedio de 2x2, canal por canal.
 fn pyramid<const N: usize>(base: Level<N>) -> Vec<Level<N>> {
@@ -89,11 +92,8 @@ fn corners(w: usize, h: usize, uv: Vec2) -> ([usize; 4], f32, f32) {
     ([y0 + x0, y0 + x1, y1 + x0, y1 + x1], x - fx, y - fy)
 }
 impl ImageMap {
-    pub fn load(path: &Path, srgb: bool) -> Result<Self, String> {
-        Ok(Self {
-            levels: pyramid(read_rgb(path)?),
-            srgb,
-        })
+    fn new(level: Level<3>, srgb: bool) -> Self {
+        Self { levels: pyramid(level), srgb }
     }
     pub fn sample(&self, uv: Vec2, footprint: f32) -> Vec3 {
         let (i, t) = mip_level(footprint, self.levels[0].w, self.levels.len());
@@ -141,11 +141,7 @@ pub struct RockTexel {
     pub ao: f32,
 }
 impl RockMap {
-    fn load(base: &Path) -> Result<Self, String> {
-        let color = read_rgb(&base.join("rock-color.rgb"))?;
-        let normal = read_rgb(&base.join("rock-normal.rgb"))?;
-        let rough = read_rgb(&base.join("rock-rough.rgb"))?;
-        let ao = read_rgb(&base.join("rock-ao.rgb"))?;
+    fn new([color, normal, rough, ao]: [Level<3>; 4]) -> Result<Self, String> {
         if [&normal, &rough, &ao]
             .iter()
             .any(|l| l.w != color.w || l.h != color.h)
@@ -234,25 +230,32 @@ impl Resources {
     fn load(base: &Path) -> Result<Self, String> {
         let text =
             std::fs::read_to_string(base.join("ship-materials.txt")).map_err(|e| e.to_string())?;
-        let mut ship = Vec::new();
+        // Todas las imagenes de una vez: las de la nave, Jupiter, la Luna y
+        // los cuatro mapas de la roca.
+        let mut names: Vec<&str> = Vec::new();
+        for line in text.lines().filter(|s| !s.is_empty()) {
+            if let Some(name) = line.split_whitespace().nth(8).filter(|n| *n != "-" && !names.contains(n)) {
+                names.push(name);
+            }
+        }
+        let ship_count = names.len();
+        names.extend(["jupiter.png", "moon.png", "rock-color.png", "rock-normal.png", "rock-rough.png", "rock-ao.png"]);
+        let mut levels = read_all(base, &names)?.into_iter();
         let mut images = std::collections::HashMap::<String, Arc<ImageMap>>::new();
+        for name in &names[..ship_count] {
+            images.insert(name.to_string(), Arc::new(ImageMap::new(levels.next().ok_or("falta una imagen")?, true)));
+        }
+        let mut next = || levels.next().ok_or_else(|| "falta una imagen".to_string());
+        let (jupiter, moon) = (ImageMap::new(next()?, true), ImageMap::new(next()?, true));
+        let rock = RockMap::new([next()?, next()?, next()?, next()?])?;
+        let mut ship = Vec::new();
         for line in text.lines().filter(|s| !s.is_empty()) {
             let p: Vec<_> = line.split_whitespace().collect();
             if p.len() != 9 {
                 return Err("tabla de materiales invalida".into());
             }
             let f = |i: usize| p[i].parse::<f32>().map_err(|e| e.to_string());
-            let image = if p[8] == "-" {
-                None
-            } else {
-                if !images.contains_key(p[8]) {
-                    images.insert(
-                        p[8].into(),
-                        Arc::new(ImageMap::load(&base.join(p[8]), true)?),
-                    );
-                }
-                images.get(p[8]).cloned()
-            };
+            let image = if p[8] == "-" { None } else { images.get(p[8]).cloned() };
             ship.push(ShipMaterial {
                 base: Vec3::new(f(0)?, f(1)?, f(2)?),
                 rough: f(3)?,
@@ -261,11 +264,6 @@ impl Resources {
                 image,
             });
         }
-        Ok(Self {
-            ship,
-            jupiter: ImageMap::load(&base.join("jupiter.rgb"), true)?,
-            moon: ImageMap::load(&base.join("moon.rgb"), true)?,
-            rock: RockMap::load(base)?,
-        })
+        Ok(Self { ship, jupiter, moon, rock })
     }
 }

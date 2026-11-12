@@ -1250,8 +1250,8 @@ capirote, que lo persiguen.
 **Meyer** ([minijuegos/personaje.rs](src/minijuegos/personaje.rs)) es un
 modelo de Blender (242 000 triángulos en 120 piezas) en una sola pose,
 saludando, y sin esqueleto. La cara es una malla fina (unas 70 000 caras)
-con una textura de la referencia (`map_Kd`): se guarda cruda a 1024 x 1024
-(`assets/personajes/meyer-rostro-color.rgb`) y cada esquina toma el color de
+con una textura de la referencia (`map_Kd`): se guarda en PNG a 1024 x 1024
+(`assets/personajes/meyer-rostro-color.png`) y cada esquina toma el color de
 su coordenada de textura (bilineal, de sRGB a lineal); con una malla así de
 fina el color por vértice conserva el detalle al tamaño en que se ve. Si la
 cara queda mirando a +z, se le da media vuelta al cargarlo (y lo de cada lado

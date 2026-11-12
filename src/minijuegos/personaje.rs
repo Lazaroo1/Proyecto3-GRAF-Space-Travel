@@ -21,7 +21,7 @@
 //!
 //! **La cara** viene con textura (`map_Kd`): una imagen de la referencia
 //! proyectada sobre su malla, que es fina (unas 70 mil caras). Se guarda
-//! cruda a 1024 x 1024 (`meyer-rostro-color.rgb`, RGB de 8 bits) y cada
+//! en PNG a 1024 x 1024 (`meyer-rostro-color.png`, RGB de 8 bits) y cada
 //! esquina toma el color de su coordenada de textura (bilineal), pasado de
 //! sRGB a lineal como los colores del `.mtl`: con una malla asi de fina, el
 //! color por vertice conserva el detalle a los tamanos en que se ve Meyer.
@@ -130,11 +130,11 @@ struct Texture {
 }
 
 impl Texture {
-    /// La version cruda de `image` (la misma carpeta y nombre, `.rgb`).
+    /// La version en PNG de `image` (la misma carpeta y nombre, `.png`).
     fn load(dir: &Path, image: &str) -> Option<Self> {
-        let raw = std::fs::read(dir.join(Path::new(image).with_extension("rgb"))).ok()?;
-        let size = ((raw.len() / 3) as f64).sqrt() as usize;
-        if size == 0 || size * size * 3 != raw.len() {
+        let (w, h, raw) = crate::render::png::read_rgb(&dir.join(Path::new(image).with_extension("png"))).ok()?;
+        let size = w as usize;
+        if size == 0 || h != w {
             return None;
         }
         let linear: [f32; 256] = std::array::from_fn(|i| (i as f32 / 255.0).powf(2.2));

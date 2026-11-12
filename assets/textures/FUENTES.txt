@@ -17,7 +17,8 @@ Mapas: diffuse, normal OpenGL, roughness y AO a 2k.
 https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rock_face_03/rock_face_03_diff_2k.jpg
 Los otros sufijos son nor_gl_2k, rough_2k y ao_2k.
 
-Las fotos se convierten a RGB8 sin compresión para el lector propio de CPU.
+Las fotos se guardan en PNG RGB8 (sin pérdida) para el lector propio de CPU
+(src/render/png.rs).
 Júpiter se adapta a violeta y se deforma con una tormenta procedural.
 La Luna y la roca se combinan con relieve y materiales procedurales.
 
@@ -25,7 +26,7 @@ Nave: mapas empacados en OCASO-1-triangulada.blend aportado por el usuario.
 El Blender de origen está en assets/source/ y no se modifica al exportar.
 tools/export_ship.py y tools/export_materials.py reconstruyen los tres LOD,
 las UV, la tabla de materiales y los seis mapas empleados por el modelo.
-Los antiguos ship-06.rgb y ship-07.rgb son efectos de referencia no usados
+Los antiguos ship-06.png y ship-07.png son efectos de referencia no usados
 por el modelo opaco actual; se mantienen como recursos de origen.
 
 Gargantúa: código propio reutilizado de Proyecto2-graf (Variante).

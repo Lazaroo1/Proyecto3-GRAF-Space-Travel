@@ -1,6 +1,14 @@
 """Extract Blender materials and packed albedo maps for the CPU renderer."""
 from pathlib import Path
+import struct, zlib
 import numpy as np
+
+def save_png(path, rgb):
+ """PNG RGB de 8 bits (el juego lo lee con render::png); rgb: alto x ancho x 3."""
+ h,w,_=rgb.shape
+ raw=b''.join(b'\x00'+rgb[y].tobytes() for y in range(h))
+ chunk=lambda t,d:struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
+ Path(path).write_bytes(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw,9))+chunk(b'IEND',b''))
 
 def export_materials(mesh, directory):
  dest=Path(directory)
@@ -29,12 +37,11 @@ def export_materials(mesh, directory):
   filename='-'
   if image:
    if image.name not in saved:
-    filename=f'ship-{len(saved):02d}.rgb'
+    filename=f'ship-{len(saved):02d}.png'
     width,height=image.size
     a=np.array(image.pixels[:],dtype=np.float32).reshape(height,width,4)[::-1,:,:3]
     srgb=np.where(a<=.0031308,a*12.92,1.055*np.maximum(a,0.)**(1/2.4)-.055)
-    with open(dest/filename,'wb') as f:
-     f.write(np.array([width,height],dtype='<u4').tobytes());f.write(np.clip(srgb*255+.5,0,255).astype(np.uint8).tobytes())
+    save_png(dest/filename,np.clip(srgb*255+.5,0,255).astype(np.uint8))
     saved[image.name]=filename
    filename=saved[image.name]
   rows.append(' '.join(map(str,(*base,rough,metal,*e,filename))))
