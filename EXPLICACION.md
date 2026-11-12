@@ -64,15 +64,20 @@ superficie o escapa, ninguno da vueltas.
 ## La superficie ([shaders/faro.rs](src/shaders/faro.rs))
 
 - **La corteza que se rompe**: el campo de un magnetar estresa su corteza
-  hasta romperla (Thompson y Duncan 1995). La superficie es una red de placas
-  de un azul índigo casi negro con grietas que brillan, a dos escalas (ruido
-  de Worley con el dominio deformado por un ruido de gradiente): violeta
-  rosado con el centro casi blanco, azules en unas regiones y rosa
-  anaranjado en otras más calientes (otros dos ruidos de baja frecuencia),
-  con un resplandor azul pegado a cada grieta; laten cada placa a su ritmo y
-  algunos puntos destellan. El borde brilla como una
-  atmósfera porque ahí la luz sale rasante (el ángulo de emisión que da la
-  lente). **Es color falso**: a millones de kelvin el visible está en la cola
+  hasta romperla (Thompson y Duncan 1995). La superficie es una red de
+  fracturas que brillan sobre placas índigo y violeta oscuro, nubladas:
+  las grandes son los bordes de celdas de Worley en un dominio muy deformado
+  por tres ruidos de gradiente (una red conectada de placas irregulares, no
+  un panal), con un grosor que cambia a lo largo; en unas regiones la corteza
+  está más rota y tiene fracturas chicas (otra escala de celdas), y junto a
+  las grandes salen venas como ramas (las líneas donde un ruido cruza el
+  cero). Las grietas son rosa magenta con el centro casi blanco, azules en
+  unas regiones y rosa anaranjado en otras más calientes, con un nudo naranja
+  donde se cruzan una grande y una chica, un resplandor violeta pegado y un
+  latido por placa; hacia la orilla se vuelven azul eléctrico. El borde
+  brilla como una atmósfera porque ahí la luz sale rasante (el ángulo de
+  emisión que da la lente), pero solo en la orilla: `(1 − cos α)⁶`, porque
+  la lente deja ver más de medio disco y casi todo sale algo rasante. **Es color falso**: a millones de kelvin el visible está en la cola
   de Rayleigh-Jeans (hν ≪ kT), donde el color ya no cambia con la
   temperatura, y el ojo vería un blanco azulado parejo. El brillo de las
   grietas sí sigue a la temperatura de abajo.
@@ -99,10 +104,12 @@ superficie o escapa, ninguno da vueltas.
   hacia afuera, medida en radios aparentes desde el borde que da la lente
   (el ángulo más grande al que un rayo todavía toca la superficie, por
   bisección sobre la tabla de geodésicas), así se ve igual de cerca que de
-  lejos. Los dos polos de donde salen los haces se encienden con un destello
-  blanco azulado (el de atrás se apaga). Solo cubre lo de alrededor: una cola
-  ancha lavaba todo el disco. Es de adorno, como en las ilustraciones de
-  magnetares; lo mismo que las chispas de la magnetosfera.
+  lejos. La franja celeste se deshilacha en hebras que salen de la estrella
+  y corren hacia afuera (la tabla de las hebras de los haces, por el ángulo
+  alrededor de la estrella en la pantalla). Los dos polos de donde salen los
+  haces se encienden con un destello blanco azulado (el de atrás se apaga).
+  Solo cubre lo de alrededor: una cola ancha lavaba todo el disco. Es de
+  adorno, como en las ilustraciones de magnetares.
 
 ## La magnetosfera torcida ([scene/magnetosphere.rs](src/scene/magnetosphere.rs))
 
@@ -140,12 +147,11 @@ torsión Δφ = 2 √(C / (p (1 + p))) ∫₀¹ F^(1/p) / (1 − μ²) dμ
   su tono, azul eléctrico, violeta o magenta, y su carga: pocas brillan
   fuerte y muchas apenas se ven. El brillo va y viene a lo largo (de 1.5 a 4
   hebras por línea que corren despacio), es mayor a un par de radios que
-  pegado a la superficie y se apaga lejos (e^−(r−2.5)/3), así los lóbulos
-  quedan cerca de la estrella y se deshacen en la bruma. Lo que pasa por
-  delante del disco brilla la cuarta parte: si no, los pies de cientos de
-  líneas lo cubrían de un velo blanco. Encima suben 260 **chispas**,
-  partículas de dos pixeles que se encienden y se apagan sobre los arcos
-  cerrados.
+  pegado a la superficie y se apaga lejos (e^−((r−2.2)/1.8)^1.4), así los
+  dos lóbulos quedan cerca de la estrella, como en la referencia, y no
+  cruzan toda la pantalla. Casi todas son azules (el tono sale de u^1.7).
+  Lo que pasa por delante del disco brilla la cuarta parte: si no, los pies
+  de cientos de líneas lo cubrían de un velo blanco.
 - Cada línea es un **hilo de luz** ([render/glow.rs](src/render/glow.rs)):
   segmentos que se suman a la imagen con un núcleo de 0.7 px y un halo
   suave de 3.4 px, probados contra la profundidad, en el mismo pase por tiles
@@ -173,6 +179,15 @@ torsión Δφ = 2 √(C / (p (1 + p))) ∫₀¹ F^(1/p) / (1 − μ²) dμ
   de emisión. Las hebras del chorro salen de una tabla de ruido periódico
   (azimut por logaritmo de la altura) que corre hacia afuera: evaluar Perlin
   en cada muestra costaba decenas de milisegundos.
+- **Las columnas de las chispas, vistas de lado**: el plasma de cada chispa
+  sube en una columna a lo largo del haz (Deshpande y Rankin 1999 vieron las
+  20 de PSR B0943+10), así que de lado el chorro se ve hecho de rayas
+  paralelas. Por cada tramo del rayo se busca dónde pasa más cerca del eje,
+  a cuántos anchos del cono exterior va de un lado y desde qué azimut se
+  mira; una tabla de ruido (azimut de la vista por desplazamiento) dice
+  cuántas columnas tiene enfrente. Alrededor del cono, la luz del haz que el
+  viento dispersa (una gaussiana de 1.15 veces el cono exterior) lo hace ver
+  como un reflector y no como un láser.
 - **Por qué se ven**: la radio no se ve, pero los haces iluminan el viento de
   la supergigante, cuya densidad baja como 1/d² desde ella; el flujo del haz
   baja como 1/r² desde Faro. La luz que llega es ∫ perfil(θ) n(x) / r² a lo
@@ -213,19 +228,36 @@ torsión Δφ = 2 √(C / (p (1 + p))) ∫₀¹ F^(1/p) / (1 − μ²) dμ
      La forma que se dibuja (`shape`) es aparte de la torsión física que
      muestra el panel, que sí cae de golpe a 0.3 rad.
   4. La onda de choque: el plasma que la llamarada expulsa por el ecuador
-     magnético (el plasmoide de las simulaciones de Parfrey et al.). Es una
-     cáscara de 9000 partículas en puntos de Fibonacci, más densa en el
-     ecuador y con grumos, que sale rápido y se frena barriendo el viento,
+     magnético (el plasmoide de las simulaciones de Parfrey et al.), que
+     sale rápido y se frena barriendo el viento,
      `R = 1 + 70 (1 − e^(−t/1.2))` radios, y se enfría de blanco azulado a
-     violeta hasta disolverse en 3.5 s. Las que se ven grandes (junto a la
-     cámara) se apagan con `(1 + s²)⁻²`: si no, cada una sería una mancha
-     redonda en vez de una cáscara fina. Al salir también dobla la imagen
-     con la misma onda en pantalla que la onda gravitacional.
+     azul violeta hasta disolverse en 3.5 s. Se dibuja en el shader como una
+     cáscara delgada (el 1.6 % de su radio, con una estela tenue detrás) que
+     no gira con la estrella: cada rayo la corta en a lo más dos tramos
+     (donde `r_in² < q² + x² < r_out²`, con `q` la distancia del rayo al
+     centro) y brilla el largo de cada tramo por la densidad en su punto
+     medio, que es mayor en el ecuador magnético del momento del pico y
+     tiene filamentos (las líneas donde un fBm cruza el cero, en una tabla
+     sobre la esfera). De frente casi no se ve y de canto el rayo la cruza
+     de largo, así que se ve como un anillo nítido que crece. Con la cámara
+     adentro no hay canto y se apaga, salvo al pasar junto a ella. Al salir
+     también dobla la imagen con la misma onda en pantalla que la onda
+     gravitacional. (Antes eran 9000 partículas: de cerca se veía como una
+     nube de polvo.)
   5. La bola de fuego: pares a más de 10⁹ K atrapados en las líneas cerradas
-     junto a la estrella (Thompson y Duncan 1995). Gira con la estrella (la
-     cola pulsa con el periodo) y se evapora capa por capa con
-     L = L₀(1 − t/t_evap)³, t_evap = 380 s (Feroci et al. 2001). En los
-     primeros 40 s brilla además una corona.
+     junto a la estrella (Thompson y Duncan 1995), en el sector donde se
+     rompió la magnetosfera. Gira con la estrella (la cola pulsa con el
+     periodo) y se evapora capa por capa con L = L₀(1 − t/t_evap)³,
+     t_evap = 380 s (Feroci et al. 2001): la línea más alta que todavía tiene
+     plasma baja de 3.7 a 1.3 radios como la raíz cúbica de la luz. En los
+     primeros 40 s brilla además una corona. Se ve como un arco de 44 lazos
+     (las líneas cerradas de su sector, casi un dipolo) cargados de plasma
+     que va y viene, blancos azulados los bajos (los más calientes) y
+     violeta los altos, como los lazos de la corona del Sol, con un
+     resplandor tenue debajo: un volumen que se marcha en 18 pasos dentro
+     de la esfera de la línea más alta y tiene plasma donde
+     `L = r / sin² θ` (la cima de la línea dipolar que pasa por ahí) es
+     menor que esa cima.
   6. El giro se frena de golpe (antiglitch, ΔP/P = 10⁻⁴, como en SGR 1900+14):
      el panel muestra el periodo nuevo.
   7. La radio se apaga y vuelve después de un minuto, como en PSR J1119−6127
@@ -266,6 +298,7 @@ gran llamarada.
 - Beloborodov y Thompson 2007, ApJ 657, 967: la descarga.
 - Camilo et al. 2007, ApJ 666, L93: radio de 1E 1547.0−5408.
 - Contopoulos et al. 2024, arXiv:2404.05408: la ecuación del púlsar.
+- Deshpande y Rankin 1999, ApJ 524, 1008: las columnas de las 20 chispas de PSR B0943+10.
 - Feroci et al. 2001, ApJ 549, 1021: la cola de la gran llamarada.
 - Göğüş et al. 1999, ApJ 526, L93: estadística de los estallidos.
 - Greenstein y Hartke 1983, ApJ 271, 283: temperatura de la superficie.

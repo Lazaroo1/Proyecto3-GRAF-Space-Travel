@@ -2392,12 +2392,6 @@ impl App {
             );
         }
 
-        // La bola de fuego de la gran llamarada de Faro.
-        if let Some(i) = system.find("Faro").filter(|&i| !system.bodies[i].hidden) {
-            faro::sparks(&mut out, &system.bodies[i], t, self.faro_flare, camera.pos);
-            faro::fireball(&mut out, &system.bodies[i], t, self.faro_flare, camera.pos);
-            faro::shock(&mut out, &system.bodies[i], t, self.faro_flare, camera.pos);
-        }
         // Lo que flota alrededor de la camara cerca del suelo de cada planeta.
         let motes: Vec<(&str, effects::Motes, f64)> = match system.version {
             Version::Ocaso => vec![
@@ -3134,6 +3128,18 @@ fn faro_frame<'a>(
         beam_gain: (faro::BEAM_GAIN * state.radio) as f32,
         wind_source: (star - camera).as_vec3(),
         wind_reference: (center - star).length() as f32,
+        shock: faro_shock(body, t, flare),
+        fireball: faro::fireball_at(&state).map(|(reach, light)| {
+            let (m, e1, e2) = faro::magnetic_frame();
+            let (azimuth, width) = faro::FIREBALL_SECTOR;
+            shaders::faro::Fireball {
+                reach: reach as f32,
+                light: light as f32,
+                axis: crust.rotate(m).as_vec3(),
+                toward: crust.rotate(e1 * azimuth.cos() + e2 * azimuth.sin()).as_vec3(),
+                width: width as f32,
+            }
+        }),
         // Con la camara metida en la bruma, todo el cielo se tenia de morado:
         // se apaga al acercarse.
         halo_gain: (faro::HALO_GAIN * (1.0 + 0.5 * state.storm + 3.0 * state.fireball)) as f32
@@ -3143,6 +3149,25 @@ fn faro_frame<'a>(
         derived: Default::default(),
     }
     .prepared()
+}
+
+/// La onda de choque de la gran llamarada de Faro en `t`, si esta saliendo:
+/// su radio y su brillo (`faro::shock_at`) y el marco magnetico del momento
+/// del pico (no gira con la estrella).
+fn faro_shock(body: &crate::scene::Body, t: f64, flare: Option<f64>) -> Option<shaders::faro::Shock> {
+    let spike = flare? + faro::WIND_UP;
+    let age = t - spike;
+    let (reach, light) = faro::shock_at(age)?;
+    let at_spike = faro::crust_at(body, spike, flare);
+    let (m, e1, e2) = faro::magnetic_frame();
+    Some(shaders::faro::Shock {
+        radius: (reach * faro::RADIUS) as f32,
+        light: light as f32,
+        cool: (age / faro::SHOCK_LIFE) as f32,
+        axis: at_spike.rotate(m).as_vec3(),
+        e1: at_spike.rotate(e1).as_vec3(),
+        e2: at_spike.rotate(e2).as_vec3(),
+    })
 }
 
 fn pira_tail(system: &System, t: f64, camera: DVec3, light: Vec3) -> Option<shaders::Tail> {

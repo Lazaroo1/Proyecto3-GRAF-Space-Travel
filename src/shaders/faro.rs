@@ -46,6 +46,17 @@
 //! Alrededor de la estrella brilla la nebulosa de su viento (como la del
 //! Cangrejo, mucho mas chica): una densidad `1 / (1 + (r/a)^2)^2` cuya
 //! integral a lo largo del rayo es exacta, con hebras de ruido.
+//!
+//! # La gran llamarada
+//! La onda de choque es una cascara delgada que se expande (`faro::shock_at`):
+//! cada rayo la corta en a lo mas dos tramos y lo que brilla es el largo del
+//! rayo dentro de ella, asi que de canto (en el borde) se ve como un anillo
+//! nitido. Es mas densa en el ecuador magnetico y tiene filamentos, de una
+//! tabla sobre la esfera hecha una vez. La bola de fuego atrapada llena las
+//! lineas dipolares cerradas de su sector: un punto esta en la linea cuya
+//! cima es `L = r / sin^2(theta)`, y hay plasma donde `L` es menor que la
+//! cima de la linea mas alta que no se ha evaporado; se marcha con pasos
+//! parejos dentro de la esfera de esa cima.
 
 use super::{Fragment, Uniforms};
 use crate::math::neutron::{NeutronLens, Sight};
@@ -71,6 +82,36 @@ pub struct BeamShape {
     /// Chispas del carrusel y su fase de giro alrededor del eje (vueltas).
     pub sparks: u32,
     pub carousel: f32,
+}
+
+/// La onda de choque de la gran llamarada en este frame: una cascara de
+/// plasma que sale del pico por el ecuador magnetico y no gira con la
+/// estrella (es lo que ya salio).
+#[derive(Clone, Copy, Debug)]
+pub struct Shock {
+    /// Radio del frente (unidades del mundo) y su brillo (`faro::shock_at`).
+    pub radius: f32,
+    pub light: f32,
+    /// Que tanto se ha enfriado: 0 al salir, 1 al disolverse.
+    pub cool: f32,
+    /// El marco magnetico del momento del pico: el eje y dos del ecuador.
+    pub axis: Vec3,
+    pub e1: Vec3,
+    pub e2: Vec3,
+}
+
+/// La bola de fuego atrapada: llena las lineas cerradas de un sector hasta
+/// la cima `reach` (en radios de la estrella) y gira con ella.
+#[derive(Clone, Copy, Debug)]
+pub struct Fireball {
+    pub reach: f32,
+    pub light: f32,
+    /// Eje magnetico de ahora (gira con la corteza).
+    pub axis: Vec3,
+    /// Direccion del centro del sector (en el ecuador magnetico) y su medio
+    /// ancho (rad).
+    pub toward: Vec3,
+    pub width: f32,
 }
 
 /// Faro en este frame, desde la camara.
@@ -111,6 +152,9 @@ pub struct Faro<'a> {
     /// viento que dispersa los haces.
     pub wind_source: Vec3,
     pub wind_reference: f32,
+    /// La gran llamarada: la onda de choque y la bola de fuego, si las hay.
+    pub shock: Option<Shock>,
+    pub fireball: Option<Fireball>,
     pub time: f32,
     /// Lo que no cambia en el frame y cada pixel volvia a calcular (ver
     /// `Faro::prepared`).
@@ -147,6 +191,9 @@ pub struct Derived {
     /// Los polos por donde salen los haces: direccion desde la camara y que
     /// tanto se ven (el que apunta para atras se apaga).
     poles: [(Vec3, f32); 2],
+    /// Dos ejes perpendiculares a la direccion de la estrella, para el
+    /// angulo alrededor de ella en la pantalla.
+    around: (Vec3, Vec3),
 }
 
 /// Error maximo que se le acepta a la tabla de la desviacion contra
@@ -161,14 +208,18 @@ const BEND_SAMPLES: usize = 2048;
 /// cuela junto a las grietas, grietas violeta rosado (o azules, por
 /// regiones) con el centro casi blanco, las de los casquetes calientes y el
 /// borde celeste.
-const PLATE: Vec3 = Vec3::new(0.01, 0.01, 0.07);
-const PLATE_GLOW: Vec3 = Vec3::new(0.02, 0.05, 0.42);
-const CRACK: Vec3 = Vec3::new(2.8, 0.7, 3.1);
+const PLATE: Vec3 = Vec3::new(0.02, 0.008, 0.075);
+const PLATE_VIOLET: Vec3 = Vec3::new(0.11, 0.025, 0.2);
+const PLATE_GLOW: Vec3 = Vec3::new(0.1, 0.04, 0.45);
+const CRACK: Vec3 = Vec3::new(3.4, 0.85, 2.5);
 const CRACK_BLUE: Vec3 = Vec3::new(0.6, 1.1, 3.6);
 const CRACK_CORE: Vec3 = Vec3::new(2.4, 2.0, 2.8);
 const CRACK_HOT: Vec3 = Vec3::new(3.6, 1.1, 1.6);
 const CRACK_HOTTEST: Vec3 = Vec3::new(4.0, 1.9, 0.7);
-const RIM: Vec3 = Vec3::new(0.6, 1.0, 3.0);
+const RIM: Vec3 = Vec3::new(0.8, 1.3, 3.4);
+const RIM_GAIN: f32 = 2.6;
+/// Brillo de las grietas.
+const CRACK_GAIN: f32 = 1.9;
 /// Colores de los haces: nucleo y conos.
 const BEAM_CORE: Vec3 = Vec3::new(1.2, 1.9, 3.0);
 const BEAM_CONE: Vec3 = Vec3::new(0.22, 0.5, 2.2);
@@ -179,12 +230,28 @@ const HALO_SCALE: f32 = 1.6;
 /// El aura: celeste pegada al borde y violeta mas afuera (anchos en radios
 /// aparentes), y el destello blanco azulado de los polos (ancho en radios
 /// aparentes).
-const AURA_RIM: Vec3 = Vec3::new(0.35, 0.6, 2.0);
-const AURA_RIM_WIDTH: f32 = 0.07;
+const AURA_RIM: Vec3 = Vec3::new(0.55, 0.95, 2.6);
+const AURA_RIM_WIDTH: f32 = 0.09;
 const AURA: Vec3 = Vec3::new(0.5, 0.12, 1.3);
 const AURA_WIDTH: f32 = 0.22;
 const FLARE: Vec3 = Vec3::new(2.2, 2.6, 3.6);
 const FLARE_WIDTH: f32 = 0.12;
+/// La onda de choque: grosor del frente y de la estela que deja atras (en
+/// fracciones de su radio), brillo de la estela respecto al frente, brillo y
+/// colores (blanco azulado al salir, violeta al enfriarse).
+const SHOCK_FRONT: f32 = 0.016;
+const SHOCK_WAKE: f32 = 0.1;
+const SHOCK_WAKE_LIGHT: f32 = 0.03;
+const SHOCK_GAIN: f32 = 0.16;
+const SHOCK_HOT: Vec3 = Vec3::new(1.5, 2.3, 3.8);
+const SHOCK_COOL: Vec3 = Vec3::new(0.6, 0.55, 3.2);
+/// El resplandor de la bola de fuego bajo sus lazos: blanco azulado en las
+/// lineas bajas (las mas calientes) y violeta en las altas; pasos de la
+/// marcha y brillo.
+const FIREBALL_HOT: Vec3 = Vec3::new(1.9, 2.3, 3.4);
+const FIREBALL_COOL: Vec3 = Vec3::new(0.7, 0.4, 2.8);
+const FIREBALL_STEPS: usize = 18;
+const FIREBALL_GAIN: f32 = 0.18;
 
 impl Faro<'_> {
     /// Saca lo que no cambia en el frame (`Derived`).
@@ -216,7 +283,8 @@ impl Faro<'_> {
             })
         });
         let bend_cos = if bend.is_some() { start.cos() } else { -2.0 };
-        let widest = self.beam.outer * 1.3;
+        // Hasta donde el resplandor de alrededor todavia se ve.
+        let widest = self.beam.outer * 1.6;
         let sweep = self.magnetic_before.dot(self.magnetic).clamp(-1.0, 1.0).acos();
         let axes: [Vec3; 3] = std::array::from_fn(|k| {
             let f = (k as f32 + 0.5) / 3.0;
@@ -261,6 +329,10 @@ impl Faro<'_> {
             distance,
             aura_cos: (edge * 4.0).min(PI).cos(),
             poles,
+            around: {
+                let u = to_star.cross(if to_star.y.abs() < 0.9 { Vec3::Y } else { Vec3::X }).normalize();
+                (u, to_star.cross(u))
+            },
         };
         self
     }
@@ -282,7 +354,15 @@ impl Faro<'_> {
         let x = (s - d.edge) / d.edge;
         let mut light = Vec3::ZERO;
         if x > 0.0 {
-            light += AURA_RIM * (-x / AURA_RIM_WIDTH).exp() + AURA * (-x / AURA_WIDTH).exp();
+            // El borde se deshilacha en hebras que salen de la estrella y
+            // corren hacia afuera (como las chispas de una bobina de Tesla).
+            // (Mas alla de cinco anchos del borde ya no queda nada de el.)
+            if x < AURA_RIM_WIDTH * 5.0 {
+                let around = dir.dot(d.around.1).atan2(dir.dot(d.around.0));
+                let hairs = 0.4 + 0.6 * strands(around * 3.0, x * 9.0 - self.time * 1.6);
+                light += AURA_RIM * ((-x / AURA_RIM_WIDTH).exp() * hairs);
+            }
+            light += AURA * (-x / AURA_WIDTH).exp();
         }
         for &(pole, seen) in &d.poles {
             if seen <= 0.0 {
@@ -296,6 +376,115 @@ impl Faro<'_> {
             light += FLARE * (seen * ((-w * w).exp() + 0.05 * (-a / 0.35).exp()));
         }
         light * self.aura_gain
+    }
+
+    /// La luz de la gran llamarada a lo largo del rayo `dir` hasta `depth`:
+    /// la onda de choque y la bola de fuego.
+    pub fn flare(&self, dir: Vec3, depth: f32) -> Vec3 {
+        self.shock_light(dir, depth) + self.fireball_light(dir, depth)
+    }
+
+    /// La onda de choque: el frente (una cascara delgada) y la estela mas
+    /// tenue detras. Con `q` la distancia del rayo al centro, una cascara
+    /// entre los radios `ri` y `ro` se corta en los tramos donde
+    /// `ri^2 < q^2 + x^2 < ro^2`; su luz es el largo de cada tramo por la
+    /// densidad en su punto medio.
+    fn shock_light(&self, dir: Vec3, depth: f32) -> Vec3 {
+        let Some(shock) = &self.shock else {
+            return Vec3::ZERO;
+        };
+        let outer = shock.radius;
+        let tc = self.center.dot(dir);
+        let q2 = (self.center.length_squared() - tc * tc).max(0.0);
+        if shock.light <= 0.0 || q2 >= outer * outer {
+            return Vec3::ZERO;
+        }
+        let front = outer * (1.0 - SHOCK_FRONT);
+        let wake = outer * (1.0 - SHOCK_WAKE);
+        let mut sum = 0.0;
+        for (ro, ri, weight) in [(outer, front, 1.0), (front, wake, SHOCK_WAKE_LIGHT)] {
+            let ho = (ro * ro - q2).max(0.0).sqrt();
+            let (pieces, count) = if q2 < ri * ri {
+                let hi = (ri * ri - q2).sqrt();
+                ([(tc - ho, tc - hi), (tc + hi, tc + ho)], 2)
+            } else {
+                ([(tc - ho, tc + ho), (0.0, 0.0)], 1)
+            };
+            for &(a, b) in &pieces[..count] {
+                let (a, b) = (a.max(0.0), b.min(depth));
+                if b <= a {
+                    continue;
+                }
+                let mid = dir * (0.5 * (a + b)) - self.center;
+                let n = mid / mid.length().max(1e-6);
+                sum += (b - a) * weight * shock_density(n, shock);
+            }
+        }
+        // En unidades del grosor del frente: de frente brilla ~1, de canto
+        // mucho mas (el anillo). Con la camara adentro no hay canto: la
+        // cascara rodea todo el cielo y se apaga, salvo al pasar junto a ella.
+        let inside = 0.2 + 0.8 * smoothstep(0.55, 1.0, self.center.length() / outer);
+        let tint = SHOCK_HOT.lerp(SHOCK_COOL, shock.cool.sqrt());
+        tint * (sum / (outer * SHOCK_FRONT) * shock.light * SHOCK_GAIN * inside)
+    }
+
+    /// La bola de fuego: se marcha dentro de la esfera de la linea mas alta
+    /// que tiene plasma, sin pasar detras de la estrella.
+    fn fireball_light(&self, dir: Vec3, depth: f32) -> Vec3 {
+        let Some(ball) = &self.fireball else {
+            return Vec3::ZERO;
+        };
+        let bound = ball.reach * self.radius;
+        let tc = self.center.dot(dir);
+        let q2 = (self.center.length_squared() - tc * tc).max(0.0);
+        if ball.light <= 0.0 || q2 >= bound * bound {
+            return Vec3::ZERO;
+        }
+        let h = (bound * bound - q2).sqrt();
+        let t0 = (tc - h).max(0.0);
+        let mut t1 = (tc + h).min(depth);
+        let r2 = self.radius * self.radius;
+        if q2 < r2 {
+            t1 = t1.min(tc - (r2 - q2).sqrt());
+        }
+        if t1 <= t0 {
+            return Vec3::ZERO;
+        }
+        let inv_r = 1.0 / self.radius;
+        let dt = (t1 - t0) / FIREBALL_STEPS as f32;
+        // Del medio ancho del sector a la caida en `1 - cos` (para no sacar
+        // el azimut con atan2 en cada paso): exp(-g^2/w^2) ~ exp(-2(1-cos g)/w^2).
+        let spread = 2.0 / (ball.width * ball.width);
+        let span = (ball.reach - 1.0).max(1e-3);
+        let mut sum = Vec3::ZERO;
+        for k in 0..FIREBALL_STEPS {
+            let x = (dir * (t0 + (k as f32 + 0.5) * dt) - self.center) * inv_r;
+            let r = x.length();
+            if r < 1.0 {
+                continue;
+            }
+            let z = x.dot(ball.axis);
+            let s2 = (1.0 - (z / r) * (z / r)).max(1e-4);
+            // La cima de la linea dipolar que pasa por aqui.
+            let shell = r / s2;
+            if shell >= ball.reach {
+                continue;
+            }
+            let flat = x - ball.axis * z;
+            let rho = flat.length().max(1e-6);
+            let cos_gap = flat.dot(ball.toward) / rho;
+            let sector = (-(1.0 - cos_gap) * spread).exp();
+            if sector < 0.01 {
+                continue;
+            }
+            let heat = 1.0 - (shell - 1.0) / span;
+            let edge = smoothstep(ball.reach, ball.reach * 0.8, shell);
+            // El plasma va en capas de L: se notan las lineas.
+            let bands = 0.72 + 0.28 * (shell * 11.0 - self.time * 0.7).sin();
+            let density = edge * sector * bands * (0.25 + heat * heat);
+            sum += FIREBALL_COOL.lerp(FIREBALL_HOT, heat * heat) * density;
+        }
+        sum * (dt * inv_r * ball.light * FIREBALL_GAIN)
     }
 
     /// Temperatura de la superficie con normal `n` (en el mundo), en
@@ -326,29 +515,48 @@ impl Faro<'_> {
 
     /// Color de la corteza en el punto con normal `n`, que sale con el
     /// coseno `cos_alpha` respecto a la vertical.
+    ///
+    /// Las fracturas grandes son los bordes de celdas en un dominio muy
+    /// deformado (una red conectada de placas irregulares, con grosor que
+    /// cambia); en unas regiones hay fracturas chicas y junto a las grandes
+    /// salen venas (las lineas donde un ruido cruza el cero) como ramas.
+    /// Donde se cruzan, la corteza esta mas caliente.
     fn crust(&self, n: Vec3, cos_alpha: f32, noise: &Perlin) -> Vec3 {
         let (t, hot) = self.temperature(n);
         let p = self.to_crust.mul_vec(n);
-        // Dominio deformado: las placas no salen como celdas de panal.
-        // Un solo ruido mueve el punto a lo largo de una direccion fija.
-        let warp = noise.noise(p * 2.1);
-        let q = p * 3.2 + Vec3::new(0.8, -0.5, 0.35) * (warp * 0.7);
-        let (f1, f2) = noise.cells(q);
+        let warp = Vec3::new(
+            noise.noise(p * 1.6),
+            noise.noise(p * 1.6 + Vec3::splat(9.2)),
+            noise.noise(p * 1.6 - Vec3::splat(4.7)),
+        );
+        let q = p + warp * 0.45;
+        // Las fracturas grandes: los bordes de unas celdas deformadas, que
+        // forman una red conectada; su grosor cambia a lo largo.
+        let (f1, f2) = noise.cells(q * 3.2);
         let edge = f2 - f1;
-        let (g1, g2) = noise.cells(q * 2.7 + Vec3::splat(13.0));
-        let fine = g2 - g1;
-        // Las grietas laten: cada placa a su ritmo.
-        let beat = 0.75 + 0.25 * (self.time * 2.3 + f1 * 17.0).sin();
-        let crack = smoothstep(0.065, 0.0, edge) * beat + 0.3 * smoothstep(0.04, 0.0, fine);
-        // El centro de cada grieta, casi blanco.
-        let core = smoothstep(0.022, 0.0, edge) * beat;
+        let width = 0.045 * (0.55 + 0.9 * (0.5 + 0.5 * warp.x));
+        let big = smoothstep(width, 0.0, edge);
+        let near_big = smoothstep(width * 5.0, 0.0, edge);
+        // Fracturas chicas, solo en unas regiones (ahi la corteza esta mas
+        // rota), y venas que salen de las grandes como ramas.
+        let (g1, g2) = noise.cells(q * 8.5 + Vec3::splat(13.0));
+        let broken = smoothstep(-0.35, 0.25, warp.z);
+        let small = smoothstep(0.03, 0.0, g2 - g1) * broken;
+        let vein = smoothstep(0.035, 0.0, noise.noise(q * 15.0 + Vec3::splat(7.1)).abs()) * near_big;
+        // Las grietas laten, cada placa a su ritmo.
+        let beat = 0.78 + 0.22 * (self.time * 2.3 + f1 * 17.0).sin();
+        let crack = (big + 0.7 * small * (0.45 + 0.55 * near_big) + 0.55 * vein) * beat;
+        // El centro de las grandes, casi blanco.
+        let core = smoothstep(width * 0.35, 0.0, edge) * beat;
+        // Donde se cruzan una grande y una chica: un nudo caliente.
+        let knot = big * smoothstep(0.06, 0.0, g2 - g1) * beat;
         // Luz que se cuela por la corteza junto a las grietas: un resplandor
-        // azul pegado a ellas, y la placa oscura en medio.
-        let seep = (-edge * 12.0).exp() * 0.45 + (-fine * 20.0).exp() * 0.1;
-        let mottle = 0.6 + 0.4 * warp;
-        let plate = PLATE * mottle + PLATE_GLOW * seep;
+        // violeta pegado a ellas, y la placa oscura y nublada en medio.
+        let seep = (-edge * 10.0).exp() * 0.5 + (-(g2 - g1) * 18.0).exp() * 0.12 * broken;
+        // Las placas, nubladas de violeta.
+        let plate = PLATE.lerp(PLATE_VIOLET, smoothstep(-0.3, 0.4, warp.y)) * (0.6 + 0.4 * warp.z) + PLATE_GLOW * seep;
         // Por regiones las grietas son violeta rosado o azules.
-        let region = smoothstep(-0.45, 0.25, noise.noise(p * 0.9 + Vec3::splat(7.0)));
+        let region = smoothstep(-0.65, 0.05, noise.noise(p * 0.9 + Vec3::splat(7.0)));
         let cool = CRACK_BLUE.lerp(CRACK, region);
         // Y en unas zonas mas calientes, rosa anaranjado.
         let heat = smoothstep(0.3, 0.6, noise.noise(p * 1.4 - Vec3::splat(3.0))) * 0.6;
@@ -357,11 +565,22 @@ impl Faro<'_> {
         } else {
             cool.lerp(CRACK_HOT, (hot * 2.0).max(heat))
         };
-        // Destellos sueltos: puntos donde la corteza cede.
-        let sparkle = smoothstep(0.07, 0.0, g1) * (0.5 + 0.5 * (self.time * 7.0 + g2 * 31.0).sin()).powi(4) * 2.5;
-        let rim = (1.0 - cos_alpha.clamp(0.0, 1.0)).powf(3.0);
-        let surface = plate * t + crack_color * (crack * t * t) + CRACK_CORE * (core * t * t * 0.7) + CRACK_BLUE * (sparkle * 0.5);
-        (surface * (self.gain * self.redshift)) + RIM * (rim * 1.6)
+        // Hacia la orilla las grietas se ven azul electrico, como el borde.
+        let crack_color = crack_color.lerp(CRACK_BLUE, smoothstep(0.55, 0.15, cos_alpha) * 0.7);
+        // El borde, solo en la orilla (la lente deja ver mas de medio
+        // disco y casi todo sale rasante).
+        let grazing = 1.0 - cos_alpha.clamp(0.0, 1.0);
+        let rim = grazing * grazing * grazing;
+        let rim = rim * rim;
+        // Las grietas siguen a la temperatura (mas brillantes en los polos),
+        // con algo menos de contraste que la placa para que se vean en todo
+        // el disco.
+        let glow = t * t.sqrt() * CRACK_GAIN;
+        let surface = plate * t
+            + crack_color * (crack * glow)
+            + CRACK_CORE * (core * glow * 0.7)
+            + CRACK_HOTTEST * (knot * glow * 0.8);
+        (surface * (self.gain * self.redshift)) + RIM * (rim * RIM_GAIN)
     }
 
     /// Luz de la superficie que la camara ve en la direccion `dir` (unitaria),
@@ -469,7 +688,9 @@ impl Faro<'_> {
         let white = (-(along / self.radius - 1.0).max(0.0) / 3.0).exp() * 0.8;
         let inner = gauss(theta - b.inner * 0.75, b.inner * 0.22) * spark;
         let outer = gauss(theta - b.outer * 0.8, b.outer * 0.2) * spark * (1.4 - pulse);
-        BEAM_CORE.lerp(BEAM_WHITE, white) * (core * 1.6) + BEAM_CONE * ((0.8 * inner + 0.7 * outer) * cones)
+        // La luz del haz dispersada en el viento, alrededor del cono.
+        let spray = gauss(theta, b.outer * 1.15) * 0.2;
+        BEAM_CORE.lerp(BEAM_WHITE, white) * (core * 1.6) + BEAM_CONE * ((0.8 * inner + 0.7 * outer) * cones + spray)
     }
 
     /// Amplitud de cada pulso: cambia de una vuelta a la siguiente.
@@ -599,6 +820,7 @@ impl Faro<'_> {
             let beam_axis = axis * sign;
             // Ejes alrededor del haz para el azimut de las chispas.
             let (side, up) = self.derived.frames[k][usize::from(!north)];
+            let streaks = self.streaks(p, dir, beam_axis, (side, up), (s0, s1));
             // Cambio de variable t = tc + q tan(u): con 1/r^2 queda du / q.
             let (u0, u1) = (((s0 - tc) / q).atan(), ((s1 - tc) / q).atan());
             const STEPS: usize = 7;
@@ -620,9 +842,30 @@ impl Faro<'_> {
                 let fiber = strands(phi, along.max(self.radius).ln() * 6.0 - self.time * 1.4);
                 sum += self.profile(theta, phi, along, pulse) * (wind * wind * fiber);
             }
-            light += sum * (du.abs() / q);
+            light += sum * (du.abs() / q * streaks);
         }
         light
+    }
+
+    /// Las hebras del chorro vistas de lado. Las columnas de plasma de las
+    /// chispas (Deshpande y Rankin 1999 vieron 20 en PSR B0943+10) van a lo
+    /// largo del haz: vistas de lado son rayas paralelas a el. El rayo las
+    /// cruza donde pasa mas cerca del eje: ahi se mide que tan a un lado del
+    /// eje va (en anchos del cono exterior) y desde que azimut se mira, y la
+    /// tabla dice cuantas columnas tiene enfrente.
+    fn streaks(&self, p: Vec3, dir: Vec3, beam_axis: Vec3, (side, up): (Vec3, Vec3), (s0, s1): (f32, f32)) -> f32 {
+        let across = beam_axis.cross(dir);
+        let n = across.length();
+        if n < 1e-4 {
+            return 1.0;
+        }
+        let b = dir.dot(beam_axis);
+        let t = ((b * p.dot(beam_axis) - p.dot(dir)) / (n * n)).clamp(s0, s1);
+        let x = p + dir * t;
+        let along = x.dot(beam_axis).max(self.radius);
+        let offset = x.dot(across / n) / (along * self.beam.outer.tan());
+        let view = dir.dot(up).atan2(dir.dot(side));
+        0.35 + 1.3 * fibers(view, offset)
     }
 
     /// El destello del haz cuando apunta a la camara: la luz directa de la
@@ -690,5 +933,91 @@ fn strands(phi: f32, s: f32) -> f32 {
     let at = |i: usize, j: usize| table[j * STRANDS + i];
     let top = at(i, j) + (at(i1, j) - at(i, j)) * fx;
     let bottom = at(i, j1) + (at(i1, j1) - at(i, j1)) * fx;
+    top + (bottom - top) * fy
+}
+
+/// Densidad de la onda de choque en la direccion `n` desde la estrella: mas
+/// en el ecuador magnetico del momento del pico y en filamentos.
+fn shock_density(n: Vec3, shock: &Shock) -> f32 {
+    let z = n.dot(shock.axis);
+    let equator = 0.05 + 1.4 * (-(z / 0.24) * (z / 0.24)).exp();
+    // Los filamentos giran un poco mientras se expande.
+    let phi = n.dot(shock.e2).atan2(n.dot(shock.e1)) + 0.25 * shock.cool;
+    equator * filaments(phi, z)
+}
+
+/// Lado de la tabla de filamentos de la onda de choque (azimut por altura).
+const FILAMENT_COLUMNS: usize = 384;
+const FILAMENT_ROWS: usize = 192;
+
+/// Los filamentos de la onda de choque en el azimut `phi` y la altura `z`
+/// (seno de la latitud) del marco magnetico: un ruido de crestas (las
+/// lineas donde un fBm cruza el cero) sobre la esfera, de una tabla hecha la
+/// primera vez que se necesita.
+fn filaments(phi: f32, z: f32) -> f32 {
+    static TABLE: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        let noise = Perlin::new(0x5C0C);
+        let mut table = vec![0.0; FILAMENT_COLUMNS * FILAMENT_ROWS];
+        for j in 0..FILAMENT_ROWS {
+            let z = (j as f32 + 0.5) / FILAMENT_ROWS as f32 * 2.0 - 1.0;
+            let ring = (1.0 - z * z).max(0.0).sqrt();
+            for i in 0..FILAMENT_COLUMNS {
+                let a = i as f32 / FILAMENT_COLUMNS as f32 * std::f32::consts::TAU;
+                let p = Vec3::new(ring * a.cos(), ring * a.sin(), z);
+                let warp = noise.noise(p * 2.0 + Vec3::splat(5.0));
+                let v = noise.fbm(p * 3.5 + Vec3::new(warp, -warp, 0.5 * warp) * 0.6, 4);
+                let ridge = (1.0 - v.abs() * 2.2).max(0.0);
+                table[j * FILAMENT_COLUMNS + i] = 0.15 + 1.7 * ridge * ridge * ridge;
+            }
+        }
+        table
+    });
+    let x = (phi / std::f32::consts::TAU).rem_euclid(1.0) * FILAMENT_COLUMNS as f32;
+    let y = ((z * 0.5 + 0.5) * FILAMENT_ROWS as f32 - 0.5).clamp(0.0, (FILAMENT_ROWS - 1) as f32);
+    let (i, j) = (x as usize % FILAMENT_COLUMNS, (y as usize).min(FILAMENT_ROWS - 2));
+    let (fx, fy) = (x.fract(), y - j as f32);
+    let i1 = (i + 1) % FILAMENT_COLUMNS;
+    let at = |i: usize, j: usize| table[j * FILAMENT_COLUMNS + i];
+    let top = at(i, j) + (at(i1, j) - at(i, j)) * fx;
+    let bottom = at(i, j + 1) + (at(i1, j + 1) - at(i, j + 1)) * fx;
+    top + (bottom - top) * fy
+}
+
+/// Lado de la tabla de las hebras vistas de lado: azimut de la vista por
+/// desplazamiento lateral (de -`FIBER_SPAN` a `FIBER_SPAN` anchos del cono).
+const FIBER_VIEWS: usize = 96;
+const FIBER_OFFSETS: usize = 512;
+const FIBER_SPAN: f32 = 2.0;
+
+/// Cuantas columnas de plasma tiene enfrente un rayo que pasa a `offset`
+/// anchos del cono del eje, mirado desde el azimut `view`: rayas finas y
+/// desparejas que cambian despacio al girar la vista (media ~0.5).
+fn fibers(view: f32, offset: f32) -> f32 {
+    static TABLE: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        let noise = Perlin::new(0xF1BE);
+        let mut table = vec![0.0; FIBER_VIEWS * FIBER_OFFSETS];
+        for j in 0..FIBER_OFFSETS {
+            let y = (j as f32 / (FIBER_OFFSETS - 1) as f32 * 2.0 - 1.0) * FIBER_SPAN;
+            for i in 0..FIBER_VIEWS {
+                let a = i as f32 / FIBER_VIEWS as f32 * std::f32::consts::TAU;
+                let p = Vec3::new(a.cos() * 1.2, a.sin() * 1.2, y * 7.0);
+                let v = noise.fbm(p, 3);
+                let fine = noise.noise(Vec3::new(a.cos() * 2.0, a.sin() * 2.0, y * 23.0) + Vec3::splat(4.0));
+                let x = (0.5 + 0.5 * v).clamp(0.0, 1.0);
+                table[j * FIBER_VIEWS + i] = (x * x * x * 2.2 + 0.25 * (0.5 + 0.5 * fine)).min(2.0);
+            }
+        }
+        table
+    });
+    let x = (view / std::f32::consts::TAU).rem_euclid(1.0) * FIBER_VIEWS as f32;
+    let y = ((offset / FIBER_SPAN).clamp(-1.0, 1.0) * 0.5 + 0.5) * (FIBER_OFFSETS - 1) as f32;
+    let (i, j) = (x as usize % FIBER_VIEWS, (y as usize).min(FIBER_OFFSETS - 2));
+    let (fx, fy) = (x.fract(), y - j as f32);
+    let i1 = (i + 1) % FIBER_VIEWS;
+    let at = |i: usize, j: usize| table[j * FIBER_VIEWS + i];
+    let top = at(i, j) + (at(i1, j) - at(i, j)) * fx;
+    let bottom = at(i, j + 1) + (at(i1, j + 1) - at(i, j + 1)) * fx;
     top + (bottom - top) * fy
 }
