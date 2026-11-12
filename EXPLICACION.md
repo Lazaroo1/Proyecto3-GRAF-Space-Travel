@@ -738,12 +738,30 @@ un lado de la cámara (o en una curva) el ángulo del rayo gira la camioneta
 40-60° y, sin perspectiva, sus costados quedaban paralelos en vez de irse
 hacia el punto de fuga: se veía atravesada en la calle, como dando la
 vuelta; y medida desde su centro, su cola (4.8 m más cerca) salía hasta la
-mitad de chica. Así que de 13 m para acá cada rival va con su malla (la
+mitad de chica. Así que de 16 m para acá cada rival va con su malla (la
 baja) proyectada con la misma cámara de la pista, `x = cx + f (X - cx_cam) / z`,
-y de 13 a 19 m la fila se pinta con la malla y con el sprite sobre el mismo
-fondo y se promedian por `smoothstep(13, 19, d)`. Los sprites de lejos se
-escalan con la distancia de su cara más cercana, `d - (L/2 |cos θ| + W/2 |sin θ|)`,
-para que en el cambio midan lo mismo.
+y de 16 a 19 m la fila se pinta con la malla y con el sprite sobre el mismo
+fondo y se promedian por `smoothstep(16, 19, d)`.
+
+- **La malla va como la pista**: el pseudo-3D no gira la pista, la corre de
+  lado (sus filas siguen derechas). Una nave girada rígida con el rumbo de
+  su centro cruzaba esas filas; así que cada vértice va a su profundidad
+  `Z = d - z`, corrido lo que se corre la pista ahí, `X = x_pista(Z) + x`, y
+  a la altura de la pista ahí (la nave se inclina con las lomas). La
+  normal va con la inversa transpuesta de ese corte, `(n.x, n.y, -rumbo n.x - n.z)`.
+- **Los sprites, como se verían con perspectiva**: girados lo que da el rayo
+  (`θ - atan(x/z)`) enseñaban el costado casi tan ancho como la cola, y en
+  perspectiva ese costado se va al punto de fuga y sale angosto; al pasar
+  al 3D la camioneta parecía enderezarse. El rumbo del sprite sale de lo
+  que se separan en la pantalla la cola y la nariz de su costado visible
+  (la orilla más cerca del eje, cada punta donde va la pista):
+  `sin φ = z_c (x_n/z_n - x_c/z_c) / L`. Se escalan con su cara más
+  cercana, `d - (L/2 |cos φ| + W/2 |sin φ|)`, se anclan por la cola (donde
+  cae de verdad, más a un lado y más abajo que el centro) y se hornean
+  desde la altura con que la cámara de quien juega ve el centro de cada
+  clase a 17.5 m (con la de la camioneta, 0.16 rad, la botella, más bajita,
+  veía el techo en el sprite y no en la malla). Así, al fundirse, la malla
+  y el sprite caen uno sobre el otro.
 
 - **El raster** ([minijuegos/malla.rs](src/minijuegos/malla.rs), `Indexed`):
   cada vértice se proyecta una vez (en paralelo por tramos); cada triángulo
