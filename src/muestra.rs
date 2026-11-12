@@ -46,13 +46,16 @@ pub enum Action {
 /// El guion: cada paso, su accion y cuantos segundos dura.
 fn script() -> Vec<(Action, f64)> {
     use Action::*;
-    let mut steps = vec![(Wait, 6.0)];
+    // La bienvenida completa (dura `hud::INTRO`, 8.5 s).
+    let mut steps = vec![(Wait, 8.5)];
     // OCASO: el claro, los geiseres, el nido, el espejo y el faro.
     for site in ["El claro", "Los geiseres", "El nido", "El espejo"] {
         steps.push((Next(site), 7.0));
     }
     steps.push((Next("El faro"), 3.0));
-    steps.push((Flare, 9.0));
+    // La llamarada: 8 s de torsion, el pico, la onda de choque (3.5 s) y
+    // las lineas que se reconectan (abiertas 1.2 s, se cierran en 3).
+    steps.push((Flare, 13.0));
     // El final (J), con las vistas fijas que lo encuadran, cada una en su
     // momento y corriendo desde ahi: el estertor, el colapso visto desde
     // Jardin, la onda gravitacional, Gargantua comiendose a Pira y
