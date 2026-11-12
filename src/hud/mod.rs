@@ -1,19 +1,18 @@
 //! HUD en 2D. No es parte del pipeline 3D: se dibuja encima de la imagen ya
 //! renderizada.
 //!
-//! Lo que tiene dibujo (los titulos, los fondos de los paneles, la caratula
-//! del velocimetro, el barrilete del reproductor) se **hornea en CPU**
-//! (`rotulos.rs`, `piel.rs`) y raylib solo lo pega como textura; encima
-//! raylib pone el texto, las teclas, los arcos y las agujas. Cada version
-//! tiene su piel:
+//! El vuelo lleva un **HUD de piloto** (`piloto.rs`): lineas finas sobre la
+//! vista, sin placas, con la cinta de rumbo arriba, la velocidad y la
+//! altitud en cintas a los lados, los modos como luces abajo y un solo
+//! aviso a la vez; en ambar de brasa en OCASO y en jade en la chapina. Lo
+//! que tiene dibujo (los titulos de la bienvenida, el barrilete de la
+//! musica, los rotulos de los minijuegos) se **hornea en CPU**
+//! (`rotulos.rs`, `piel.rs`) y raylib solo lo pega como textura:
 //!
 //! - **OCASO**: el titulo forjado en hierro con grietas de lava que laten
-//!   con la estrella, laminas oscuras con filo de bronce, letra romana de
-//!   lapida para los rotulos y un velocimetro que es un ojo.
+//!   con la estrella.
 //! - **Chapina**: GUATEMALA cortada de un tejido bajo un lazo de papel
-//!   picado, paneles de tela de corte con su faja, letra gorda de rotulo de
-//!   camioneta, velocimetro con aguja y un reproductor cuyo disco es un
-//!   barrilete que gira.
+//!   picado, y un barrilete que gira mientras suena la musica.
 //!
 //! Todo va a la escala `k` (alto de la imagen entre 720): en pantalla
 //! completa el HUD crece con la imagen y las letras se cargan a ese tamano,
@@ -22,6 +21,7 @@
 
 pub mod letras;
 pub mod piel;
+pub mod piloto;
 pub mod rotulos;
 
 use std::borrow::Cow;
@@ -124,12 +124,9 @@ enum Style {
     Heading,
     /// La gorda de los rotulos, a cualquier tamano.
     Title,
-    /// La romana de lapida: chica, mediana y a cualquier tamano.
-    Caps,
+    /// La romana de lapida (las frases de OCASO).
     CapsBig,
-    Roman,
-    /// La gorda: chica y mediana.
-    FatSmall,
+    /// La gorda mediana (las frases de la chapina).
     Fat,
     /// Las cifras de la gorda grande (ver `Fonts::figures`).
     Digits,
@@ -148,16 +145,13 @@ pub(crate) const DIGIT_FONT: &[&str] = &["ROCKEB.TTF", "seguibl.ttf", "ariblk.tt
 
 /// Archivo, tamano en pixeles y si se carga a la escala del HUD (las que se
 /// dibujan a cualquier tamano van en un atlas grande fijo).
-const STYLES: [(&[&str], f32, bool); 11] = [
+const STYLES: [(&[&str], f32, bool); 8] = [
     (TEXT_FONT, 18.0, true),
     (BOLD_FONT, 18.0, true),
     (TEXT_FONT, 15.0, true),
     (BOLD_FONT, 24.0, true),
     (FAT_FONT, 120.0, false),
-    (ROMAN_FONT, 15.0, true),
     (ROMAN_FONT, 24.0, true),
-    (ROMAN_FONT, 96.0, false),
-    (FAT_FONT, 15.0, true),
     (FAT_FONT, 22.0, true),
     (DIGIT_FONT, 120.0, false),
 ];
@@ -165,52 +159,24 @@ const STYLES: [(&[&str], f32, bool); 11] = [
 const LINE: f32 = 23.0;
 
 const TEXT: Color = Color::new(242, 236, 226, 255);
-const DIM: Color = Color::new(200, 190, 176, 210);
-const FAINT: Color = Color::new(200, 190, 176, 160);
-const PANEL: Color = Color::new(10, 10, 14, 190);
-const EDGE: Color = Color::new(255, 255, 255, 30);
-const WARN: Color = Color::new(255, 118, 92, 255);
 
-/// Los colores y la letra de cada version.
+/// El color y la letra de los titulos y las frases de cada version.
 #[derive(Clone, Copy)]
 struct Skin {
     chapin: bool,
     accent: Color,
-    /// El fondo liso (los paneles de texto) y su borde.
-    flat: Color,
-    edge: Color,
-    plate: piel::Panel,
-    /// La letra de las etiquetas y la de los encabezados, con su espacio
-    /// entre letras.
-    label: Style,
+    /// La letra de los encabezados, con su espacio entre letras.
     heading: Style,
     tracking: f32,
 }
 
 impl Skin {
     fn of(chapin: bool) -> Self {
+        let accent = piloto::Theme::of(chapin).ink;
         if chapin {
-            Self {
-                chapin,
-                accent: Color::new(250, 200, 70, 255),
-                flat: Color::new(12, 15, 44, 225),
-                edge: Color::new(250, 200, 70, 150),
-                plate: piel::Panel::Placa,
-                label: Style::FatSmall,
-                heading: Style::Fat,
-                tracking: 0.4,
-            }
+            Self { chapin, accent, heading: Style::Fat, tracking: 0.4 }
         } else {
-            Self {
-                chapin,
-                accent: Color::new(255, 176, 104, 255),
-                flat: Color::new(12, 9, 10, 215),
-                edge: Color::new(168, 120, 74, 170),
-                plate: piel::Panel::Lamina,
-                label: Style::Caps,
-                heading: Style::CapsBig,
-                tracking: 1.6,
-            }
+            Self { chapin, accent, heading: Style::CapsBig, tracking: 1.6 }
         }
     }
 }
@@ -449,9 +415,6 @@ fn load_font(rl: &mut RaylibHandle, thread: &RaylibThread, files: &[&str], size:
 /// Algo horneado en CPU que raylib pega como textura.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Key {
-    /// Un fondo de panel: clase, ancho, alto y escala en centesimas.
-    Panel(piel::Panel, u32, u32, u32),
-    Dial(bool, u32),
     Kite(u32),
     Spark,
     /// El titulo de una version a este ancho: su cuerpo o su luz.
@@ -496,8 +459,6 @@ impl Art {
     /// Hornea `key`: cada textura que sale, con su tamano.
     fn bake(&self, key: &Key) -> Vec<(Key, usize, usize, Vec<u8>)> {
         match key {
-            Key::Panel(kind, w, h, scale) => vec![(key.clone(), *w as usize, *h as usize, piel::panel(*kind, *w as usize, *h as usize, *scale as f32 / 100.0))],
-            Key::Dial(chapin, size) => vec![(key.clone(), *size as usize, *size as usize, piel::dial(*chapin, *size as usize))],
             Key::Kite(size) => vec![(key.clone(), *size as usize, *size as usize, piel::kite(*size as usize))],
             Key::Spark => vec![(key.clone(), 32, 32, piel::spark(32))],
             Key::Title { chapin, width, .. } => {
@@ -593,16 +554,6 @@ impl Ui<'_> {
         self.fonts.scale()
     }
 
-    /// El fondo de un panel con dibujo.
-    fn panel(&self, d: &mut RaylibDrawHandle, kind: piel::Panel, rect: Rectangle) {
-        let (w, h) = (rect.width.round().max(8.0), rect.height.round().max(8.0));
-        let key = Key::Panel(kind, w as u32, h as u32, (self.k() * 100.0).round() as u32);
-        let at = Rectangle::new(rect.x.round(), rect.y.round(), w, h);
-        if self.art.put(d, self.thread, key, |_, _| at, 0.0, Color::WHITE, false).is_none() {
-            flat_panel(d, at, PANEL, EDGE, 12.0);
-        }
-    }
-
     /// Un rotulo pintado con la letra a `size` pixeles, con su renglon
     /// empezando en `y`. Se hornea a un tamano redondeado hacia arriba y se
     /// pega al que toca. Devuelve su ancho.
@@ -668,21 +619,6 @@ fn triangle(d: &mut RaylibDrawHandle, a: Vector2, b: Vector2, c: Vector2, color:
     }
 }
 
-/// Un panel liso con las esquinas de `radius` pixeles y su borde.
-fn flat_panel(d: &mut RaylibDrawHandle, rect: Rectangle, fill: Color, edge: Color, radius: f32) {
-    let roundness = (radius / rect.height.min(rect.width) * 2.0).min(1.0);
-    d.draw_rectangle_rounded(rect, roundness, 10, fill);
-    d.draw_rectangle_rounded_lines_ex(rect, roundness, 10, 1.0, edge);
-}
-
-/// Una pildora (los avisos, los nombres de los planetas).
-fn pill(d: &mut RaylibDrawHandle, rect: Rectangle, fill: Color, edge: Option<Color>) {
-    d.draw_rectangle_rounded(rect, 1.0, 12, fill);
-    if let Some(edge) = edge {
-        d.draw_rectangle_rounded_lines_ex(rect, 1.0, 12, 1.0, edge);
-    }
-}
-
 // Las teclas -----------------------------------------------------------------
 
 /// Como se ve una tecla.
@@ -694,39 +630,6 @@ enum Cap {
     On,
     Off,
     Warn,
-}
-
-/// El ancho de la tecla `text`.
-fn cap_width(fonts: &Fonts, text: &str) -> f32 {
-    let k = fonts.scale();
-    (fonts.width(text, Style::Small) + 12.0 * k).max(22.0 * k)
-}
-
-/// Una tecla de 22 pixeles de alto con su letra. Devuelve su ancho.
-fn cap(d: &mut RaylibDrawHandle, fonts: &Fonts, skin: &Skin, text: &str, x: f32, y: f32, look: Cap, alpha: f32) -> f32 {
-    let k = fonts.scale();
-    let w = cap_width(fonts, text);
-    let rect = Rectangle::new(x.round(), y.round(), w.round(), (22.0 * k).round());
-    let round = 0.34;
-    let (fill, edge, ink) = match (look, skin.chapin) {
-        (Cap::On, _) => (skin.accent, None, Color::new(34, 18, 14, 255)),
-        (Cap::Warn, _) => (WARN, None, Color::new(34, 10, 8, 255)),
-        (Cap::Off, _) => (Color::new(255, 255, 255, 16), Some(Color::new(255, 255, 255, 46)), FAINT),
-        (Cap::Plain, true) => (Color::new(238, 230, 212, 255), None, Color::new(44, 30, 50, 255)),
-        (Cap::Plain, false) => (Color::new(255, 255, 255, 20), Some(Color::new(190, 138, 90, 210)), TEXT),
-    };
-    if look == Cap::Plain && skin.chapin {
-        // El canto de la tecla, abajo.
-        let lip = Rectangle::new(rect.x, rect.y + 2.0 * k, rect.width, rect.height);
-        d.draw_rectangle_rounded(lip, round, 6, fade(Color::new(150, 126, 110, 255), alpha));
-    }
-    d.draw_rectangle_rounded(rect, round, 6, fade(fill, alpha));
-    if let Some(edge) = edge {
-        d.draw_rectangle_rounded_lines_ex(rect, round, 6, 1.0, fade(edge, alpha));
-    }
-    let tw = fonts.width(text, Style::Small);
-    fonts.draw(d, text, rect.x + (rect.width - tw) * 0.5, rect.y + 2.0 * k, Style::Small, fade(ink, alpha));
-    w
 }
 
 /// Parte un renglon de teclas: lo que va entre corchetes es una tecla.
@@ -754,12 +657,13 @@ fn key_parts(text: &str) -> Vec<(bool, &str)> {
 
 fn keys_width(fonts: &Fonts, text: &str) -> f32 {
     let k = fonts.scale();
-    key_parts(text).iter().map(|&(key, part)| if key { cap_width(fonts, part) + 4.0 * k } else { fonts.width(part, Style::Small) }).sum()
+    key_parts(text).iter().map(|&(key, part)| if key { piloto::chip_width(fonts, part) + 4.0 * k } else { fonts.width(part, Style::Small) }).sum()
 }
 
-/// Un renglon de teclas y texto ("[N] siguiente lugar   [H] volver").
+/// Un renglon de teclas y texto ("[N] siguiente lugar   [H] volver"): las
+/// teclas son cajas de una linea del color de la version.
 #[allow(clippy::too_many_arguments)]
-fn keys(d: &mut RaylibDrawHandle, fonts: &Fonts, skin: &Skin, text: &str, x: f32, y: f32, align: Align, color: Color, alpha: f32) -> f32 {
+fn keys(d: &mut RaylibDrawHandle, fonts: &Fonts, th: &piloto::Theme, text: &str, x: f32, y: f32, align: Align, color: Color, alpha: f32) -> f32 {
     let k = fonts.scale();
     let total = keys_width(fonts, text);
     let mut at = match align {
@@ -769,27 +673,46 @@ fn keys(d: &mut RaylibDrawHandle, fonts: &Fonts, skin: &Skin, text: &str, x: f32
     };
     for (key, part) in key_parts(text) {
         if key {
-            at += cap(d, fonts, skin, part, at, y, Cap::Plain, alpha) + 4.0 * k;
+            at += piloto::chip(d, fonts, th, part, at, y, Cap::Plain, alpha) + 4.0 * k;
         } else {
-            fonts.draw(d, part, at, y + 2.0 * k, Style::Small, fade(color, alpha));
-            at += fonts.width(part, Style::Small);
+            at += piloto::text(d, fonts, part, at, y + 1.0 * k, Style::Small, fade(color, alpha), Align::Left);
         }
     }
     total
 }
 
-/// Un bloque de lineas sueltas (ayuda, estadisticas, ajustes) en un panel
-/// liso. Devuelve el rectangulo que ocupa.
-fn lines_panel(d: &mut RaylibDrawHandle, fonts: &Fonts, skin: &Skin, x: f32, y: f32, lines: &[String]) -> Rectangle {
+/// Un bloque de lineas sueltas (estadisticas, ajustes, Faro). Devuelve el
+/// rectangulo que ocupa.
+fn lines_panel(d: &mut RaylibDrawHandle, fonts: &Fonts, th: &piloto::Theme, x: f32, y: f32, lines: &[String]) -> Rectangle {
     let k = fonts.scale();
     let pad = 14.0 * k;
     let (w, h) = lines_size(fonts, lines);
     let rect = Rectangle::new(x.round(), y.round(), w, h);
-    flat_panel(d, rect, skin.flat, skin.edge, 12.0 * k);
+    piloto::block(d, th, rect);
     for (i, line) in lines.iter().enumerate() {
         fonts.draw(d, line, rect.x + pad, rect.y + pad - 3.0 * k + i as f32 * LINE * k, Style::Body, TEXT);
     }
     rect
+}
+
+/// Lo mismo en letra chica (el panel de Faro).
+fn small_panel(d: &mut RaylibDrawHandle, fonts: &Fonts, th: &piloto::Theme, x: f32, y: f32, lines: &[String]) -> Rectangle {
+    let k = fonts.scale();
+    let pad = 10.0 * k;
+    let (w, h) = small_size(fonts, lines);
+    let rect = Rectangle::new(x.round(), y.round(), w, h);
+    piloto::block(d, th, rect);
+    for (i, line) in lines.iter().enumerate() {
+        fonts.draw(d, line, rect.x + pad + 2.0 * k, rect.y + pad - 2.0 * k + i as f32 * 19.0 * k, Style::Small, fade(TEXT, th.alpha));
+    }
+    rect
+}
+
+fn small_size(fonts: &Fonts, lines: &[String]) -> (f32, f32) {
+    let k = fonts.scale();
+    let pad = 10.0 * k;
+    let w = lines.iter().map(|l| fonts.width(l, Style::Small)).fold(0.0, f32::max) + pad * 2.0 + 2.0 * k;
+    (w.round(), (lines.len() as f32 * 19.0 * k + pad * 2.0 - 4.0 * k).round())
 }
 
 fn lines_size(fonts: &Fonts, lines: &[String]) -> (f32, f32) {
@@ -797,88 +720,6 @@ fn lines_size(fonts: &Fonts, lines: &[String]) -> (f32, f32) {
     let pad = 14.0 * k;
     let w = lines.iter().map(|l| fonts.width(l, Style::Body)).fold(0.0, f32::max) + pad * 2.0;
     (w.round(), (lines.len() as f32 * LINE * k + pad * 2.0 - 6.0 * k).round())
-}
-
-/// El ancho de un aviso.
-fn toast_width(fonts: &Fonts, text: &str) -> f32 {
-    keys_width(fonts, text) + 36.0 * fonts.scale()
-}
-
-/// Un aviso en una pildora, que aparece y se desvanece. `center` y `bottom`
-/// dicen donde y `slot` lo sube si hay otro debajo.
-#[allow(clippy::too_many_arguments)]
-fn toast(d: &mut RaylibDrawHandle, fonts: &Fonts, skin: &Skin, text: &str, alpha: f32, center: f32, bottom: f32, slot: f32) {
-    if alpha <= 0.0 {
-        return;
-    }
-    let k = fonts.scale();
-    let w = toast_width(fonts, text);
-    let h = 36.0 * k;
-    let rect = Rectangle::new((center - w * 0.5).round(), (bottom - h - slot * (h + 8.0 * k)).round(), w.round(), h.round());
-    pill(d, rect, fade(skin.flat, alpha), Some(fade(skin.accent, alpha * 0.6)));
-    keys(d, fonts, skin, text, rect.x + 18.0 * k, rect.y + 7.0 * k, Align::Left, skin.accent, alpha);
-}
-
-// El velocimetro -------------------------------------------------------------
-
-/// El velocimetro de `size` pixeles centrado en `(cx, cy)`: la caratula
-/// horneada y encima el arco (OCASO) o la aguja (chapina), el numero y la
-/// unidad. `fraction` es cuanto de la escala va (0 a 1) y `hot` lo
-/// enciende (turbo, o mas rapido que el maximo).
-#[allow(clippy::too_many_arguments)]
-fn gauge(d: &mut RaylibDrawHandle, ui: &Ui, skin: &Skin, cx: f32, cy: f32, size: f32, fraction: f32, hot: bool, number: &str, unit: &str) {
-    let fonts = ui.fonts;
-    let size = size.round();
-    let radius = size * 0.5;
-    let center = Vector2::new(cx.round(), cy.round());
-    let at = Rectangle::new(center.x - radius, center.y - radius, size, size);
-    if ui.art.put(d, ui.thread, Key::Dial(skin.chapin, size as u32), |_, _| at, 0.0, Color::WHITE, false).is_none() {
-        d.draw_circle_v(center, radius, PANEL);
-    }
-    let fraction = fraction.clamp(0.0, 1.0);
-    let angle = piel::DIAL_FROM + piel::DIAL_SWEEP * fraction;
-    let (sin, cos) = angle.to_radians().sin_cos();
-    if skin.chapin {
-        // La aguja, con su cola corta y el eje dorado.
-        let needle = if hot { Color::new(255, 110, 150, 255) } else { Color::new(236, 52, 70, 255) };
-        let tip = Vector2::new(center.x + cos * radius * 0.74, center.y + sin * radius * 0.74);
-        let tail = Vector2::new(center.x - cos * radius * 0.16, center.y - sin * radius * 0.16);
-        d.draw_line_ex(tail, tip, (radius * 0.075).max(2.0), Color::new(20, 8, 20, 200));
-        d.draw_line_ex(tail, tip, (radius * 0.045).max(1.5), needle);
-        d.draw_circle_v(center, radius * 0.1, Color::new(250, 200, 70, 255));
-        d.draw_circle_v(center, radius * 0.045, Color::new(40, 20, 40, 255));
-        let font = radius * 0.52;
-        let w = fonts.width_at(number, Style::Title, font);
-        let y = center.y + radius * 0.2;
-        fonts.draw_at(d, number, center.x - w * 0.5 + 1.0, y + font * 0.06, Style::Title, font, Color::new(8, 6, 24, 220));
-        fonts.draw_at(d, number, center.x - w * 0.5, y, Style::Title, font, if hot { Color::new(255, 150, 180, 255) } else { TEXT });
-        let uw = fonts.width(unit, Style::FatSmall);
-        fonts.draw(d, unit, center.x - uw * 0.5, center.y + radius * 0.64, Style::FatSmall, skin.accent);
-    } else {
-        // El arco de brasa, mas claro hacia la punta, y una chispa al final.
-        let (inner, outer) = (radius * 0.6, radius * 0.66);
-        d.draw_ring(center, inner, outer, piel::DIAL_FROM, piel::DIAL_FROM + piel::DIAL_SWEEP, 48, Color::new(255, 255, 255, 14));
-        let pieces = 24;
-        for i in 0..pieces {
-            let (a, b) = (i as f32 / pieces as f32, (i + 1) as f32 / pieces as f32);
-            if a >= fraction {
-                break;
-            }
-            let b = b.min(fraction);
-            let t = a / fraction.max(1e-3);
-            let color = if hot { Color::new(255, (190.0 + 60.0 * t) as u8, (130.0 + 110.0 * t) as u8, 255) } else { Color::new(255, (96.0 + 110.0 * t) as u8, (30.0 + 90.0 * t) as u8, 255) };
-            d.draw_ring(center, inner, outer, piel::DIAL_FROM + piel::DIAL_SWEEP * a, piel::DIAL_FROM + piel::DIAL_SWEEP * b, 4, color);
-        }
-        let glow = radius * 0.34;
-        let tip = (center.x + cos * (inner + outer) * 0.5, center.y + sin * (inner + outer) * 0.5);
-        let spot = Rectangle::new(tip.0 - glow * 0.5, tip.1 - glow * 0.5, glow, glow);
-        ui.art.put(d, ui.thread, Key::Spark, |_, _| spot, 0.0, Color::new(255, 190, 120, 230), true);
-        let font = radius * 0.4;
-        let w = fonts.width_at(number, Style::Roman, font);
-        fonts.draw_at(d, number, center.x - w * 0.5, center.y - font * 0.62, Style::Roman, font, if hot { Color::new(255, 232, 190, 255) } else { TEXT });
-        let uw = fonts.label_width(unit, Style::Caps, skin);
-        fonts.label(d, unit, center.x - uw * 0.5, center.y + radius * 0.14, Style::Caps, skin, skin.accent);
-    }
 }
 
 /// Un numero con sus miles separados: 12 480.
@@ -896,44 +737,37 @@ fn grouped(value: f64) -> String {
 
 // El vuelo -------------------------------------------------------------------
 
-/// El tablero de vuelo, abajo a la izquierda: el velocimetro y, a su lado,
-/// la altitud, donde se esta y los interruptores (cada uno con su tecla,
-/// encendida si esta puesto). Devuelve el rectangulo que ocupa.
-fn dashboard(d: &mut RaylibDrawHandle, ui: &Ui, skin: &Skin, app: &App, height: f32) -> Rectangle {
+/// Arriba a la izquierda: la version (o la fase del final, con su reloj) en
+/// mayusculas sobre una raya, y abajo las teclas de moverse entre lugares.
+/// Devuelve lo que ocupa.
+fn corner(d: &mut RaylibDrawHandle, ui: &Ui, th: &piloto::Theme, app: &App) -> Rectangle {
     let fonts = ui.fonts;
     let k = ui.k();
-    let f = &app.flight;
-    let body = |i| pretty(app.body_name(i));
-    let dial = 168.0 * k;
-    let margin = 12.0 * k;
-    let (pw, ph) = (384.0 * k, 134.0 * k);
-    let plate = Rectangle::new((margin + dial * 0.5).round(), (height - margin - ph).round(), pw, ph);
-    ui.panel(d, skin.plate, plate);
-    let center = (margin + dial * 0.5, height - margin - dial * 0.5);
-    let fraction = if f.max_speed > 0.0 { f.speed / f.max_speed } else { 0.0 };
-    gauge(d, ui, skin, center.0, center.1, dial, fraction as f32, fraction > 1.02, &format!("{:.0}", f.speed), "u/s");
-
-    let x = margin + dial + 14.0 * k;
-    let top = plate.y + if skin.chapin { 18.0 } else { 12.0 } * k;
-    // La altitud y sobre que.
-    fonts.label(d, "Altitud", x, top, skin.label, skin, fade(skin.accent, 0.85));
-    let limit = format!("máx {:.0} u/s", f.max_speed);
-    let lw = fonts.width(&limit, Style::Small);
-    fonts.draw(d, &limit, plate.x + plate.width - 14.0 * k - lw, top, Style::Small, FAINT);
-    let altitude = grouped(f.altitude);
-    fonts.draw(d, &altitude, x, top + 15.0 * k, Style::Heading, TEXT);
-    let aw = fonts.width(&altitude, Style::Heading);
-    fonts.draw(d, &format!("sobre {}", body(f.nearest)), x + aw + 8.0 * k, top + 20.0 * k, Style::Body, DIM);
-    // Donde se esta: el modo local o el marco, y el contacto.
-    let place = match (app.settings.local, f.local, f.hold) {
-        (true, true, Some(h)) => format!("Local: {}, a {:.0}", body(f.frame), h),
-        (true, true, None) => format!("Local: {}", body(f.frame)),
-        _ => format!("Marco: {}", body(f.frame)),
+    let c = &app.cycle;
+    let clock = |seconds: f64| format!("{:02}:{:02}", (seconds / 60.0) as u32, (seconds % 60.0) as u32);
+    let title = match (app.ship_name(), c.phase) {
+        (Some(_), _) => "Guatemala".to_string(),
+        (None, Phase::Agony) => Phase::Agony.name().to_string(),
+        (None, phase) => format!("{}  {}", phase.name(), clock(c.tau)),
     };
-    let place = if f.contact { format!("{place}  ·  contacto") } else { place };
-    fonts.draw(d, &place, x, top + 44.0 * k, Style::Small, DIM);
+    let hints = match (app.ship_name(), c.phase) {
+        (Some(name), _) => format!("[V] OCASO   [B] {}   [N] lugar   [H] volver   [F1] ayuda", pretty(name)),
+        (None, Phase::Agony) => "[J] desatar el final   [V] chapina   [N] lugar   [F1] ayuda".to_string(),
+        (None, _) => "[J] renacer   [V] chapina   [N] lugar   [F1] ayuda".to_string(),
+    };
+    let (x, y) = (24.0 * k, 18.0 * k);
+    let hw = keys_width(fonts, &hints);
+    piloto::wash(d, th, Rectangle::new(0.0, 0.0, x + hw + 140.0 * k, y + 110.0 * k), 0);
+    let tw = piloto::text(d, fonts, &title.to_uppercase(), x, y, Style::Heading, th.ink, Align::Left);
+    let rule = y + 34.0 * k;
+    piloto::line(d, Vector2::new(x, rule), Vector2::new(x + tw.max(120.0 * k) + 40.0 * k, rule), 1.0, th.soft());
+    keys(d, fonts, th, &hints, x, rule + 8.0 * k, Align::Left, th.text, 0.9);
+    Rectangle::new(0.0, 0.0, x + tw.max(hw) + 16.0 * k, rule + 36.0 * k)
+}
 
-    // Los interruptores.
+/// Los interruptores del vuelo con su tecla: encendidos si estan puestos.
+fn switches(app: &App) -> [(&'static str, &'static str, Cap); 5] {
+    let f = &app.flight;
     let path = match (app.path_mode, app.path_shown && app.path_impact) {
         (_, true) => ("choque", Cap::Warn),
         (None, _) => ("ruta auto", Cap::Off),
@@ -946,67 +780,46 @@ fn dashboard(d: &mut RaylibDrawHandle, ui: &Ui, skin: &Skin, app: &App, height: 
         (true, true) => Cap::On,
         (true, false) => Cap::Plain,
     };
-    let switches = [("Z", "asist.", switch(app.settings.assist)), ("G", "graved.", switch(app.settings.gravity)), ("L", "local", local), ("O", "crucero", switch(app.settings.cruise)), ("Y", path.0, path.1)];
-    let room = plate.x + plate.width - 12.0 * k - x;
-    let step = room / switches.len() as f32;
-    let row = top + 68.0 * k;
-    for (i, (key, name, look)) in switches.into_iter().enumerate() {
-        let cx = x + step * (i as f32 + 0.5);
-        let w = cap_width(fonts, key).max(26.0 * k);
-        // La tecla un poco mas ancha, centrada en su columna.
-        let rect = Rectangle::new((cx - w * 0.5).round(), row.round(), w.round(), (22.0 * k).round());
-        let (fill, edge, ink) = match look {
-            Cap::On => (skin.accent, None, Color::new(34, 18, 14, 255)),
-            Cap::Warn => (WARN, None, Color::new(34, 10, 8, 255)),
-            Cap::Plain => (Color::new(255, 255, 255, 26), Some(fade(skin.accent, 0.8)), TEXT),
-            Cap::Off => (Color::new(255, 255, 255, 14), Some(Color::new(255, 255, 255, 44)), FAINT),
-        };
-        d.draw_rectangle_rounded(rect, 0.34, 6, fill);
-        if let Some(edge) = edge {
-            d.draw_rectangle_rounded_lines_ex(rect, 0.34, 6, 1.0, edge);
-        }
-        let tw = fonts.width(key, Style::Bold);
-        fonts.draw(d, key, rect.x + (rect.width - tw) * 0.5, rect.y, Style::Bold, ink);
-        let nw = fonts.width(name, Style::Small);
-        let color = match look {
-            Cap::Warn => WARN,
-            Cap::Off => FAINT,
-            _ => TEXT,
-        };
-        fonts.draw(d, name, cx - nw * 0.5, row + 23.0 * k, Style::Small, color);
-    }
-    Rectangle::new(margin, center.1 - dial * 0.5, plate.x + plate.width - margin, dial)
+    [("Z", "asist.", switch(app.settings.assist)), ("G", "graved.", switch(app.settings.gravity)), ("L", "local", local), ("O", "crucero", switch(app.settings.cruise)), ("Y", path.0, path.1)]
 }
 
-/// La placa de arriba a la derecha: la fase del final (o la version) con su
-/// tecla y, abajo, las teclas de moverse entre lugares. Devuelve el
-/// rectangulo que ocupa.
-fn status(d: &mut RaylibDrawHandle, ui: &Ui, skin: &Skin, app: &App, width: f32) -> Rectangle {
-    let fonts = ui.fonts;
+/// Las dos cintas: la velocidad a la izquierda (con la maxima marcada) y la
+/// altitud a la derecha (sobre que, y en que marco o a que altura la
+/// sostiene el modo local). Devuelve lo que ocupan.
+fn tapes(d: &mut RaylibDrawHandle, ui: &Ui, th: &piloto::Theme, app: &App, width: f32, height: f32) -> [Rectangle; 2] {
     let k = ui.k();
-    let c = &app.cycle;
-    let clock = |seconds: f64| format!("{:02}:{:02}", (seconds / 60.0) as u32, (seconds % 60.0) as u32);
-    let (title, hint) = match (app.ship_name(), c.phase) {
-        (Some(_), _) => ("Guatemala".to_string(), "[V] OCASO"),
-        (None, Phase::Agony) => (Phase::Agony.name().to_string(), "[J] desatar el final"),
-        (None, phase) => (format!("{}  {}", phase.name(), clock(c.tau)), "[J] renacer"),
+    let f = &app.flight;
+    let body = |i| pretty(app.body_name(i));
+    let tall = 250.0 * k;
+    let top = (height - tall) * 0.5;
+    let speed = piloto::Tape {
+        value: f.speed,
+        span: f.max_speed.max(f.speed).max(20.0),
+        label: "vel",
+        unit: "u/s",
+        limit: (f.max_speed > 0.0).then_some(f.max_speed),
+        hot: f.max_speed > 0.0 && f.speed > f.max_speed * 1.02,
+        notes: vec![format!("máx {:.0}", f.max_speed)],
     };
-    let second = match app.ship_name() {
-        Some(name) => format!("[B] {}   [N] lugar   [H] volver   [F1] ayuda", pretty(name)),
-        None => "[V] chapina   [N] lugar   [H] volver   [F1] ayuda".to_string(),
+    let place = match (app.settings.local, f.local, f.hold) {
+        (true, true, Some(h)) => format!("local · sostiene {h:.0}"),
+        (true, true, None) => "local".to_string(),
+        _ => format!("marco: {}", body(f.frame)),
     };
-    let pad = 16.0 * k;
-    let w = (fonts.label_width(&title, skin.heading, skin) + 22.0 * k + keys_width(fonts, hint)).max(keys_width(fonts, &second)).max(330.0 * k) + pad * 2.0;
-    // En pasos: el reloj cambia de ancho y cada ancho hornea su fondo.
-    let w = (w / (28.0 * k)).ceil() * 28.0 * k;
-    let h = if skin.chapin { 92.0 } else { 84.0 } * k;
-    let rect = Rectangle::new((width - 12.0 * k - w).round(), (12.0 * k).round(), w.round(), h.round());
-    ui.panel(d, skin.plate, rect);
-    let top = rect.y + if skin.chapin { 20.0 } else { 13.0 } * k;
-    fonts.label(d, &title, rect.x + pad, top, skin.heading, skin, skin.accent);
-    keys(d, fonts, skin, hint, rect.x + rect.width - pad, top + 2.0 * k, Align::Right, DIM, 1.0);
-    keys(d, fonts, skin, &second, rect.x + pad, top + 36.0 * k, Align::Left, DIM, 1.0);
-    rect
+    let place = if f.contact { format!("{place} · contacto") } else { place };
+    let altitude = piloto::Tape {
+        value: f.altitude.max(0.0),
+        span: (f.altitude * 1.2).max(60.0),
+        label: "alt",
+        unit: "u",
+        limit: None,
+        hot: f.contact,
+        notes: vec![format!("sobre {}", body(f.nearest)), place],
+    };
+    [
+        piloto::tape(d, ui, th, piloto::Side::Left, 118.0 * k, top, tall, &speed),
+        piloto::tape(d, ui, th, piloto::Side::Right, width - 118.0 * k, top, tall, &altitude),
+    ]
 }
 
 // Los titulos ----------------------------------------------------------------
@@ -1098,7 +911,7 @@ fn intro(d: &mut RaylibDrawHandle, ui: &Ui, skin: &Skin, app: &App, hud: &Hud, w
     d.draw_line_ex(Vector2::new(width * 0.5 - reach, rule), Vector2::new(width * 0.5 - 10.0 * k, rule), 1.0, stroke);
     d.draw_line_ex(Vector2::new(width * 0.5 + 10.0 * k, rule), Vector2::new(width * 0.5 + reach, rule), 1.0, stroke);
     d.draw_poly(Vector2::new(width * 0.5, rule), 4, 4.5 * k, 0.0, stroke);
-    keys(d, fonts, skin, hints, width * 0.5, rule + 14.0 * k, Align::Center, TEXT, words);
+    keys(d, fonts, &piloto::Theme::of(skin.chapin), hints, width * 0.5, rule + 14.0 * k, Align::Center, TEXT, words);
 }
 
 pub fn draw(d: &mut RaylibDrawHandle, ui: &Ui, app: &App, fps: u32, hud: &Hud, tweaks: &Tweaks, player: Option<&PlayerView>) {
@@ -1112,78 +925,79 @@ pub fn draw(d: &mut RaylibDrawHandle, ui: &Ui, app: &App, fps: u32, hud: &Hud, t
     let chapin = app.ship_name().is_some();
     let skin = Skin::of(chapin);
     let greeting = hud.age < INTRO && !hud.intro_over;
-
-    let plate = status(d, ui, &skin, app, width);
-
-    // Nombres de los cuerpos sobre su posicion en pantalla; los que caen
-    // bajo la placa de arriba no se dibujan (se enciman con su texto).
-    // (Mientras se ve un titulo no salen: se le enciman.)
+    // Durante la bienvenida el vuelo no se ve: entra al irse el titulo.
+    let shown = if hud.intro_over { 1.0 } else { crate::math::smoothstep(INTRO - 1.6, INTRO - 0.2, hud.age) };
+    let th = piloto::Theme::of(chapin).faded(shown);
+    // Mientras se ve un titulo no salen las marcas: se le enciman.
     let titled = greeting || app.transition_title().is_some_and(|(_, shown)| shown > 0.05);
-    for m in app.markers.iter().filter(|_| !titled) {
-        let name = pretty(m.name);
-        let distance = if m.distance >= 1000.0 {
-            format!("{:.1}k", m.distance / 1000.0)
-        } else {
-            format!("{:.0}", m.distance)
-        };
-        let nw = fonts.width(name, Style::Bold);
-        let dw = fonts.width(&distance, Style::Small);
-        let w = nw + dw + 28.0 * k;
-        // La marca sale en pixeles del render: en pantalla completa, estirada.
-        let (x, y) = ui.fit.point(m.x, m.y);
-        let rect = Rectangle::new((x - w * 0.5).round(), (y - 40.0 * k).round(), w.round(), (26.0 * k).round());
-        let below = Rectangle::new(rect.x, rect.y, rect.width, 40.0 * k);
-        if below.check_collision_recs(plate) {
-            continue;
-        }
-        // Un rombo en el lugar y la pildora con el nombre encima.
-        d.draw_poly(Vector2::new(x, y - 6.0 * k), 4, 5.0 * k, 0.0, skin.accent);
-        pill(d, rect, fade(skin.flat, 0.8), Some(fade(skin.accent, 0.45)));
-        fonts.draw(d, name, rect.x + 10.0 * k, rect.y + 2.0 * k, Style::Bold, skin.accent);
-        fonts.draw(d, &distance, rect.x + 18.0 * k + nw, rect.y + 5.0 * k, Style::Small, DIM);
+    // Lo que ocupa el HUD: las marcas no se dibujan encima.
+    let mut zones: Vec<Rectangle> = Vec::new();
+
+    zones.push(corner(d, ui, &th, app));
+    let compass = piloto::compass(d, ui, &th, &app.compass, width * 0.5, 46.0 * k, (440.0 * k).min(width * 0.4));
+    zones.push(compass);
+    zones.extend(tapes(d, ui, &th, app, width, height));
+    piloto::reticle(d, &th, width * 0.5, height * 0.5, k);
+    zones.push(piloto::modes(d, ui, &th, &switches(app), width * 0.5, height - 34.0 * k));
+    if let Some(view) = player {
+        zones.push(piloto::music(d, ui, &th, view, (width as i32, height as i32)));
     }
 
-    // Arriba a la izquierda: las estadisticas y el panel de Faro.
-    let mut left_top = 12.0 * k;
+    // A la izquierda, abajo del titulo, las estadisticas; abajo a la
+    // izquierda, el panel de Faro; al centro, los ajustes.
     if hud.stats {
-        let rect = lines_panel(d, fonts, &skin, 12.0 * k, left_top, &stats_lines(app, fps));
-        left_top = rect.y + rect.height + 10.0 * k;
+        let top = zones[0].y + zones[0].height + 8.0 * k;
+        zones.push(lines_panel(d, fonts, &th, 16.0 * k, top, &stats_lines(app, fps)));
     }
     if let Some(readout) = app.faro_readout().filter(|_| !titled) {
-        lines_panel(d, fonts, &skin, 12.0 * k, left_top, &faro_lines(&readout));
+        // Abajo a la izquierda, en letra chica: arriba tapaba la cinta.
+        let lines = faro_lines(&readout);
+        let (_, h) = small_size(fonts, &lines);
+        zones.push(small_panel(d, fonts, &th, 16.0 * k, height - h - 16.0 * k, &lines));
     }
     if tweaks.open {
         let lines = tweaks.lines(app);
-        let (_, h) = lines_size(fonts, &lines);
-        lines_panel(d, fonts, &skin, 12.0 * k, (height - h) * 0.42, &lines);
+        let (w, h) = lines_size(fonts, &lines);
+        zones.push(lines_panel(d, fonts, &th, (width - w) * 0.5, (height - h) * 0.5, &lines));
     }
 
-    let board = dashboard(d, ui, &skin, app, height);
-    let mut right = width - 12.0 * k;
-    if let Some(view) = player {
-        let rect = draw_player(d, ui, &skin, view, (width as i32, height as i32));
-        right = rect.x;
-    }
-
-    // Arriba al centro: lo urgente.
+    // Un solo aviso, bajo el rumbo: lo urgente le gana a un lugar, y un
+    // lugar a una vista fija.
     let f = &app.flight;
+    let fading = |age: f32| ((TOAST - age) / 0.5).clamp(0.0, 1.0) * (age / 0.15).clamp(0.0, 1.0);
     let alert = if f.braking {
-        Some("[X] freno activo")
+        Some(("[X] freno activo".to_string(), th.warn))
     } else if f.boundary {
-        Some("Límite del sistema: girá para regresar")
+        Some(("Límite del sistema: girá para regresar".to_string(), th.warn))
     } else if app.freeze.is_some() {
-        Some("[F7] frustum congelado: el culling y el LOD se calculan desde la cámara amarilla")
+        Some(("[F7] frustum congelado: el culling y el LOD se calculan desde la cámara amarilla".to_string(), th.ink))
     } else {
         None
     };
-    if let Some(text) = alert {
-        let w = toast_width(fonts, text);
-        let rect = Rectangle::new(((width - w) * 0.5).round(), (14.0 * k).round(), w.round(), (36.0 * k).round());
-        let color = if app.freeze.is_some() && !f.braking && !f.boundary { skin.accent } else { WARN };
-        pill(d, rect, skin.flat, Some(fade(color, 0.8)));
-        keys(d, fonts, &skin, text, rect.x + 18.0 * k, rect.y + 7.0 * k, Align::Left, color, 1.0);
+    let banner = hud.banner.filter(|&(_, since)| hud.age - since < TOAST).map(|(text, since)| {
+        let text = match hud.banner_where {
+            Some(place) => format!("{}  ·  {}", pretty(text), pretty(place)),
+            None => pretty(text).to_string(),
+        };
+        (text, fading(hud.age - since))
+    });
+    let preset = hud.preset.filter(|&(_, since)| hud.age - since < TOAST).map(|(name, since)| (format!("Vista fija: {name}"), fading(hud.age - since)));
+    let notice_y = compass.y + compass.height + 6.0 * k;
+    match (alert, banner.or(preset)) {
+        (Some((text, color)), _) => zones.push(piloto::notice(d, ui, &th, &text, width * 0.5, notice_y, color, 1.0)),
+        (None, Some((text, alpha))) if alpha > 0.0 => zones.push(piloto::notice(d, ui, &th, &text, width * 0.5, notice_y, th.text, alpha)),
+        _ => {}
+    }
+    // El minijuego que se ofrece, abajo sobre los modos: respira.
+    if let Some(text) = hud.prompt {
+        let (key, rest) = text.split_once(" · ").unwrap_or(("Enter", text));
+        let breathe = (0.5 + 0.5 * (hud.age * 3.0).sin()) * 0.25 + 0.75;
+        zones.push(piloto::notice(d, ui, &th, &format!("[{key}] {rest}"), width * 0.5, height - 78.0 * k, th.ink, breathe));
     }
 
+    if !titled {
+        piloto::markers(d, ui, &th, app, &zones);
+    }
     if greeting {
         intro(d, ui, &skin, app, hud, width, height);
     }
@@ -1195,40 +1009,8 @@ pub fn draw(d: &mut RaylibDrawHandle, ui: &Ui, app: &App, fps: u32, hud: &Hud, t
             fonts.draw_at(d, name, (width - w) * 0.5, height * 0.44 - size * 0.6, Style::Title, size, fade(skin.accent, shown));
         }
     }
-
-    // Los avisos, abajo: entre el tablero y el reproductor si caben; si no,
-    // encima de ellos.
-    let left = board.x + board.width;
-    let mut texts: Vec<(String, f32)> = Vec::new();
-    if let Some(text) = hud.prompt {
-        // Siempre visible mientras se este cerca: respira.
-        let (key, rest) = text.split_once(" · ").unwrap_or(("Enter", text));
-        texts.push((format!("[{key}] {rest}"), (0.5 + 0.5 * (hud.age * 3.0).sin()) * 0.25 + 0.75));
-    }
-    let fading = |age: f32| ((TOAST - age) / 0.5).clamp(0.0, 1.0) * (age / 0.15).clamp(0.0, 1.0);
-    if let Some((text, since)) = hud.banner
-        && hud.age - since < TOAST
-    {
-        let text = match hud.banner_where {
-            Some(place) => format!("{}  ·  {}", pretty(text), pretty(place)),
-            None => pretty(text).to_string(),
-        };
-        texts.push((text, fading(hud.age - since)));
-    }
-    if let Some((name, since)) = hud.preset
-        && hud.age - since < TOAST
-    {
-        texts.push((format!("Vista fija: {name}"), fading(hud.age - since)));
-    }
-    let widest = texts.iter().map(|(t, _)| toast_width(fonts, t)).fold(0.0, f32::max);
-    let fits = widest + 24.0 * k < right - left;
-    let (center, bottom) = if fits { ((left + right) * 0.5, height - 14.0 * k) } else { (width * 0.5, board.y - 10.0 * k) };
-    for (slot, (text, alpha)) in texts.iter().enumerate() {
-        toast(d, fonts, &skin, text, *alpha, center, bottom, slot as f32);
-    }
-
     if hud.help {
-        help(d, fonts, &skin, width, height);
+        help(d, fonts, &th, width, height);
     }
 }
 
@@ -1290,10 +1072,10 @@ fn stats_lines(app: &App, fps: u32) -> Vec<String> {
 }
 
 /// La ayuda (F1): cada tecla con lo que hace, en dos columnas, al centro.
-fn help(d: &mut RaylibDrawHandle, fonts: &Fonts, skin: &Skin, width: f32, height: f32) {
+fn help(d: &mut RaylibDrawHandle, fonts: &Fonts, th: &piloto::Theme, width: f32, height: f32) {
     const KEYS: [(&str, &str); 26] = [
         ("Mouse", "apuntar la nave"),
-        ("Clic der.", "mirar alrededor"),
+        ("Clic_der.", "mirar alrededor"),
         ("Rueda", "distancia de la cámara"),
         ("W S A D", "adelante, atrás y a los lados"),
         ("Espacio Ctrl", "subir y bajar"),
@@ -1321,22 +1103,27 @@ fn help(d: &mut RaylibDrawHandle, fonts: &Fonts, skin: &Skin, width: f32, height
     ];
     let k = fonts.scale();
     let rows = KEYS.len().div_ceil(2);
-    let key_w = KEYS.iter().map(|(key, _)| key.split(' ').filter(|p| !p.is_empty()).map(|p| cap_width(fonts, p) + 4.0 * k).sum::<f32>()).fold(0.0, f32::max);
+    // (Las teclas van separadas por espacios; `_` es un espacio adentro de
+    // una tecla.)
+    let parts = |key: &'static str| key.split(' ').filter(|p| !p.is_empty()).map(|p| p.replace('_', " "));
+    let key_w = KEYS.iter().map(|(key, _)| parts(key).map(|p| piloto::chip_width(fonts, &p) + 4.0 * k).sum::<f32>()).fold(0.0, f32::max);
     let text_w = KEYS.iter().map(|(_, text)| fonts.width(text, Style::Body)).fold(0.0, f32::max);
     let column = key_w + 10.0 * k + text_w;
     let pad = 22.0 * k;
     let (w, h) = (column * 2.0 + 36.0 * k + pad * 2.0, rows as f32 * 28.0 * k + pad * 2.0 + 40.0 * k);
     let rect = Rectangle::new(((width - w) * 0.5).round(), ((height - h) * 0.5).round(), w.round(), h.round());
-    flat_panel(d, rect, Color::new(skin.flat.r, skin.flat.g, skin.flat.b, 238), skin.edge, 14.0 * k);
-    fonts.label(d, "Controles", rect.x + pad, rect.y + pad - 6.0 * k, skin.heading, skin, skin.accent);
+    d.draw_rectangle(0, 0, width as i32, height as i32, Color::new(0, 0, 0, 90));
+    piloto::block(d, th, rect);
+    d.draw_rectangle_rec(rect, Color::new(0, 0, 0, 70));
+    piloto::text(d, fonts, "CONTROLES", rect.x + pad, rect.y + pad - 6.0 * k, Style::Heading, th.ink, Align::Left);
     let hint = "[F1] cerrar";
-    keys(d, fonts, skin, hint, rect.x + rect.width - pad, rect.y + pad - 4.0 * k, Align::Right, DIM, 1.0);
+    keys(d, fonts, th, hint, rect.x + rect.width - pad, rect.y + pad - 4.0 * k, Align::Right, th.text, 0.85);
     for (i, (key, text)) in KEYS.iter().enumerate() {
         let x = rect.x + pad + (i / rows) as f32 * (column + 36.0 * k);
         let y = rect.y + pad + 40.0 * k + (i % rows) as f32 * 28.0 * k;
         let mut at = x;
-        for part in key.split(' ').filter(|p| !p.is_empty()) {
-            at += cap(d, fonts, skin, part, at, y, Cap::Plain, 1.0) + 4.0 * k;
+        for part in parts(key) {
+            at += piloto::chip(d, fonts, th, &part, at, y, Cap::Plain, 1.0) + 4.0 * k;
         }
         fonts.draw(d, text, x + key_w + 10.0 * k, y, Style::Body, TEXT);
     }
@@ -1349,7 +1136,7 @@ fn help(d: &mut RaylibDrawHandle, fonts: &Fonts, skin: &Skin, width: f32, height
 pub fn minigame(d: &mut RaylibDrawHandle, ui: &Ui, overlay: &Overlay) {
     let fonts = ui.fonts;
     let fit = ui.fit;
-    let skin = Skin::of(true);
+    let th = piloto::Theme::of(true);
     let rgba = |c: [u8; 4]| Color::new(c[0], c[1], c[2], c[3]);
     let s = fit.scale;
     let k = ui.k();
@@ -1359,27 +1146,19 @@ pub fn minigame(d: &mut RaylibDrawHandle, ui: &Ui, overlay: &Overlay) {
     };
     for item in &overlay.items {
         match item {
-            Item::Panel { x, y, w, h } => {
-                let rect = place(*x, *y, *w, *h);
-                // Las muy bajitas (un renglon) van lisas: no les cabe la orilla.
-                if rect.height < 56.0 * k {
-                    flat_panel(d, rect, skin.flat, skin.edge, 12.0 * k);
-                } else {
-                    ui.panel(d, piel::Panel::Placa, rect);
-                }
-            }
-            Item::Card { x, y, w, h } => ui.panel(d, piel::Panel::Cartel, place(*x, *y, *w, *h)),
+            Item::Panel { x, y, w, h } => piloto::frame(d, &th, place(*x, *y, *w, *h), k, false),
+            Item::Card { x, y, w, h } => piloto::frame(d, &th, place(*x, *y, *w, *h), k, true),
             Item::Sign { text, x, y, size, paint, align, alpha } => {
                 let (x, y) = fit.point(*x, *y);
                 ui.sign(d, text, x, y, size * s, *paint, *align, *alpha as f32 / 255.0);
             }
             Item::Keys { text, x, y, align } => {
                 let (x, y) = fit.point(*x, *y);
-                keys(d, fonts, &skin, text, x, y, *align, TEXT, 1.0);
+                keys(d, fonts, &th, text, x, y, *align, TEXT, 1.0);
             }
             Item::Gauge { x, y, size, value, max, unit, hot } => {
                 let (x, y) = fit.point(*x, *y);
-                gauge(d, ui, &skin, x, y, size * s, value / max.max(1e-3), *hot, &format!("{value:.0}"), unit);
+                piloto::gauge(d, ui, &th, x, y, size * s, value / max.max(1e-3), *hot, &format!("{value:.0}"), unit);
             }
             Item::Bar { x, y, w, h, fill, color, vertical } => {
                 let rect = place(*x, *y, *w, *h);
@@ -1466,41 +1245,6 @@ fn faro_lines(r: &FaroReadout) -> Vec<String> {
 
 // El reproductor -------------------------------------------------------------
 
-/// Tamano del reproductor (a escala 1): abajo a la derecha.
-const PLAYER_SIZE: (f32, f32) = (432.0, 134.0);
-
-/// Donde va cada cosa del reproductor.
-struct PlayerLayout {
-    rect: Rectangle,
-    /// El centro y el radio del disco.
-    disc: (f32, f32, f32),
-    /// Donde empieza el texto.
-    text: f32,
-    /// Anterior, pausa y siguiente.
-    buttons: [Rectangle; 3],
-    bar: Rectangle,
-    /// Donde empiezan las barritas del volumen.
-    volume: (f32, f32),
-}
-
-fn player_layout(screen: (i32, i32), k: f32) -> PlayerLayout {
-    let (w, h) = (PLAYER_SIZE.0 * k, PLAYER_SIZE.1 * k);
-    let (x, y) = ((screen.0 as f32 - w - 12.0 * k).round(), (screen.1 as f32 - h - 12.0 * k).round());
-    let radius = 46.0 * k;
-    let disc = (x + 18.0 * k + radius, y + h * 0.5 + 5.0 * k, radius);
-    let text = disc.0 + radius + 18.0 * k;
-    let row = y + h - 30.0 * k;
-    let button = |cx: f32, size: f32| Rectangle::new(text + cx * k - size * k * 0.5, row - size * k * 0.5, size * k, size * k);
-    PlayerLayout {
-        rect: Rectangle::new(x, y, w, h),
-        disc,
-        text,
-        buttons: [button(16.0, 30.0), button(58.0, 38.0), button(100.0, 30.0)],
-        bar: Rectangle::new(text, y + 72.0 * k, x + w - 18.0 * k - text, 5.0 * k),
-        volume: (x + w - 18.0 * k - 62.0 * k, row),
-    }
-}
-
 /// Lo que se toco del reproductor con el mouse.
 pub enum PlayerHit {
     Previous,
@@ -1512,7 +1256,7 @@ pub enum PlayerHit {
 
 /// `scale` es la del HUD (`Fonts::scale`).
 pub fn player_hit(screen: (i32, i32), scale: f32, mouse: (f32, f32)) -> Option<PlayerHit> {
-    let layout = player_layout(screen, scale);
+    let layout = piloto::music_layout(screen, scale);
     let point = Vector2::new(mouse.0, mouse.1);
     if layout.buttons[0].check_collision_point_rec(point) {
         return Some(PlayerHit::Previous);
@@ -1549,96 +1293,6 @@ fn clipped(fonts: &Fonts, text: &str, style: Style, room: f32) -> String {
         cut.pop();
     }
     format!("{}…", cut.trim_end())
-}
-
-/// El reproductor: una placa de tela con un barrilete que gira mientras
-/// suena (con un arco alrededor que marca por donde va la cancion), el
-/// titulo y el artista, la barra de avance con sus tiempos, los botones
-/// dibujados y el volumen en barritas. Devuelve el rectangulo que ocupa.
-fn draw_player(d: &mut RaylibDrawHandle, ui: &Ui, skin: &Skin, view: &PlayerView, screen: (i32, i32)) -> Rectangle {
-    let fonts = ui.fonts;
-    let k = ui.k();
-    let layout = player_layout(screen, k);
-    let rect = layout.rect;
-    ui.panel(d, piel::Panel::Placa, rect);
-
-    // El disco: gira con la cancion (en pausa se queda donde iba).
-    let (cx, cy, radius) = layout.disc;
-    let center = Vector2::new(cx.round(), cy.round());
-    let (fill, right) = if view.length > 0.0 {
-        ((view.time / view.length).clamp(0.0, 1.0), clock(view.length))
-    } else {
-        // La marimba no se acaba: va y viene.
-        (0.5 + 0.5 * (view.time * 0.5).sin(), "en vivo".to_string())
-    };
-    d.draw_circle_v(Vector2::new(center.x + 2.0 * k, center.y + 3.0 * k), radius + 3.0 * k, Color::new(0, 0, 0, 90));
-    let size = (radius * 2.0).round();
-    let at = Rectangle::new(center.x - size * 0.5, center.y - size * 0.5, size, size);
-    let spin = (view.time * 24.0).rem_euclid(360.0);
-    if ui.art.put(d, ui.thread, Key::Kite(size as u32), |_, _| at, if spin == 0.0 { 0.001 } else { spin }, Color::WHITE, false).is_none() {
-        d.draw_circle_v(center, radius, Color::new(142, 26, 48, 255));
-    }
-    d.draw_ring(center, radius + 3.0 * k, radius + 6.5 * k, -90.0, 270.0, 48, Color::new(255, 255, 255, 30));
-    d.draw_ring(center, radius + 3.0 * k, radius + 6.5 * k, -90.0, -90.0 + 360.0 * fill, 48, skin.accent);
-
-    // El titulo, el artista y cual es de cuantas.
-    let x = layout.text;
-    let room = rect.x + rect.width - 18.0 * k - x;
-    let (name, artist) = song_parts(&view.title);
-    let top = rect.y + 20.0 * k;
-    fonts.draw(d, &clipped(fonts, name, Style::Fat, room), x, top, Style::Fat, TEXT);
-    let state = if view.playing { "sonando" } else { "en pausa" };
-    let count = format!("{} de {}  ·  {state}", view.index + 1, view.count);
-    let line = match artist {
-        Some(artist) => format!("{artist}  ·  {count}"),
-        None => count,
-    };
-    fonts.draw(d, &clipped(fonts, &line, Style::Small, room), x, top + 27.0 * k, Style::Small, DIM);
-
-    // La barra de avance con su perilla y los tiempos a los lados.
-    let bar = layout.bar;
-    d.draw_rectangle_rounded(bar, 1.0, 6, Color::new(255, 255, 255, 38));
-    if fill > 0.0 {
-        d.draw_rectangle_rounded(Rectangle::new(bar.x, bar.y, (bar.width * fill).max(bar.height), bar.height), 1.0, 6, skin.accent);
-    }
-    let knob = Vector2::new(bar.x + bar.width * fill, bar.y + bar.height * 0.5);
-    d.draw_circle_v(knob, 7.0 * k, Color::new(0, 0, 0, 90));
-    d.draw_circle_v(knob, 5.5 * k, TEXT);
-
-    // Los botones: anterior, pausa (un circulo dorado) y siguiente.
-    let mid = |r: &Rectangle| (r.x + r.width * 0.5, r.y + r.height * 0.5);
-    let (px, py) = mid(&layout.buttons[0]);
-    d.draw_rectangle_rounded(Rectangle::new(px - 9.0 * k, py - 7.0 * k, 3.0 * k, 14.0 * k), 0.5, 2, TEXT);
-    triangle(d, Vector2::new(px + 8.0 * k, py - 7.0 * k), Vector2::new(px - 5.0 * k, py), Vector2::new(px + 8.0 * k, py + 7.0 * k), TEXT);
-    let (bx, by) = mid(&layout.buttons[1]);
-    d.draw_circle_v(Vector2::new(bx, by), 18.0 * k, skin.accent);
-    let dark = Color::new(34, 18, 40, 255);
-    if view.playing {
-        d.draw_rectangle_rounded(Rectangle::new(bx - 6.5 * k, by - 8.0 * k, 4.5 * k, 16.0 * k), 0.4, 2, dark);
-        d.draw_rectangle_rounded(Rectangle::new(bx + 2.0 * k, by - 8.0 * k, 4.5 * k, 16.0 * k), 0.4, 2, dark);
-    } else {
-        triangle(d, Vector2::new(bx - 5.0 * k, by - 9.0 * k), Vector2::new(bx - 5.0 * k, by + 9.0 * k), Vector2::new(bx + 10.0 * k, by), dark);
-    }
-    let (nx, ny) = mid(&layout.buttons[2]);
-    triangle(d, Vector2::new(nx - 8.0 * k, ny - 7.0 * k), Vector2::new(nx + 5.0 * k, ny), Vector2::new(nx - 8.0 * k, ny + 7.0 * k), TEXT);
-    d.draw_rectangle_rounded(Rectangle::new(nx + 6.0 * k, ny - 7.0 * k, 3.0 * k, 14.0 * k), 0.5, 2, TEXT);
-
-    // Los tiempos, entre los botones y el volumen.
-    let times = format!("{} / {right}", clock(view.time));
-    fonts.draw(d, &times, x + 128.0 * k, by - 9.0 * k, Style::Small, DIM);
-
-    // El volumen: una bocina y cinco barritas que suben.
-    let (vx, vy) = layout.volume;
-    d.draw_rectangle((vx - 16.0 * k) as i32, (vy - 3.0 * k) as i32, (4.0 * k) as i32, (7.0 * k) as i32, DIM);
-    triangle(d, Vector2::new(vx - 12.0 * k, vy - 3.0 * k), Vector2::new(vx - 5.0 * k, vy - 8.0 * k), Vector2::new(vx - 5.0 * k, vy + 8.0 * k), DIM);
-    triangle(d, Vector2::new(vx - 12.0 * k, vy - 3.0 * k), Vector2::new(vx - 5.0 * k, vy + 8.0 * k), Vector2::new(vx - 12.0 * k, vy + 4.0 * k), DIM);
-    for i in 0..5 {
-        let tall = (5.0 + 3.5 * i as f32) * k;
-        let lit = view.volume > (i as f32 + 0.5) / 5.0 - 0.1;
-        let piece = Rectangle::new(vx + 4.0 * k + i as f32 * 11.0 * k, vy + 9.0 * k - tall, 7.0 * k, tall);
-        d.draw_rectangle_rounded(piece, 0.5, 3, if lit { skin.accent } else { Color::new(255, 255, 255, 40) });
-    }
-    rect
 }
 
 fn clock(seconds: f32) -> String {

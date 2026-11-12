@@ -438,9 +438,30 @@ gran llamarada.
   cuadras de la 7a Avenida quedan sin torres para no tapar la vista, y no
   se construye donde un barranco cruza la cuadra (ahí la cuenta que pone
   cada objeto en la cuadrícula no converge).
-- **El HUD** ([hud/](src/hud)): lo que tiene dibujo se **hornea en CPU** y
-  raylib solo lo pega como textura y le pone encima el texto, las teclas,
-  los arcos y las agujas. Cada versión tiene su piel (`Skin`).
+- **El HUD** ([hud/](src/hud)): el del vuelo es un **HUD de piloto**
+  ([hud/piloto.rs](src/hud/piloto.rs)): líneas finas sobre la vista, sin
+  placas, en ámbar de brasa (OCASO) o jade (chapina), cada línea y cada
+  letra con una sombra negra a 62 % de su alfa abajo, para que se lea sobre
+  el cielo de día. Lo que tiene dibujo (los títulos, el barrilete, los
+  rótulos) se **hornea en CPU** y raylib solo lo pega como textura.
+  - **La cinta de rumbo**: el rumbo es el ángulo de la dirección de la
+    cámara sobre el plano de las órbitas, `atan2(x, -z)` en grados de 0 a
+    360 (`App::compass`); la cinta muestra ±40° con una marca cada 5, los
+    puntos cardinales (N, E, S, O) y las decenas cada 30, y cada cuerpo como
+    un rombo en su rumbo relativo `(b - rumbo + 540) mod 360 - 180`, con su
+    nombre si no choca con la caja del rumbo ni con otro.
+  - **Las cintas de velocidad y altitud**: corren con el valor; la escala
+    abarca la máxima (o el valor) y el paso de las marcas es 1, 2 o 5 por
+    una potencia de 10, el que deja unas cinco (`nice_step`); las marcas se
+    desvanecen hacia las puntas con `1 - (dy / mitad)^3` y el valor va en
+    una caja con pico hacia la cinta. La velocidad marca la máxima con un
+    corchete y se enciende al pasarla.
+  - **Un solo aviso a la vez**, bajo el rumbo: el freno, el límite o el
+    frustum congelado le ganan a un lugar, y un lugar a una vista fija.
+    **Las marcas** de cuerpos y lugares van de la más cercana a la más
+    lejana y la que se encima con lo que ocupa el HUD (cada parte devuelve
+    su rectángulo) o con una ya puesta no se dibuja. Al acabar la
+    bienvenida, todo entra desvaneciéndose (`Theme::faded`).
   - **Las letras** ([hud/letras.rs](src/hud/letras.rs)): raylib da la
     cobertura de cada glifo (`LoadFontData`, lo mismo que hace para el
     texto, sin ventana ni GPU); la palabra se arma con el avance de cada
@@ -474,27 +495,18 @@ gran llamarada.
     La Cooper Black trae cifras de estilo antiguo (el 0 mide como una
     minúscula), así que los números salen de otra letra, cargada al tamaño
     con que su H mide lo mismo y asentada en el mismo renglón.
-  - **La piel** ([hud/piel.rs](src/hud/piel.rs)): los fondos de los paneles
-    (lámina de hierro con las esquinas cortadas y filo de bronce; tela de
-    corte con rayitas de jaspe, la faja arriba y la orilla bordada), la
-    carátula del velocímetro (un ojo de iris de brasas en OCASO; un aro de
-    picos de faja en la chapina) y el barrilete del reproductor, con
-    distancias con signo (caja redondeada, caja con chaflán, círculo).
+  - **Lo horneado** ([hud/piel.rs](src/hud/piel.rs)): el barrilete de la
+    música y la chispa de las brasas del título, con distancias con signo.
   - **Lo que raylib dibuja encima** ([hud/mod.rs](src/hud/mod.rs)): `Art`
     guarda cada textura horneada por lo que es (clase y tamaño) y la hornea
     la primera vez que se pide; durante la bienvenida se hornea el título
-    de la otra versión para que la primera V no dé un tirón. El tablero de
-    vuelo va abajo a la izquierda: el velocímetro (el arco o la aguja en
-    `velocidad / máxima` sobre una escala de 270°), la altitud y los
-    interruptores con su tecla, encendida si están puestos. La letra del
+    de la otra versión para que la primera V no dé un tirón. La letra del
     texto es Segoe UI con sus tildes, un atlas por tamaño; la romana (OCASO)
     y la gorda (chapina) van en sus propios atlas, y lo que a una le falte
     (el punto medio, las flechas) se dibuja con la negrita del texto. Todo
     va a la escala `k` (alto de la imagen entre 720): en pantalla completa
-    el HUD crece con la imagen y las letras se cargan a ese tamaño. Los
-    avisos salen en una píldora abajo, entre el tablero y el reproductor si
-    caben y encima si no; mientras se ve un título, los nombres de los
-    planetas no se dibujan.
+    el HUD crece con la imagen y las letras se cargan a ese tamaño;
+    mientras se ve un título, las marcas no se dibujan.
 - **El reproductor** ([player.rs](src/player.rs)): raylib solo decodifica y
   reproduce. Los archivos se leen con Rust y se le pasan desde memoria,
   porque en Windows raylib abre rutas con la página de códigos ANSI y una
@@ -533,9 +545,10 @@ Reformador** (en el suelo); y el de Antigua, **Talega Surfers**.
   se juega, el sintetizador del vuelo calla y el reproductor de música se
   pausa.
 - **El texto encima** (`Overlay`): el juego dice qué va y dónde: texto,
-  placas y carteles de tela, rótulos pintados (`Sign`), renglones de teclas
-  (lo que va entre corchetes se dibuja como una tecla), barras y el
-  velocímetro. `hud::minigame` los dibuja con la piel chapina del HUD, con
+  placas y carteles, rótulos pintados (`Sign`), renglones de teclas (lo que
+  va entre corchetes se dibuja como una tecla), barras y el velocímetro.
+  `hud::minigame` los dibuja como el HUD del vuelo (velos oscuros con
+  esquinas de corchete, teclas de una línea, un velocímetro de arco), con
   sombra o filo para que se lean sobre cualquier fondo. La lógica no sabe
   de raylib, y por eso se puede probar y capturar sin ventana
   (`--captura-marimba`).
@@ -716,6 +729,42 @@ cerca que ella. Las que pasan pegadas a la cámara son sólidas (se desvanecen
 solo a menos de 1.6 m) y se barren a lo ancho con lo que se mueven respecto
 a la cámara (4 muestras). Lo que queda detrás de una nave opaca (la pista,
 postes, humo, otras naves) no se pinta.
+
+**Las rivales de cerca van en 3D.** Un sprite es una foto ortográfica: a
+un lado de la cámara (o en una curva) el ángulo del rayo gira la camioneta
+40-60° y, sin perspectiva, sus costados quedaban paralelos en vez de irse
+hacia el punto de fuga: se veía atravesada en la calle, como dando la
+vuelta; y medida desde su centro, su cola (4.8 m más cerca) salía hasta la
+mitad de chica. Así que de 13 m para acá cada rival va con su malla (la
+baja) proyectada con la misma cámara de la pista, `x = cx + f (X - cx_cam) / z`,
+y de 13 a 19 m la fila se pinta con la malla y con el sprite sobre el mismo
+fondo y se promedian por `smoothstep(13, 19, d)`. Los sprites de lejos se
+escalan con la distancia de su cara más cercana, `d - (L/2 |cos θ| + W/2 |sin θ|)`,
+para que en el cambio midan lo mismo.
+
+- **El raster** ([minijuegos/malla.rs](src/minijuegos/malla.rs), `Indexed`):
+  cada vértice se proyecta una vez (en paralelo por tramos); cada triángulo
+  guarda sus índices y sus aristas ya divididas entre su área,
+  `l_i = a_i x + c_i y + d_i`, así cada fila solo suma; los que dan la
+  espalda (sus tres normales miran lejos de la cámara) y los que no tocan el
+  centro de ningún pixel no se apuntan. Es diferido: cada fila busca lo
+  más cercano en cada pixel (con `1/z` y `l_i / z_i` avanzando por suma) y
+  solo eso se sombrea. Lo que cruza el plano cercano se recorta.
+- **La luz por vértice**: el horneado ilumina en el marco de su cámara, con
+  la vista fija en `+z`; la luz solo depende de la normal. Cada vértice se
+  sombrea una vez por frame con su normal llevada a la cámara que lo ve
+  (`hornear::Solid::vertex`) y cada pixel interpola la luz lineal y la
+  emisión y les pone el tono con una tabla indexada con los bits del
+  flotante (`hornear::pixel`). Una camioneta pegada a la cámara cubre
+  cientos de miles de pixeles y del orden de 10 000 vértices; sus caras son
+  planas, así que sale igual. Las potencias y exponenciales van con
+  `math::fast_pow` (`2^(p log2 x)`, error de 3e-4).
+- **El halo de las LEDs**: el mismo del horneado (`hornear::led_halo`: la luz
+  de cada LED por lo que brilla su patrón, difuminada en dos escalas, menos
+  donde se amontonan), en una imagen a media resolución del sprite a esa
+  distancia, llenada con lo que la malla deja ver en el centro de cada celda
+  (las LEDs tapadas no brillan); cada fila la interpola una vez y cada pixel
+  solo a lo ancho.
 
 **Las naves con vida.**
 
