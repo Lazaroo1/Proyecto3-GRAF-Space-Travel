@@ -440,7 +440,10 @@ gran llamarada.
   cada objeto en la cuadrícula no converge).
 - **El HUD** ([hud/](src/hud)): el del vuelo es un **HUD de piloto**
   ([hud/piloto.rs](src/hud/piloto.rs)): líneas finas sobre la vista, sin
-  placas, en ámbar de brasa (OCASO) o jade (chapina), cada línea y cada
+  placas, en ámbar de brasa (OCASO) o blanco tibio (chapina, con los
+  colores de la faja solo en las luces de los modos y en las rayas tejidas
+  bajo el título, en la barra de la música y arriba de los carteles de los
+  minijuegos), cada línea y cada
   letra con una sombra negra a 62 % de su alfa abajo, para que se lea sobre
   el cielo de día. Lo que tiene dibujo (los títulos, el barrilete, los
   rótulos) se **hornea en CPU** y raylib solo lo pega como textura.
