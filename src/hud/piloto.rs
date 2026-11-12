@@ -1,7 +1,10 @@
 //! El HUD de piloto: sin placas ni cajas, lineas finas dibujadas sobre la
-//! vista como en la cabina de un avion de combate. Cada version con su
-//! color (OCASO en ambar de brasa, la chapina en jade) y todo con una sombra
-//! oscura debajo, para que se lea sobre el cielo de dia o sobre la estrella.
+//! vista como en la cabina de un avion de combate, todo con una sombra
+//! oscura debajo para que se lea sobre el cielo de dia o sobre la estrella.
+//! OCASO va en ambar de brasa. La chapina va en blanco tibio, sin un color
+//! que mande: el color sale de la faja en detalles chicos (las luces de los
+//! modos, cada una de un color como foquitos de feria; la raya bajo el
+//! titulo y la barra de la musica, tejidas en los colores de la faja).
 //!
 //! - **Rumbo**, arriba al centro: una cinta de brujula sobre el plano de las
 //!   orbitas (`App::compass`) con cada cuerpo marcado donde queda.
@@ -36,17 +39,32 @@ pub(super) struct Theme {
     pub dark: Color,
     /// Cuanto se ve todo (entra desvaneciendose al acabar la bienvenida).
     pub alpha: f32,
+    /// Los colores de la faja (la chapina): las luces de los modos y las
+    /// rayas tejidas. Vacio en OCASO.
+    pub weave: &'static [Color],
 }
+
+/// Los colores de la faja de la transicion, vivos para que se lean sobre el
+/// cielo: rojo, amarillo, verde, azul, morado y naranja.
+const WEAVE: [Color; 6] = [
+    Color::new(236, 52, 72, 255),
+    Color::new(255, 204, 48, 255),
+    Color::new(52, 196, 104, 255),
+    Color::new(64, 132, 255, 255),
+    Color::new(196, 72, 220, 255),
+    Color::new(255, 132, 40, 255),
+];
 
 impl Theme {
     pub fn of(chapin: bool) -> Self {
         if chapin {
             Self {
-                ink: Color::new(118, 240, 178, 255),
-                text: Color::new(234, 255, 244, 255),
-                warn: Color::new(255, 104, 124, 255),
-                dark: Color::new(6, 30, 22, 255),
+                ink: Color::new(250, 244, 232, 255),
+                text: Color::new(255, 252, 246, 255),
+                warn: Color::new(255, 96, 110, 255),
+                dark: Color::new(34, 24, 30, 255),
                 alpha: 1.0,
+                weave: &WEAVE,
             }
         } else {
             Self {
@@ -55,13 +73,14 @@ impl Theme {
                 warn: Color::new(255, 86, 64, 255),
                 dark: Color::new(34, 14, 6, 255),
                 alpha: 1.0,
+                weave: &[],
             }
         }
     }
 
     /// El mismo, a `alpha` de lo que se ve.
     pub fn faded(self, alpha: f32) -> Self {
-        Self { ink: fade(self.ink, alpha), text: fade(self.text, alpha), warn: fade(self.warn, alpha), dark: fade(self.dark, alpha), alpha: self.alpha * alpha }
+        Self { ink: fade(self.ink, alpha), text: fade(self.text, alpha), warn: fade(self.warn, alpha), dark: fade(self.dark, alpha), alpha: self.alpha * alpha, weave: self.weave }
     }
 
     /// Un velo negro a `a` (de 255), con lo que se ve.
@@ -87,6 +106,24 @@ fn shadow(c: Color) -> Color {
 pub(super) fn line(d: &mut RaylibDrawHandle, a: Vector2, b: Vector2, width: f32, color: Color) {
     d.draw_line_ex(a, b, width + 2.0, shadow(color));
     d.draw_line_ex(a, b, width, color);
+}
+
+/// Una raya horizontal de `x0` a `x1`: en la chapina, tejida en tramos de
+/// los colores de la faja (de `step` pixeles); en OCASO, lisa con `color`.
+pub(super) fn rule(d: &mut RaylibDrawHandle, th: &Theme, x0: f32, x1: f32, y: f32, width: f32, step: f32, color: Color) {
+    if th.weave.is_empty() || x1 <= x0 {
+        line(d, Vector2::new(x0, y), Vector2::new(x1, y), width, color);
+        return;
+    }
+    d.draw_line_ex(Vector2::new(x0 - 1.0, y), Vector2::new(x1 + 1.0, y), width + 2.0, th.veil(150));
+    let mut x = x0;
+    let mut i = 0;
+    while x < x1 {
+        let end = (x + step).min(x1);
+        d.draw_line_ex(Vector2::new(x, y), Vector2::new(end, y), width, fade(th.weave[i % th.weave.len()], th.alpha));
+        x = end;
+        i += 1;
+    }
 }
 
 /// Un texto con su sombra, alineado en `x`. Devuelve su ancho.
@@ -153,11 +190,17 @@ pub(super) fn chip_width(fonts: &Fonts, key: &str) -> f32 {
 /// (encendida: llena). Devuelve su ancho.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn chip(d: &mut RaylibDrawHandle, fonts: &Fonts, th: &Theme, key: &str, x: f32, y: f32, look: Cap, alpha: f32) -> f32 {
+    lit_chip(d, fonts, th, key, x, y, look, alpha, th.ink)
+}
+
+/// `chip`, encendida (`Cap::On`) del color `on`.
+#[allow(clippy::too_many_arguments)]
+fn lit_chip(d: &mut RaylibDrawHandle, fonts: &Fonts, th: &Theme, key: &str, x: f32, y: f32, look: Cap, alpha: f32, on: Color) -> f32 {
     let k = fonts.scale();
     let w = chip_width(fonts, key);
     let r = Rectangle::new(x.round(), y.round(), w.round(), (20.0 * k).round());
     let (fill, edge, ink) = match look {
-        Cap::On => (Some(th.ink), th.ink, th.dark),
+        Cap::On => (Some(on), on, th.dark),
         Cap::Warn => (Some(th.warn), th.warn, th.dark),
         Cap::Off => (None, th.faint(), th.faint()),
         Cap::Plain => (None, th.ink, th.ink),
@@ -374,8 +417,10 @@ pub(super) fn modes(d: &mut RaylibDrawHandle, ui: &Ui, th: &Theme, items: &[(&st
     let widths: Vec<f32> = items.iter().map(|(key, name, _)| chip_width(fonts, key) + 6.0 * k + fonts.width_spaced(&name.to_uppercase(), Style::Small, fonts.font(Style::Small).1, 1.6 * k)).collect();
     let total = widths.iter().sum::<f32>() + gap * (items.len().saturating_sub(1)) as f32;
     let mut x = cx - total * 0.5;
-    for ((key, name, look), w) in items.iter().zip(&widths) {
-        let cw = chip(d, fonts, th, key, x, y, *look, 1.0);
+    for (i, ((key, name, look), w)) in items.iter().zip(&widths).enumerate() {
+        // En la chapina cada luz es de un color de la faja.
+        let on = if th.weave.is_empty() { th.ink } else { fade(th.weave[i % th.weave.len()], th.alpha) };
+        let cw = lit_chip(d, fonts, th, key, x, y, *look, 1.0, on);
         let color = match look {
             Cap::Warn => th.warn,
             Cap::Off => th.faint(),
@@ -501,7 +546,7 @@ pub(super) fn music(d: &mut RaylibDrawHandle, ui: &Ui, th: &Theme, view: &Player
     let bar = layout.bar;
     let mid = bar.y + bar.height * 0.5;
     line(d, Vector2::new(bar.x, mid), Vector2::new(bar.x + bar.width, mid), bar.height, th.faint());
-    line(d, Vector2::new(bar.x, mid), Vector2::new(bar.x + bar.width * fill, mid), bar.height, th.ink);
+    rule(d, th, bar.x, bar.x + bar.width * fill, mid, bar.height, 7.0 * k, th.ink);
     d.draw_circle_v(Vector2::new(bar.x + bar.width * fill, mid), 4.5 * k + 1.0, shadow(th.text));
     d.draw_circle_v(Vector2::new(bar.x + bar.width * fill, mid), 4.0 * k, th.text);
     // Los botones: anterior, pausa o seguir, siguiente.
@@ -574,5 +619,9 @@ pub(super) fn frame(d: &mut RaylibDrawHandle, th: &Theme, r: Rectangle, k: f32, 
     }
     if strong {
         d.draw_rectangle_lines_ex(r, 1.0, th.faint());
+        // Los carteles de la chapina llevan arriba una raya tejida.
+        if !th.weave.is_empty() {
+            rule(d, th, r.x + arm + 8.0 * k, r.x + r.width - arm - 8.0 * k, r.y, 3.0 * k, 10.0 * k, th.ink);
+        }
     }
 }

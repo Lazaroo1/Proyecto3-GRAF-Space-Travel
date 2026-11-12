@@ -4,7 +4,8 @@
 //! El vuelo lleva un **HUD de piloto** (`piloto.rs`): lineas finas sobre la
 //! vista, sin placas, con la cinta de rumbo arriba, la velocidad y la
 //! altitud en cintas a los lados, los modos como luces abajo y un solo
-//! aviso a la vez; en ambar de brasa en OCASO y en jade en la chapina. Lo
+//! aviso a la vez; en ambar de brasa en OCASO y en blanco tibio en la
+//! chapina (con los colores de la faja en detalles chicos). Lo
 //! que tiene dibujo (los titulos de la bienvenida, el barrilete de la
 //! musica, los rotulos de los minijuegos) se **hornea en CPU**
 //! (`rotulos.rs`, `piel.rs`) y raylib solo lo pega como textura:
@@ -760,7 +761,7 @@ fn corner(d: &mut RaylibDrawHandle, ui: &Ui, th: &piloto::Theme, app: &App) -> R
     piloto::wash(d, th, Rectangle::new(0.0, 0.0, x + hw + 140.0 * k, y + 110.0 * k), 0);
     let tw = piloto::text(d, fonts, &title.to_uppercase(), x, y, Style::Heading, th.ink, Align::Left);
     let rule = y + 34.0 * k;
-    piloto::line(d, Vector2::new(x, rule), Vector2::new(x + tw.max(120.0 * k) + 40.0 * k, rule), 1.0, th.soft());
+    piloto::rule(d, th, x, x + tw.max(120.0 * k) + 40.0 * k, rule, 2.0 * k, 9.0 * k, th.soft());
     keys(d, fonts, th, &hints, x, rule + 8.0 * k, Align::Left, th.text, 0.9);
     Rectangle::new(0.0, 0.0, x + tw.max(hw) + 16.0 * k, rule + 36.0 * k)
 }

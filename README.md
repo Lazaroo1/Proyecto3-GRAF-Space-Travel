@@ -133,9 +133,12 @@ tiempos, la línea de avance con sus botones y el volumen en cinco rayitas. **K*
 los botones y a la barra.
 
 **El HUD es de piloto**: sin placas ni cajas, líneas finas sobre la vista
-como en la cabina de un avión, en **ámbar de brasa** en OCASO y en **jade**
-en la chapina, todo con una sombra oscura para que se lea sobre el cielo de
-día o sobre la estrella ([src/hud/piloto.rs](src/hud/piloto.rs)):
+como en la cabina de un avión, en **ámbar de brasa** en OCASO y en **blanco
+tibio** en la chapina, donde el color sale de la faja en detalles chicos (las
+luces de los modos, cada una de un color como foquitos de feria, y la raya
+bajo el título y la barra de la música tejidas en sus colores); todo con una
+sombra oscura para que se lea sobre el cielo de día o sobre la estrella
+([src/hud/piloto.rs](src/hud/piloto.rs)):
 
 | | |
 | --- | --- |
