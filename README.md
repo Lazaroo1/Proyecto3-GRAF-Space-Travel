@@ -14,6 +14,8 @@ todo el cielo. Gargantúa hace hervir a Pira hasta deshacerla y su gas entra
 al disco en espiral hasta mezclarse con él. Se puede volar al disco; quien cruza el
 horizonte muere y el tiempo se rebobina. Otra J hace renacer a la estrella.
 
+![La bienvenida: OCASO forjado en hierro, con grietas de lava que laten con la estrella](media/73_bienvenida.png)
+
 ![Gargantúa: el ojo se abre](media/24_el_ojo.png)
 
 | | |
@@ -67,7 +69,9 @@ Todo es función del tiempo: se rebobina con R.
 Con **V** el sistema entero se vuelve otro juego: Guatemala. Una cortina se
 abre desde el centro de la pantalla con el borde de una faja tejida (orillas
 de picos y, sobre el rojo del huipil, quetzales, volcanes, mazorcas,
-barriletes y grecas mayas; al volver, una brasa) y aparece **GUATEMALA**. Las órbitas, los tamaños y la
+barriletes y grecas mayas; al volver, una brasa) y aparece **GUATEMALA**,
+con las letras cortadas de ese mismo tejido, bordadas con hilo dorado y
+bajo un lazo de papel picado. Las órbitas, los tamaños y la
 física son los mismos, así que la nave sigue donde estaba, pero no queda nada
 de OCASO a la vista: cada planeta tiene su propio relieve, su shader, sus
 objetos, sus anillos, su atmósfera y su lugar; el cielo es otro (una Vía
@@ -121,15 +125,28 @@ entre una y otra; un `primera.txt` con el nombre de una canción (o un
 pedazo) hace que siempre empiece con esa. Al final de cada vuelta está una
 **marimba procedural** escrita en código (síntesis modal de las teclas
 afinadas 1:4:10, el charleo de los tecomates y el redoble, en 6/8 con
-sesquialtera), a la que se llega con U / I. Abajo a la derecha hay un mini reproductor: **K** pausa,
-**U** / **I** canción anterior / siguiente, **-** / **+** volumen, y con el
-mouse suelto (Tab) se les puede dar clic a los botones y a la barra.
+sesquialtera), a la que se llega con U / I. Abajo a la derecha está el
+reproductor: un **barrilete de Sumpango que gira** mientras suena (con un
+arco que marca por dónde va la canción), el título y el artista (los
+archivos se llaman «Título - Artista»), la barra de avance y el volumen en
+barritas. **K** pausa, **U** / **I** canción anterior / siguiente,
+**-** / **+** volumen, y con el mouse suelto (Tab) se les puede dar clic a
+los botones y a la barra.
+
+**El HUD** cambia con la versión y todo su dibujo se hornea en CPU (raylib
+solo lo pega y le pone el texto):
+
+| | |
+| --- | --- |
+| ![La bienvenida de la versión chapina](media/74_guatemala.png) | En **OCASO**: el título forjado en hierro con filo de bronce, grietas de lava que **laten con la estrella**, órbitas, runas y ojos; láminas oscuras con filo de bronce, letra romana de lápida y un **velocímetro que es un ojo** (el arco de brasa es la velocidad). En la **chapina**: GUATEMALA tejida, paneles de **tela de corte** (índigo con rayitas de jaspe) con su faja y la orilla bordada, letra gorda de rótulo y un **velocímetro con aguja** y aro de picos. Abajo a la izquierda va el tablero de vuelo: la velocidad, la altitud y los interruptores (Z, G, L, O, Y), **encendidos si están puestos**. |
 
 ## Minijuegos
 
 La versión chapina tiene cuatro minijuegos (son un extra: no están en el
-menú de puntos). Cerca de su lugar, abajo aparece **«Enter · …»** y Enter
-lo abre; Esc vuelve al vuelo. Mientras se juega, el mundo se queda quieto:
+menú de puntos). Cerca de su lugar, abajo aparece la tecla **Enter** con lo
+que se juega ahí y Enter lo abre; Esc vuelve al vuelo. Cada uno recibe con
+un **cartel de tela** con su faja, su nombre en un **rótulo pintado** como
+los de las camionetas y las teclas dibujadas. Mientras se juega, el mundo se queda quieto:
 la última imagen del render se congela de fondo, difuminada, y el juego se
 dibuja encima en CPU como todo lo demás, mucho más rápido que el 3D del
 sistema (de 3 a 13 ms por frame según el juego).
@@ -198,7 +215,8 @@ En Windows también se puede abrir `Jugar_OCASO.cmd` (o `Jugar_Marimba.cmd`,
 en un minijuego): usa `ocaso.exe` si está a la par y si no, compila con
 Cargo. **F11** pone la pantalla completa: el render sigue a su resolución
 (el CPU hace el mismo trabajo, así que los FPS no cambian) y la imagen se
-estira al mostrarla; el HUD se dibuja nítido a la resolución del monitor.
+estira al mostrarla; el HUD crece con ella y sus letras se cargan a ese
+tamaño, así que se ve nítido.
 
 Opciones:
 
@@ -293,8 +311,9 @@ variable `OCASO_FFMPEG` con su ruta; el juego y las capturas PNG no.
 **Requisitos** (sin ellos no se evalúa):
 
 1. **Pipeline propio en CPU.** raylib solo abre la ventana, lee el teclado
-   y el mouse, muestra el framebuffer como textura, pone el texto 2D del
-   HUD y reproduce el sonido; no se usa nada de su 3D, modelos, cámara,
+   y el mouse, muestra el framebuffer como textura, pone el HUD en 2D (el
+   texto, las teclas y lo que el HUD hornea en CPU, pegado como textura) y
+   reproduce el sonido; no se usa nada de su 3D, modelos, cámara,
    materiales, shaders ni física.
 2. **El sol, la nave y los planetas.** Ocaso es el sol; los planetas orbitan
    y giran en función del tiempo, no de los frames. Naves modeladas por mí
@@ -326,7 +345,7 @@ variable `OCASO_FFMPEG` con su ruta; el juego y las capturas PNG no.
 | Colisión | 4 | Bajar a la superficie | [scene/ship.rs](src/scene/ship.rs) |
 | Descarte antes de rasterizar | 7 | F2 (contadores), F7 (frustum congelado) | [render/pipeline.rs](src/render/pipeline.rs), [terrain/](src/terrain) |
 | Niveles de detalle | 8 | F4 (colores), F5 (apagarlo) y F2 | [terrain/](src/terrain), [scene/props.rs](src/scene/props.rs) |
-| Presentación | 10 | El final con J, el HUD y la ayuda (F1) | [hud.rs](src/hud.rs) |
+| Presentación | 10 | La bienvenida, el final con J, el HUD y la ayuda (F1) | [hud/](src/hud) |
 
 En vivo, el panel **T** cambia el radio de un planeta, su órbita, su giro,
 la intensidad de su shader y la semilla de los objetos ([abajo](#en-la-demostración-cambiar-parámetros-en-vivo)).
@@ -350,7 +369,7 @@ la intensidad de su shader y la semilla de los objetos ([abajo](#en-la-demostrac
 | **Colisión** con el planeta (4) | Contra la misma función de altura que se dibuja; la cámara tampoco entra al terreno. | Bajar a la superficie |
 | **Descarte** antes de rasterizar (7) | Esferas contra el frustum por objeto, chunks detrás del horizonte o fuera del frustum, objetos demasiado chicos, caras traseras. Contadores en el HUD (F2) y frustum congelado (F7). | F2, F7, (21) |
 | **Niveles de detalle** (8) | Terreno por distancia (quadtree) y objetos por tamaño en pantalla (3 niveles, se encogen al desaparecer). F4 colorea los niveles; F5 apaga el LOD y el HUD muestra cuántos triángulos más cuesta. | F4, F5 |
-| **Presentación** (10) | Dirección de arte deliberada (el final de OCASO, a pedido con J), HUD con nombres de los cuerpos, ayuda (F1) y controles explicados. | — |
+| **Presentación** (10) | Dirección de arte deliberada (el final de OCASO, a pedido con J), una bienvenida y un HUD con su propia piel en cada versión (título forjado o tejido, tablero de vuelo con velocímetro, nombres de los cuerpos), ayuda (F1) y controles explicados. | — |
 
 Además, fuera del menú:
 
@@ -414,9 +433,10 @@ dibujos (malla + matriz + material)
   para mantener legibles las aristas y los colores de depuración.
 - En pantalla completa (F11) la ventana mide lo del monitor, pero el render
   no cambia de tamaño: la textura se estira con filtro bilineal al
-  mostrarla (centrada y sin deformarla), el HUD se dibuja a la resolución
-  del monitor y lo que va en pixeles del render (los nombres de los
-  planetas, el texto de los minijuegos) se pasa por la misma escala.
+  mostrarla (centrada y sin deformarla), el HUD crece con ella (sus letras
+  se cargan a ese tamaño) y lo que va en pixeles del render (los nombres de
+  los planetas, lo que ponen encima los minijuegos) se pasa por la misma
+  escala.
 
 | Carpeta | Contenido |
 | --- | --- |

@@ -438,17 +438,63 @@ gran llamarada.
   cuadras de la 7a Avenida quedan sin torres para no tapar la vista, y no
   se construye donde un barranco cruza la cuadra (ahí la cuenta que pone
   cada objeto en la cuadrícula no converge).
-- **El HUD** ([hud.rs](src/hud.rs)): la letra es Segoe UI (la de Windows)
-  cargada desde memoria con las tildes, un atlas por tamaño, dibujada sin
-  escalar y en pixeles enteros para que se vea nítida; si no está, usa la de
-  raylib sin tildes. Paneles redondeados con las teclas en cajitas; los
-  avisos (como el de J en la chapina) salen en una píldora abajo al centro,
-  lejos del panel de vuelo, y suben si la ayuda está abierta. El
-  reproductor dibuja sus botones con triángulos, una barra con perilla y una
-  portada con un ecualizador que se mueve mientras suena. H vuelve junto a
-  Pira (además de Inicio) y la fila de Y dice qué hace: la ruta predicha.
-  Los nombres de los planetas que caen bajo el panel de vuelo no se
-  dibujan.
+- **El HUD** ([hud/](src/hud)): lo que tiene dibujo se **hornea en CPU** y
+  raylib solo lo pega como textura y le pone encima el texto, las teclas,
+  los arcos y las agujas. Cada versión tiene su piel (`Skin`).
+  - **Las letras** ([hud/letras.rs](src/hud/letras.rs)): raylib da la
+    cobertura de cada glifo (`LoadFontData`, lo mismo que hace para el
+    texto, sin ventana ni GPU); la palabra se arma con el avance de cada
+    uno, al doble del tamaño, y se le saca la **distancia con signo** al
+    borde con la transformada exacta de Felzenszwalb y Huttenlocher: en una
+    dimensión, `d[q] = min_p ((q - p)² + f[p])` es la envolvente de abajo de
+    las parábolas con vértice en cada `p` (lineal en pixeles), y en dos se
+    hace por columnas y después por filas porque la distancia al cuadrado
+    se separa. Se calcula hacia la tinta y hacia el papel; la resta es la
+    distancia con signo `d` (negativa adentro), que se baja promediando
+    2 × 2. Hay una prueba contra la búsqueda a lo bruto.
+  - **Los rótulos** ([hud/rotulos.rs](src/hud/rotulos.rs)) salen todos de
+    `d`. **OCASO forjado**: el filo de bronce es la banda `-rim < d < 0` con
+    un perfil de bisel que inclina la normal (difusa más un brillo de
+    Blinn); la cara de hierro queda hundida: `e^(-profundidad/2.6u)` da la
+    sombra del filo del lado de la luz y el rebote del otro. Las grietas
+    son la curva de nivel `-d = D(p)`, con `D` quebrada por un ruido de
+    valor interpolado en línea recta (sus curvas de nivel salen con
+    aristas): corren a lo largo de los trazos gruesos, a pedazos, y cerca
+    de ellas se encienden las fisuras de un Worley (`f2 - f1`). El color va
+    del rojo oscuro al blanco con lo caliente. La luz (una segunda capa que
+    se **suma** y late con `beat_phase` de la estrella) es el halo
+    `e^(-d/5u)` más lenguas que suben (la misma distancia leída 11u más
+    abajo, con ruido), y entre las letras van órbitas, runas del futhark y
+    ojos de línea; el ancho de los trazos de las O se mide en `d` para
+    grabarles un ojo. **GUATEMALA tejida**: la faja de la transición en dos
+    registros con su trama, un borde de hilo dorado con puntadas y, encima,
+    un lazo de papel picado calado. **Pintado** (los minijuegos): rótulo de
+    camioneta, de amarillo a naranja con un brillo arriba, filo oscuro y el
+    canto hacia abajo a la derecha (el mínimo de `d` corrida en diagonal).
+    La Cooper Black trae cifras de estilo antiguo (el 0 mide como una
+    minúscula), así que los números salen de otra letra, cargada al tamaño
+    con que su H mide lo mismo y asentada en el mismo renglón.
+  - **La piel** ([hud/piel.rs](src/hud/piel.rs)): los fondos de los paneles
+    (lámina de hierro con las esquinas cortadas y filo de bronce; tela de
+    corte con rayitas de jaspe, la faja arriba y la orilla bordada), la
+    carátula del velocímetro (un ojo de iris de brasas en OCASO; un aro de
+    picos de faja en la chapina) y el barrilete del reproductor, con
+    distancias con signo (caja redondeada, caja con chaflán, círculo).
+  - **Lo que raylib dibuja encima** ([hud/mod.rs](src/hud/mod.rs)): `Art`
+    guarda cada textura horneada por lo que es (clase y tamaño) y la hornea
+    la primera vez que se pide; durante la bienvenida se hornea el título
+    de la otra versión para que la primera V no dé un tirón. El tablero de
+    vuelo va abajo a la izquierda: el velocímetro (el arco o la aguja en
+    `velocidad / máxima` sobre una escala de 270°), la altitud y los
+    interruptores con su tecla, encendida si están puestos. La letra del
+    texto es Segoe UI con sus tildes, un atlas por tamaño; la romana (OCASO)
+    y la gorda (chapina) van en sus propios atlas, y lo que a una le falte
+    (el punto medio, las flechas) se dibuja con la negrita del texto. Todo
+    va a la escala `k` (alto de la imagen entre 720): en pantalla completa
+    el HUD crece con la imagen y las letras se cargan a ese tamaño. Los
+    avisos salen en una píldora abajo, entre el tablero y el reproductor si
+    caben y encima si no; mientras se ve un título, los nombres de los
+    planetas no se dibujan.
 - **El reproductor** ([player.rs](src/player.rs)): raylib solo decodifica y
   reproduce. Los archivos se leen con Rust y se le pasan desde memoria,
   porque en Windows raylib abre rutas con la página de códigos ANSI y una
@@ -486,9 +532,11 @@ Reformador** (en el suelo); y el de Antigua, **Talega Surfers**.
   muestras (11.6 ms), contra los 2048 del sintetizador del vuelo. Mientras
   se juega, el sintetizador del vuelo calla y el reproductor de música se
   pausa.
-- **El texto encima** (`Overlay`): el juego dice qué texto, paneles y barras
-  van y dónde. `hud::minigame` los dibuja con la misma letra y paneles del
-  HUD, con sombra para que se lean sobre cualquier fondo. La lógica no sabe
+- **El texto encima** (`Overlay`): el juego dice qué va y dónde: texto,
+  placas y carteles de tela, rótulos pintados (`Sign`), renglones de teclas
+  (lo que va entre corchetes se dibuja como una tecla), barras y el
+  velocímetro. `hud::minigame` los dibuja con la piel chapina del HUD, con
+  sombra o filo para que se lean sobre cualquier fondo. La lógica no sabe
   de raylib, y por eso se puede probar y capturar sin ventana
   (`--captura-marimba`).
 - **Récords** en `minijuegos.txt` (líneas `nombre valor`), junto con el
@@ -1548,10 +1596,11 @@ sin bordes y sin cambiarle la resolución, pero el render sigue al tamaño de
 calcula la escala `min(ancho de la pantalla / ancho del render, alto de la
 pantalla / alto del render)` y el corrimiento que la centra sin deformarla
 (con franjas si el monitor tiene otra proporción), y la textura se dibuja
-estirada con filtro bilineal. El HUD se dibuja a la resolución del monitor,
-así que se ve nítido; lo que viene en pixeles del render pasa por la misma
-escala: los nombres de los planetas y lo que ponen encima los minijuegos,
-cuyo texto usa letras cargadas a ese tamaño para no verse borroso.
+estirada con filtro bilineal. El HUD va a la escala `k = alto de la imagen
+/ 720` (`hud::ui_scale`): crece con la imagen y sus letras se cargan a ese
+tamaño, así que se ve nítido; lo que viene en pixeles del render pasa por
+la escala de `Fit`: los nombres de los planetas y lo que ponen encima los
+minijuegos.
 Renderizar a la resolución del monitor (1920x1080) serían 2.25 veces los
 pixeles y casi el doble de tiempo por frame.
 

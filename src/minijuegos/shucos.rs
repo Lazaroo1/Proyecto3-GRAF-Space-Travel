@@ -44,7 +44,7 @@ use super::hornear::{Lut, Sprite};
 use super::lienzo;
 use super::personaje::{self, WALK_FRAMES};
 use super::posproceso::{self, Posproceso};
-use super::{Align, Font, Keys, Minigame, Overlay, Records};
+use super::{Align, Font, Keys, Minigame, Overlay, Paint, Records};
 use crate::audio::SAMPLE_RATE;
 use crate::marimba::{Instrument, Mallet};
 use crate::math::{Vec3, hash_u32, smoothstep};
@@ -2750,62 +2750,62 @@ impl Minigame for Shucos {
         let ink = [40, 30, 26, 255];
         match self.screen {
             Screen::Menu => {
-                let (pw, ph) = (640.0 * s, 430.0 * s);
-                let (px, py) = ((w - pw) * 0.5, 70.0 * s);
-                o.panel(px, py, pw, ph);
-                o.text("Shucos del Reformador", w * 0.5, py + 14.0 * s, Font::Big(50.0 * s), accent, Align::Center);
-                o.text("Una carretilla al pie de la torre, de 7 de la noche a 3 de la mañana", w * 0.5, py + 78.0 * s, Font::Body, dim, Align::Center);
-                o.text("Arriba del mostrador te va diciendo qué apachar en cada paso", w * 0.5, py + 100.0 * s, Font::Small, accent, Align::Center);
+                let (pw, ph) = (660.0 * s, 470.0 * s);
+                let (px, py) = ((w - pw) * 0.5, 56.0 * s);
+                o.card(px, py, pw, ph);
+                o.sign("Shucos del Reformador", w * 0.5, py + 42.0 * s, 52.0 * s, Paint::Sun, Align::Center);
+                o.text("Una carretilla al pie de la torre, de 7 de la noche a 3 de la mañana", w * 0.5, py + 108.0 * s, Font::Body, dim, Align::Center);
+                o.text("Arriba del mostrador te va diciendo qué apachar en cada paso", w * 0.5, py + 130.0 * s, Font::Small, accent, Align::Center);
                 for i in 0..=SHOP.len() {
-                    let y = py + 122.0 * s + i as f32 * 58.0 * s;
+                    let y = py + 160.0 * s + i as f32 * 56.0 * s;
                     let chosen = i == self.choice;
                     if chosen {
-                        o.bar(px + 18.0 * s, y - 6.0 * s, pw - 36.0 * s, 52.0 * s, 1.0, [255, 204, 120, 34], false);
+                        o.bar(px + 22.0 * s, y - 6.0 * s, pw - 44.0 * s, 52.0 * s, 1.0, [250, 200, 70, 40], false);
                     }
                     let color = if chosen { accent } else { cream };
-                    o.text(if chosen { "»" } else { " " }, px + 30.0 * s, y, Font::Heading, accent, Align::Left);
+                    o.text(if chosen { "»" } else { " " }, px + 36.0 * s, y, Font::Heading, accent, Align::Left);
                     if i == 0 {
-                        o.text("Abrir la carretilla", px + 54.0 * s, y, Font::Heading, color, Align::Left);
-                        o.text("empieza la noche", px + 54.0 * s, y + 28.0 * s, Font::Small, dim, Align::Left);
+                        o.text("Abrir la carretilla", px + 60.0 * s, y, Font::Heading, color, Align::Left);
+                        o.text("empieza la noche", px + 60.0 * s, y + 27.0 * s, Font::Small, dim, Align::Left);
                     } else {
                         let (name, price, blurb) = SHOP[i - 1];
                         let owned = self.upgrades & (1 << (i - 1)) != 0;
-                        o.text(name, px + 54.0 * s, y, Font::Heading, color, Align::Left);
-                        o.text(blurb, px + 54.0 * s, y + 28.0 * s, Font::Small, dim, Align::Left);
+                        o.text(name, px + 60.0 * s, y, Font::Heading, color, Align::Left);
+                        o.text(blurb, px + 60.0 * s, y + 27.0 * s, Font::Small, dim, Align::Left);
                         let tag = if owned { "ya la tenés".to_string() } else { format!("Q{price}") };
-                        o.text(tag, px + pw - 30.0 * s, y + 4.0 * s, Font::Bold, if owned { dim } else { accent }, Align::Right);
+                        o.text(tag, px + pw - 36.0 * s, y + 4.0 * s, Font::Bold, if owned { dim } else { accent }, Align::Right);
                     }
                 }
                 let best = match self.best {
                     Some(b) => format!("Mejor noche: Q{b}"),
                     None => "Todavía no hay mejor noche".to_string(),
                 };
-                o.text(format!("Ahorros: Q{}    ·    {best}", self.savings), w * 0.5, py + ph - 70.0 * s, Font::Bold, cream, Align::Center);
+                o.text(format!("Ahorros: Q{}    ·    {best}", self.savings), w * 0.5, py + ph - 76.0 * s, Font::Bold, cream, Align::Center);
                 if let Some((text, at)) = &self.notice
                     && self.wall - at < 2.5
                 {
-                    o.text(text.clone(), w * 0.5, py + ph - 96.0 * s, Font::Body, accent, Align::Center);
+                    o.text(text.clone(), w * 0.5, py + ph - 100.0 * s, Font::Body, accent, Align::Center);
                 }
-                o.text("↑ ↓: elegir   ·   Enter: abrir o comprar   ·   Esc: salir", w * 0.5, py + ph - 34.0 * s, Font::Small, cream, Align::Center);
+                o.keys("[↑][↓] elegir   [Enter] abrir o comprar   [Esc] salir", w * 0.5, py + ph - 44.0 * s, Align::Center);
             }
             Screen::Playing | Screen::Results => {
                 // La hora, la plata y la cuenta.
                 let (hx, hy) = (16.0 * s, lay.awning + 22.0 * s);
-                o.panel(hx, hy, 200.0 * s, 104.0 * s);
+                o.panel(hx, hy, 212.0 * s, 122.0 * s);
                 let hour = Self::hour(self.night.clock);
                 let (hh, mm) = ((hour.floor() as i32).rem_euclid(24), ((hour.fract() * 60.0) as i32 / 5) * 5);
-                o.text(format!("{hh:02}:{mm:02}"), hx + 16.0 * s, hy + 10.0 * s, Font::Heading, cream, Align::Left);
-                o.text(format!("Q{}", self.night.money), hx + 184.0 * s, hy + 10.0 * s, Font::Heading, accent, Align::Right);
-                o.text(format!("Vendidos {}  ·  Devueltos {}", self.night.sold, self.night.returned), hx + 16.0 * s, hy + 46.0 * s, Font::Small, dim, Align::Left);
-                o.text(format!("Se fueron enojados {}", self.night.angry), hx + 16.0 * s, hy + 68.0 * s, Font::Small, dim, Align::Left);
+                o.text(format!("{hh:02}:{mm:02}"), hx + 18.0 * s, hy + 22.0 * s, Font::Big(30.0 * s), cream, Align::Left);
+                o.text(format!("Q{}", self.night.money), hx + 194.0 * s, hy + 22.0 * s, Font::Big(30.0 * s), accent, Align::Right);
+                o.text(format!("Vendidos {}  ·  Devueltos {}", self.night.sold, self.night.returned), hx + 18.0 * s, hy + 64.0 * s, Font::Small, dim, Align::Left);
+                o.text(format!("Se fueron enojados {}", self.night.angry), hx + 18.0 * s, hy + 86.0 * s, Font::Small, dim, Align::Left);
                 // La hora pico, abajo del panel (arriba a la derecha van los
                 // globitos).
                 if let Some(rush) = self.rush() {
-                    o.text(rush, hx + 4.0 * s, hy + 116.0 * s, Font::Bold, accent, Align::Left);
+                    o.text(rush, hx + 4.0 * s, hy + 132.0 * s, Font::Bold, accent, Align::Left);
                 }
                 if self.night.clock >= NIGHT {
-                    o.text("Ya cerramos:", hx + 4.0 * s, hy + 116.0 * s, Font::Bold, accent, Align::Left);
-                    o.text("atendé a los que quedan", hx + 4.0 * s, hy + 140.0 * s, Font::Small, accent, Align::Left);
+                    o.text("Ya cerramos:", hx + 4.0 * s, hy + 132.0 * s, Font::Bold, accent, Align::Left);
+                    o.text("atendé a los que quedan", hx + 4.0 * s, hy + 156.0 * s, Font::Small, accent, Align::Left);
                 }
                 // Los pedidos en los globitos, con su paciencia.
                 for cu in self.night.customers.iter().filter(|c| c.waiting()) {
@@ -2838,7 +2838,7 @@ impl Minigame for Shucos {
                     o.text(format!("{} · {}", t.key().to_ascii_uppercase(), t.label()), x, ly, Font::Small, cream, Align::Center);
                 }
                 let (tx, ty, _, thy) = lay.board();
-                o.text("X · tirar     ← → · cliente     Enter · entregar", tx, ty + thy + 24.0 * s, Font::Small, cream, Align::Center);
+                o.keys("[X] tirar   [←][→] cliente   [Enter] entregar", tx, ty + thy + 20.0 * s, Align::Center);
                 // El siguiente paso, en grande, justo arriba del mostrador.
                 if self.screen == Screen::Playing
                     && let Some(step) = self.guide()
@@ -2859,30 +2859,29 @@ impl Minigame for Shucos {
             }
         }
         if self.screen == Screen::Results {
-            let (pw, ph) = (560.0 * s, 380.0 * s);
-            let (px, py) = ((w - pw) * 0.5, 120.0 * s);
-            o.panel(px, py, pw, ph);
-            o.text("Se acabó la noche", w * 0.5, py + 16.0 * s, Font::Big(46.0 * s), accent, Align::Center);
+            let (pw, ph) = (560.0 * s, 424.0 * s);
+            let (px, py) = ((w - pw) * 0.5, 100.0 * s);
+            o.card(px, py, pw, ph);
+            o.sign("Se acabó la noche", w * 0.5, py + 42.0 * s, 48.0 * s, Paint::Sun, Align::Center);
             let n = &self.night;
             let lines = [
-                format!("Vendidos: {}", n.sold),
-                format!("Devueltos: {}", n.returned),
-                format!("Se fueron enojados: {}", n.angry),
+                format!("Vendidos {}   ·   devueltos {}   ·   se fueron enojados {}", n.sold, n.returned, n.angry),
                 format!("Propinas: Q{}", n.tips),
-                format!("Ganancia de la noche: Q{}", n.money),
-                format!("Ahorros: Q{}", self.savings),
             ];
             for (i, line) in lines.iter().enumerate() {
-                o.text(line.clone(), w * 0.5, py + 86.0 * s + i as f32 * 32.0 * s, if i == 4 { Font::Heading } else { Font::Body }, if i == 4 { accent } else { cream }, Align::Center);
+                o.text(line.clone(), w * 0.5, py + 110.0 * s + i as f32 * 28.0 * s, Font::Body, cream, Align::Center);
             }
+            o.text("Ganancia de la noche", w * 0.5, py + 176.0 * s, Font::Small, dim, Align::Center);
+            o.sign(format!("Q{}", n.money), w * 0.5, py + 190.0 * s, 58.0 * s, Paint::Cream, Align::Center);
+            o.text(format!("Ahorros: Q{}", self.savings), w * 0.5, py + 264.0 * s, Font::Bold, accent, Align::Center);
             let verdict = match (n.angry, n.returned, n.sold) {
                 (0, 0, s) if s >= 12 => "¡El mejor shuco de la sexta avenida!",
                 (0, _, _) => "Nadie se fue enojado. Bien ahí.",
                 (a, _, _) if a <= 3 => "Hubo sus enojados, pero la carretilla aguanta.",
                 _ => "La gente se fue con hambre. Mañana mejor.",
             };
-            o.text(verdict, w * 0.5, py + ph - 70.0 * s, Font::Bold, dim, Align::Center);
-            o.text("Enter: volver a la carretilla", w * 0.5, py + ph - 36.0 * s, Font::Small, cream, Align::Center);
+            o.text(verdict, w * 0.5, py + ph - 84.0 * s, Font::Bold, dim, Align::Center);
+            o.keys("[Enter] volver a la carretilla", w * 0.5, py + ph - 46.0 * s, Align::Center);
         }
         o
     }

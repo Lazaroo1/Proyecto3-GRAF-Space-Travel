@@ -267,6 +267,19 @@ pub enum Align {
     Right,
 }
 
+/// Los colores de un rotulo pintado (`Item::Sign`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Paint {
+    /// Amarillo a naranja: los titulos.
+    Sun,
+    /// Crema: los numeros y lo neutro.
+    Cream,
+    /// Turquesa: lo que salio bien.
+    Jade,
+    /// Rosa: lo que salio mal.
+    Rose,
+}
+
 /// Algo que el HUD dibuja encima del minijuego. Posiciones en pixeles de la
 /// pantalla.
 #[derive(Clone, Debug)]
@@ -279,8 +292,36 @@ pub enum Item {
         color: [u8; 4],
         align: Align,
     },
-    /// Un panel redondeado como los del HUD.
+    /// Una placa chica de tela con su orilla bordada (los marcadores).
     Panel { x: f32, y: f32, w: f32, h: f32 },
+    /// Un cartel grande con la faja tejida arriba (la bienvenida y los
+    /// resultados).
+    Card { x: f32, y: f32, w: f32, h: f32 },
+    /// Un rotulo pintado, como los de las camionetas: `size` es el alto de
+    /// la letra y `y` donde empieza su renglon.
+    Sign {
+        text: String,
+        x: f32,
+        y: f32,
+        size: f32,
+        paint: Paint,
+        align: Align,
+        alpha: u8,
+    },
+    /// Un renglon de teclas: lo que va entre corchetes se dibuja como una
+    /// tecla y lo demas como texto ("[←][→] carril   [↑] saltar").
+    Keys { text: String, x: f32, y: f32, align: Align },
+    /// Un velocimetro de `size` pixeles centrado en `(x, y)`: la aguja en
+    /// `value / max`, el numero y su unidad. `hot` lo enciende (el turbo).
+    Gauge {
+        x: f32,
+        y: f32,
+        size: f32,
+        value: f32,
+        max: f32,
+        unit: &'static str,
+        hot: bool,
+    },
     /// Una barra que se llena de abajo hacia arriba (vertical) o de
     /// izquierda a derecha.
     Bar {
@@ -306,6 +347,23 @@ impl Overlay {
 
     pub fn panel(&mut self, x: f32, y: f32, w: f32, h: f32) {
         self.items.push(Item::Panel { x, y, w, h });
+    }
+
+    pub fn card(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        self.items.push(Item::Card { x, y, w, h });
+    }
+
+    pub fn sign(&mut self, text: impl Into<String>, x: f32, y: f32, size: f32, paint: Paint, align: Align) {
+        self.items.push(Item::Sign { text: text.into(), x, y, size, paint, align, alpha: 255 });
+    }
+
+    pub fn keys(&mut self, text: impl Into<String>, x: f32, y: f32, align: Align) {
+        self.items.push(Item::Keys { text: text.into(), x, y, align });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn gauge(&mut self, x: f32, y: f32, size: f32, value: f32, max: f32, unit: &'static str, hot: bool) {
+        self.items.push(Item::Gauge { x, y, size, value, max, unit, hot });
     }
 
     pub fn bar(&mut self, x: f32, y: f32, w: f32, h: f32, fill: f32, color: [u8; 4], vertical: bool) {
@@ -365,7 +423,7 @@ impl Records {
 #[cfg(test)]
 pub(crate) fn assert_loaded_glyphs(overlay: &Overlay) {
     for item in &overlay.items {
-        if let Item::Text { text, .. } = item {
+        if let Item::Text { text, .. } | Item::Sign { text, .. } | Item::Keys { text, .. } = item {
             for c in text.chars() {
                 assert!(crate::hud::GLYPHS.contains(c), "falta {c:?} en: {text}");
             }
