@@ -27,7 +27,7 @@ use std::sync::OnceLock;
 
 use super::Body;
 use crate::math::{DQuat, DVec3, Vec3, smoothstep};
-use crate::render::{GlowLine, Particle};
+use crate::render::GlowLine;
 
 /// Constantes fisicas en cgs.
 const C: f64 = 2.997_924_58e10;
@@ -185,9 +185,6 @@ const OPEN_STRETCH: f64 = 25.0;
 pub const SHOCK_REACH: f64 = 70.0;
 pub const SHOCK_BRAKE: f64 = 1.2;
 pub const SHOCK_LIFE: f64 = 3.5;
-const SHOCK_COUNT: usize = 9000;
-/// Brillo de la onda de choque.
-const SHOCK_GAIN: f64 = 0.35;
 
 /// Un numero en [0, 1) por entero y semilla.
 fn uniform(n: i64, seed: u32) -> f64 {
@@ -458,19 +455,24 @@ struct LineSet {
 /// Los arcos cerrados junto a la estrella, el abanico de los polos (lineas
 /// que suben hacia el haz) y los arcos grandes del haz de corriente.
 const LINE_SETS: [LineSet; 3] = [
-    LineSet { azimuths: 32, feet: 3, from_deg: 16.0, to_deg: 42.0, reach: f64::INFINITY, samples: 56, gain: 1.0 },
+    LineSet { azimuths: 40, feet: 3, from_deg: 16.0, to_deg: 42.0, reach: f64::INFINITY, samples: 56, gain: 0.9 },
     LineSet { azimuths: 20, feet: 2, from_deg: 3.0, to_deg: 9.0, reach: 5.0, samples: 28, gain: 0.45 },
     // (Sus colatitudes salen del casquete del momento.)
     LineSet { azimuths: 18, feet: 1, from_deg: 0.0, to_deg: 0.0, reach: f64::INFINITY, samples: 72, gain: 0.25 },
 ];
-/// Brillo de las lineas y de la bola de fuego.
+/// Brillo de las lineas.
 const PLASMA_GAIN: f32 = 0.5;
-/// Las chispas que brillan sobre los lobulos: cuantas y que tan fuerte.
-const SPARK_COUNT: usize = 260;
-const SPARK_GAIN: f32 = 1.3;
-const FIREBALL_GAIN: f32 = 150.0;
-/// Particulas de la bola de fuego.
-const FIREBALL_COUNT: usize = 2400;
+/// La bola de fuego atrapada ocupa las lineas cerradas de un sector del
+/// ecuador magnetico (donde se rompio la magnetosfera): su azimut magnetico
+/// (desde `e1` hacia `e2`) y su medio ancho, en radianes.
+pub const FIREBALL_SECTOR: (f64, f64) = (1.0, 0.45);
+/// Los lazos de la bola de fuego (las lineas cerradas de su sector cargadas
+/// de plasma): cuantos, cuantos puntos cada uno y su brillo.
+const FIREBALL_LOOPS: usize = 44;
+const FIREBALL_LOOP_SAMPLES: usize = 40;
+const FIREBALL_LOOP_GAIN: f32 = 0.32;
+/// Torsion de las lineas cerradas que guardan la bola de fuego.
+const FIREBALL_TWIST: f64 = 0.3;
 
 /// Color del plasma a `r` radios de la estrella en una linea de tono `hue`
 /// (0 a 1): blanco azulado junto a ella (donde los pares son densos y
@@ -560,7 +562,7 @@ pub fn field_lines(out: &mut Vec<GlowLine>, body: &Body, t: f64, flare: Option<f
                 let phase = uniform(line, 0x9A5E);
                 // Su tono (casi todas azules o violeta, unas magenta) y las
                 // hebras: el brillo va y viene a lo largo, corriendo despacio.
-                let hue = uniform(line, 0x4E7).powf(1.3) as f32;
+                let hue = uniform(line, 0x4E7).powf(1.7) as f32;
                 let wisp_count = 1.5 + 2.5 * uniform(line, 0x3157);
                 // Las dos mitades de una linea abierta se dibujan por separado.
                 let halves: &[(f64, f64)] = if set.reach.is_finite() { &[(0.0, 0.5), (1.0, 0.5)] } else { &[(0.0, 1.0)] };
@@ -597,104 +599,83 @@ pub fn field_lines(out: &mut Vec<GlowLine>, body: &Body, t: f64, flare: Option<f
                         let wisp = 0.3 + 0.7 * wave * wave;
                         // Lejos de la estrella se deshacen en la bruma: los
                         // lobulos quedan cerca y no cruzan toda la pantalla.
-                        let far = (-((r as f32 - 2.5).max(0.0)) / 3.0).exp();
+                        let far = (-((r as f32 - 2.2).max(0.0) / 1.8).powf(1.4)).exp();
                         let q = to_world(p);
                         points.push(q);
                         colors.push(plasma_tint(r as f32, hue) * (near * packets * strength * open_fade * cusp * wisp * far * veil(q)));
                     }
-                    let n = points.len();
-                    for k in 1..n {
-                        out.push(GlowLine {
-                            a: points[k - 1],
-                            b: points[k],
-                            color_a: colors[k - 1],
-                            color_b: colors[k],
-                            cap_a: k == 1,
-                            cap_b: k == n - 1,
-                        });
-                    }
+                    push_line(out, &points, &colors);
                 }
             }
         }
     }
+    // La bola de fuego: las lineas cerradas de su sector, llenas de plasma.
+    // Se ven como un arco de lazos (como los de la corona del Sol): blancos
+    // azulados los bajos, que son los mas calientes, y violeta los altos,
+    // que se vacian primero. El plasma va y viene a lo largo de cada uno.
+    if let Some((reach, light)) = fireball_at(&s) {
+        let (center_phi, width) = FIREBALL_SECTOR;
+        let span = (reach - 1.15).max(1e-3);
+        for k in 0..FIREBALL_LOOPS {
+            let id = ((k as i64) << 10) ^ 0xF1B0;
+            let apex = 1.15 + span * uniform(id, 1).powf(0.85);
+            let theta_f = (1.0 / apex).sqrt().asin();
+            let phi_f = center_phi + width * 1.8 * (uniform(id, 2) - 0.5);
+            let heat = (1.0 - (apex - 1.15) / span) as f32;
+            let tint = Vec3::new(0.7, 0.4, 3.0).lerp(Vec3::new(1.5, 2.0, 3.4), heat * heat);
+            let load = 0.35 + 0.65 * uniform(id, 3) as f32;
+            let phase = uniform(id, 4);
+            let strength = light as f32 * FIREBALL_LOOP_GAIN * load * density * (0.35 + 0.65 * heat);
+            points.clear();
+            colors.clear();
+            for j in 0..FIREBALL_LOOP_SAMPLES {
+                let along = j as f64 / (FIREBALL_LOOP_SAMPLES - 1) as f64;
+                // Las lineas cerradas junto a la estrella, ya relajadas (las
+                // abiertas son otras): casi un dipolo.
+                let p = super::magnetosphere::line_point(FIREBALL_TWIST, theta_f, phi_f, along);
+                let d = (1.0 - (2.0 * along - 1.0).abs()) as f32;
+                let slosh = 0.55 + 0.45 * ((TAU * (along * 2.0 + phase - 0.35 * t)).sin() as f32).powi(2);
+                let q = to_world(p);
+                points.push(q);
+                colors.push(tint * (strength * slosh * (0.6 + 0.4 * d) * veil(q)));
+            }
+            push_line(out, &points, &colors);
+        }
+    }
 }
 
-/// Chispas que se encienden y se apagan sobre las lineas cerradas y van
-/// subiendo despacio por ellas, como polvo de plasma: son de adorno (como en
-/// las ilustraciones de magnetares), en las mismas lineas que se dibujan.
-pub fn sparks(out: &mut Vec<Particle>, body: &Body, t: f64, flare: Option<f64>, camera: DVec3) {
-    let center = body.position(t) - camera;
-    // De lejos la estrella es un punto y no se verian.
-    if center.length() > RADIUS * 150.0 {
-        return;
-    }
-    let s = state(t, flare);
-    let crust = crust_at(body, t, flare);
-    let (m, e1, e2) = magnetic_frame();
-    let set = &LINE_SETS[0];
-    for k in 0..SPARK_COUNT {
-        let id = ((k as i64) << 12) ^ 0x5BA4;
-        let i = ((uniform(id, 0x11) * set.azimuths as f64) as usize).min(set.azimuths - 1);
-        let j = ((uniform(id, 0x22) * set.feet as f64) as usize).min(set.feet - 1);
-        // La misma linea que dibuja `field_lines` (las de la primera familia).
-        let line = ((i * set.feet + j) as i64) << 8;
-        let phi_f = TAU * (i as f64 + 0.6 * uniform(line, 0xA21)) / set.azimuths as f64;
-        let spread = (j as f64 + uniform(line, 0x7E7)) / set.feet as f64;
-        let theta_f = (set.from_deg + (set.to_deg - set.from_deg) * spread).to_radians();
-        let along = (uniform(id, 0x33) + t * (0.004 + 0.012 * uniform(id, 0x44))).fract();
-        let mut p = super::magnetosphere::line_point(s.shape, theta_f, phi_f, along);
-        let r = p.length();
-        p = p * ((1.0 + (r - 1.0) * s.inflate) / r);
-        let world = center + crust.rotate((e1 * p.x + e2 * p.y + m * p.z) * RADIUS);
-        let twinkle = (0.5 + 0.5 * (TAU * (t * (0.4 + 1.1 * uniform(id, 0x55)) + uniform(id, 0x66))).sin()).powi(6) as f32;
-        let far = (-((r as f32 - 2.0).max(0.0)) / 3.0).exp();
-        let tint = if uniform(id, 0x77) < 0.6 { Vec3::new(0.7, 0.95, 2.2) } else { Vec3::new(1.4, 0.7, 2.2) };
-        out.push(Particle {
-            pos: world.as_vec3(),
-            // Unos dos pixeles a cualquier distancia.
-            radius: (world.length() * 0.004) as f32,
-            color: tint * (SPARK_GAIN * twinkle * far),
+/// Una polilinea de luz: un hilo por tramo, con tapas solo en las puntas.
+fn push_line(out: &mut Vec<GlowLine>, points: &[Vec3], colors: &[Vec3]) {
+    let n = points.len();
+    for k in 1..n {
+        out.push(GlowLine {
+            a: points[k - 1],
+            b: points[k],
+            color_a: colors[k - 1],
+            color_b: colors[k],
+            cap_a: k == 1,
+            cap_b: k == n - 1,
         });
     }
 }
 
 /// La bola de fuego de la gran llamarada: pares e± y fotones a mas de 1e9 K
 /// atrapados en las lineas cerradas junto a la estrella (Thompson y Duncan
-/// 1995), en el sector donde se rompio la magnetosfera. Gira con la estrella
-/// (por eso la cola de la llamarada pulsa con el periodo de giro) y se
-/// evapora capa por capa: las lineas mas altas se vacian primero.
-pub fn fireball(out: &mut Vec<Particle>, body: &Body, t: f64, flare: Option<f64>, camera: DVec3) {
-    let s = state(t, flare);
+/// 1995), en el sector donde se rompio la magnetosfera (`FIREBALL_SECTOR`).
+/// Gira con la estrella (por eso la cola de la llamarada pulsa con el periodo
+/// de giro) y se evapora capa por capa: las lineas mas altas se vacian
+/// primero. Devuelve la cima (en radios) de la linea mas alta que todavia
+/// tiene plasma y su luz (la luminosidad de `State::fireball`, con una
+/// corona mas caliente en los primeros 40 s); nada si ya se evaporo. El
+/// shader la dibuja como un volumen que llena esas lineas.
+pub fn fireball_at(s: &State) -> Option<(f64, f64)> {
     if s.fireball <= 0.0 {
-        return;
+        return None;
     }
-    let crust = crust_at(body, t, flare);
-    let center = body.position(t) - camera;
-    let (m, e1, e2) = magnetic_frame();
-    // En los primeros 40 s brilla ademas una corona mas caliente.
     let corona = 1.0 + 2.0 * s.since_spike.map_or(0.0, |a| (-a / 40.0).exp());
-    let light = (s.fireball * corona) as f32 * FIREBALL_GAIN / FIREBALL_COUNT as f32;
-    // Cima de las lineas que todavia tienen plasma, en radios.
-    let reach = 1.3 + 2.4 * s.fireball.powf(1.0 / 3.0);
-    let slosh = t * 0.35;
-    for k in 0..FIREBALL_COUNT as i64 {
-        let u = |seed: u32| uniform(k, seed);
-        // Linea cerrada con cima entre 1.15 radios y el alcance: sin^2 = 1/cima.
-        let apex = 1.15 + (reach - 1.15) * u(1).powf(0.7);
-        let theta_f = (1.0 / apex).sqrt().asin();
-        let phi_f = 1.0 + 0.9 * (u(2) - 0.5);
-        // El plasma va y viene a lo largo de su linea.
-        let along = 0.5 + 0.47 * (TAU * (u(3) + slosh * (0.6 + 0.8 * u(4)))).sin();
-        let p = super::magnetosphere::line_point(0.3, theta_f, phi_f, along);
-        let local = (e1 * p.x + e2 * p.y + m * p.z) * RADIUS;
-        let heat = 1.0 - ((apex - 1.15) / (reach - 1.15).max(1e-3)) as f32;
-        let tint = Vec3::new(1.4, 0.35, 1.5).lerp(Vec3::new(2.4, 1.3, 2.2), heat);
-        out.push(Particle {
-            pos: (center + crust.rotate(local)).as_vec3(),
-            radius: 1.6,
-            color: tint * (light * (0.4 + 0.6 * heat)),
-        });
-    }
+    // La luminosidad baja con el area de la fotosfera: el volumen se encoge
+    // como la raiz cubica de la luz.
+    Some((1.3 + 2.4 * s.fireball.cbrt(), s.fireball * corona))
 }
 
 /// Radio de la onda de choque (en radios de la estrella) y su brillo, a
@@ -706,55 +687,6 @@ pub fn shock_at(age: f64) -> Option<(f64, f64)> {
     let left = 1.0 - age / SHOCK_LIFE;
     let reach = 1.0 + SHOCK_REACH * (1.0 - (-age / SHOCK_BRAKE).exp());
     Some((reach, (age / 0.04).min(1.0) * left * left))
-}
-
-/// La onda de choque de la gran llamarada: una cascara de plasma que sale
-/// del pico, mas densa en el ecuador magnetico (por donde las lineas
-/// abiertas lo expulsan), con grumos, y se enfria de blanco azulado a
-/// violeta mientras se expande. No gira con la estrella: es lo que ya salio.
-pub fn shock(out: &mut Vec<Particle>, body: &Body, t: f64, flare: Option<f64>, camera: DVec3) {
-    let Some(spike_time) = flare.map(|f| f + WIND_UP) else {
-        return;
-    };
-    let age = t - spike_time;
-    let Some((reach, light)) = shock_at(age) else {
-        return;
-    };
-    let crust = crust_at(body, spike_time, flare);
-    let center = body.position(t) - camera;
-    let (m, e1, e2) = magnetic_frame();
-    let cool = (age / SHOCK_LIFE) as f32;
-    let tint = Vec3::new(2.2, 2.4, 3.4).lerp(Vec3::new(1.4, 0.45, 2.3), cool.sqrt());
-    let golden = PI * (3.0 - 5f64.sqrt());
-    for k in 0..SHOCK_COUNT {
-        let u = |seed: u32| uniform(k as i64, seed);
-        // Puntos de Fibonacci sobre la esfera, con un poco de desorden.
-        let z = 1.0 - 2.0 * (k as f64 + 0.5) / SHOCK_COUNT as f64;
-        let phi = golden * k as f64 + 0.3 * (u(1) - 0.5);
-        let ring = (1.0 - z * z).sqrt();
-        let dir = DVec3::new(ring * phi.cos(), ring * phi.sin(), z);
-        // Mas plasma por el ecuador y en grumos que no estan en todos lados.
-        let equator = 0.1 + 1.3 * (-(z / 0.22).powi(2)).exp();
-        let wave = (7.0 * phi + 4.0 * (5.0 * z + 2.0 * u(2)).sin()).sin();
-        let clumps = 0.55 + 0.45 * (0.5 + 0.5 * wave).powi(2);
-        // Cascara con grosor: unos van un poco adelante y otros atras.
-        let r = reach * (1.0 + 0.07 * (u(3) - 0.5));
-        let local = (e1 * dir.x + e2 * dir.y + m * dir.z) * (r * RADIUS);
-        let pos = center + crust.rotate(local);
-        // Las que se ven grandes (cerca de la camara) se apagan: serian
-        // manchas redondas en vez de una cascara fina.
-        let radius = 0.028 * reach * RADIUS;
-        let size = radius / pos.length().max(1e-3) / 0.012;
-        let near = (1.0 + size * size).powi(-2);
-        if near < 0.02 {
-            continue;
-        }
-        out.push(Particle {
-            pos: pos.as_vec3(),
-            radius: radius as f32,
-            color: tint * (light * equator * clumps * near * SHOCK_GAIN) as f32,
-        });
-    }
 }
 
 #[cfg(test)]

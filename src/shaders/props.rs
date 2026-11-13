@@ -26,6 +26,9 @@ pub struct PropStyle {
     /// Numero al azar de la instancia (0 a 1): cada geiser hace erupcion a
     /// su ritmo.
     pub seed: f32,
+    /// Cuanto se ha calentado (0 a 1): los pedazos de Pira mientras caen en
+    /// Gargantua.
+    pub heat: f32,
 }
 
 /// Que tan cerca esta la nave de `pos` (relativo a la camara): 0 a `far`
@@ -86,6 +89,7 @@ pub fn shade(style: &PropStyle, f: &Fragment, u: &Uniforms) -> Vec3 {
         PropKind::Boulder => boulder(&c),
         PropKind::Vent => vent(&c, style),
         PropKind::Crystal => crystal(&c, style),
+        PropKind::Chunk => chunk(&c, style),
         chapin => crate::chapin::shade_prop(chapin, f, u, style, c.sun),
     }
 }
@@ -241,6 +245,36 @@ fn vent(c: &Ctx, style: &PropStyle) -> Vec3 {
     let glow = planckian_rgb(1200.0 + 500.0 * activity)
         * ((crack * 2.0 + heat.powi(4) * 0.25) * (0.3 + activity) * u.gains.pira);
     lit + glow
+}
+
+/// Fraccion del radio de Pira donde esta su magma (el fondo de los abismos).
+const PIRA_CORE: f32 = 1.0 - crate::terrain::shapes::PIRA_CORE_DEPTH / 110.0;
+
+/// Un pedazo de Pira: corteza oscura arriba y, abajo, la roca desgarrada
+/// con venas al rojo. Lo ilumina el magma del planeta: las caras que miran
+/// al planeta reflejan su luz, mas fuerte cuanto mas cerca del magma (el
+/// radio del planeta llega en `occluder`). Mientras cae en Gargantua se
+/// calienta (`heat`).
+fn chunk(c: &Ctx, style: &PropStyle) -> Vec3 {
+    let (f, u) = (c.f, c.u);
+    let footprint = pixel_footprint(c);
+    let tex = detail::rock(f, u, 0.3, footprint, 0.8);
+    let to_planet = style.planet - f.pos;
+    let distance = to_planet.length().max(1e-3);
+    let down = to_planet / distance;
+    let above = (distance / style.occluder - PIRA_CORE).max(0.0);
+    let reach = 1.0 / (1.0 + (above * 5.0) * (above * 5.0));
+    let facing = f.normal.dot(down).max(0.0);
+    let albedo = tex.color * Vec3::new(0.06, 0.052, 0.05);
+    let lit = pbr::shade_light(f, u, albedo, 0.75, 0.05, tex.normal, tex.ao, c.sun);
+    // La luz del magma que la roca refleja.
+    let magma = planckian_rgb(1650.0) * (7.0 * reach * facing * facing.sqrt());
+    let torn = f.color.x;
+    let veins = smoothstep(0.93, 0.99, 1.0 - u.noise.noise(f.local * 2.2 + Vec3::splat(style.seed * 50.0)).abs()) * torn;
+    let heat = style.heat;
+    let glow = planckian_rgb(1100.0 + 600.0 * heat + 250.0 * torn)
+        * (veins * (0.7 + 2.5 * heat) + torn * 0.05 * reach + heat * heat * 0.6);
+    lit + albedo * magma + glow * u.gains.pira
 }
 
 /// Hongo bioluminiscente: tallo palido y translucido con un anillo que

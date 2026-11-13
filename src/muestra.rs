@@ -48,8 +48,8 @@ fn script() -> Vec<(Action, f64)> {
     use Action::*;
     // La bienvenida completa (dura `hud::INTRO`, 8.5 s).
     let mut steps = vec![(Wait, 8.5)];
-    // OCASO: el claro, los geiseres, el nido, el espejo y el faro.
-    for site in ["El claro", "Los geiseres", "El nido", "El espejo"] {
+    // OCASO: el claro, el abismo, el nido, el espejo y el faro.
+    for site in ["El claro", "El abismo", "El nido", "El espejo"] {
         steps.push((Next(site), 7.0));
     }
     steps.push((Next("El faro"), 3.0));

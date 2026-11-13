@@ -601,7 +601,6 @@ fn pretty(name: &str) -> &str {
         "Peten" => "Petén",
         "Atitlan" => "Atitlán",
         "Luna de Xelaju" => "Luna de Xelajú",
-        "Los geiseres" => "Los géiseres",
         "San Andres Xecul" => "San Andrés Xecul",
         "Jagermeister" => "Jägermeister",
         "Gargantua" => "Gargantúa",

@@ -131,7 +131,10 @@ impl Vapor {
         let a = x.dot(s.lean);
         let tongue = smoothstep(0.3, 1.0, a / r.max(1e-3));
         let lift = (r - s.core).max(0.0) / (s.height * (1.0 + s.bulge * tongue * tongue));
-        let corona = s.corona * (-lift).exp();
+        // Por debajo de la superficie (en los abismos entre las placas) casi
+        // no hay vapor: se ve el magma del fondo.
+        let below = smoothstep(s.core * 0.85, s.core, r);
+        let corona = s.corona * (-lift).exp() * below;
         let puff = s.puff * (-(r / s.puff_radius) * (r / s.puff_radius)).exp();
         if corona.max(puff) < 0.02 {
             return (0.0, 0.0, 0.0);

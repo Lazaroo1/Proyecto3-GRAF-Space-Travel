@@ -20,7 +20,7 @@ use crate::shaders::{
     ArgosLook, AtmosphereModel, AtmosphereParams, Material, RingStyle, ShipStyle, SkyCube,
     SkyStyle, SunStyle, Textures, heartbeat,
 };
-use crate::terrain::shapes::{ArgosField, JardinField, MIRROR_SHORE, ParpadoField, PiraField};
+use crate::terrain::shapes::{ArgosField, JardinField, MIRROR_SHORE, PIRA_SITE, ParpadoField, PiraField};
 use crate::terrain::{HeightField, Smooth, Terrain};
 
 pub struct Body {
@@ -897,10 +897,14 @@ impl System {
             let (normal, forward, _) = self.garden_grove_frame();
             sites.push(Site { body: i, name: "El claro", normal, forward, view: Self::SITE_VIEW });
         }
+        // En Pira, a la orilla de una placa: el relieve pone un abismo
+        // adelante, hacia la estrella (que por la marea esta siempre en -X).
         if let Some(i) = self.find("Pira") {
-            let (to_star, side, up) = axes(i);
-            let (normal, forward) = local(i, (to_star * 0.42 + side * 0.9 + up * 0.1).normalize(), to_star);
-            sites.push(Site { body: i, name: "Los geiseres", normal, forward, view: Self::SITE_VIEW });
+            let normal = PIRA_SITE.as_dvec3().normalize();
+            let toward = DVec3::new(-1.0, 0.0, 0.0);
+            let forward = (toward - normal * toward.dot(normal)).normalize();
+            // Desde arriba y poco atras, mirando hacia el fondo del abismo.
+            sites.push(Site { body: i, name: "El abismo", normal, forward, view: Self::PIRA_SITE_VIEW });
         }
         if let Some(i) = self.find("Argos") {
             let (to_star, side, up) = axes(i);
@@ -939,7 +943,11 @@ impl System {
         sites
     }
 
-    /// Como se llega a los lugares de los planetas: desde arriba y atras.
+    /// Como se llega al abismo de Pira: altura, cuanto atras y cuanto se baja la
+/// mira (ver `Shot::Site`).
+pub const PIRA_SITE_VIEW: (f64, f64, f64) = (24.0, -8.0, -14.0);
+
+/// Como se llega a los lugares de los planetas: desde arriba y atras.
 const SITE_VIEW: (f64, f64, f64) = (22.0, 90.0, 0.0);
 
 /// Bioma de llegada, fijo en el espacio local de Jardín. El claro y sus

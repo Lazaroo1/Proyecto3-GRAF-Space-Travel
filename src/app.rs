@@ -445,12 +445,12 @@ pub const PRESETS: [Preset; 59] = [
         flare: None,
     },
     Preset {
-        name: "27_geiseres",
+        name: "27_abismo",
         shot: Shot::Site {
             body: "Pira",
-            altitude: 16.0,
-            back: 30.0,
-            lift: 0.0,
+            altitude: crate::scene::System::PIRA_SITE_VIEW.0,
+            back: crate::scene::System::PIRA_SITE_VIEW.1,
+            lift: crate::scene::System::PIRA_SITE_VIEW.2,
         },
         time: 40.0,
         act: None,
@@ -1878,7 +1878,7 @@ impl App {
             &cull_view,
             pixel_angle,
             light_radius,
-            melting,
+            melting.map(|i| (i, state.stream_age)),
             &mut draws,
         );
         for (mesh, material) in [
@@ -2392,12 +2392,6 @@ impl App {
             );
         }
 
-        // La bola de fuego de la gran llamarada de Faro.
-        if let Some(i) = system.find("Faro").filter(|&i| !system.bodies[i].hidden) {
-            faro::sparks(&mut out, &system.bodies[i], t, self.faro_flare, camera.pos);
-            faro::fireball(&mut out, &system.bodies[i], t, self.faro_flare, camera.pos);
-            faro::shock(&mut out, &system.bodies[i], t, self.faro_flare, camera.pos);
-        }
         // Lo que flota alrededor de la camara cerca del suelo de cada planeta.
         let motes: Vec<(&str, effects::Motes, f64)> = match system.version {
             Version::Ocaso => vec![
@@ -3082,6 +3076,83 @@ fn markers(
         .collect()
 }
 
+/// Cuanto tarda un pedazo de Pira en caer en Gargantua, y en que momento de
+/// la comida se sueltan el primero y el ultimo (segundos).
+const CHUNK_FALL: f32 = 3.5;
+const CHUNK_RELEASE: (f32, f32) = (0.5, 12.0);
+
+/// Los pedazos de Pira mientras Gargantua se la come (`age` segundos desde
+/// que empezo). Antes de soltarse se encogen con el planeta; cada uno se
+/// suelta a su hora (los del cinturon primero) y cae hacia el agujero en
+/// una curva, dando vueltas, calentandose y achicandose hasta desaparecer.
+#[allow(clippy::too_many_arguments)]
+fn falling_chunks<'a>(
+    system: &'a System,
+    index: usize,
+    set: &PropSet,
+    t: f64,
+    age: f32,
+    camera: &Camera,
+    hole: DVec3,
+    light_radius: f64,
+    draws: &mut Vec<Draw<'a>>,
+) {
+    let body = &system.bodies[index];
+    let core = shaders::Vapor::core(age) as f64;
+    let rotation = body.rotation(t).to_mat3();
+    let body_pos = body.position(t);
+    let away = (body_pos - hole).normalize();
+    // La curva: se adelanta en la orbita mientras cae (como el gas).
+    let ahead = body.velocity(t);
+    let ahead = (ahead - away * ahead.dot(away)).normalize();
+    let disc = (light_radius / (hole - body_pos).length()).min(1.0).asin() as f32;
+    let model = &system.prop_models[PropKind::Chunk.index()];
+    for (k, instance) in set.instances.iter().enumerate() {
+        if instance.kind != PropKind::Chunk {
+            continue;
+        }
+        let h = hash_u32(k as u32 ^ 0xFA11);
+        let unit = (h >> 8) as f32 / 16_777_216.0;
+        // Los de afuera (el cinturon) se sueltan antes.
+        let outer = smoothstep(1.2, 2.4, (instance.position.length() / body.radius) as f32);
+        let release = CHUNK_RELEASE.0 + (CHUNK_RELEASE.1 - CHUNK_RELEASE.0) * (unit * (1.0 - 0.5 * outer));
+        let fall = ((age - release) / CHUNK_FALL).clamp(0.0, 1.0);
+        if fall >= 1.0 {
+            continue;
+        }
+        let start = body_pos + rotation.mul_vec(instance.position * core);
+        let f = fall as f64;
+        let ease = f * f;
+        let swirl = ahead * ((std::f64::consts::PI * f).sin() * 0.35 * (hole - start).length());
+        let position = start + (hole - start) * ease + swirl;
+        let spin = DQuat::from_axis_angle(DVec3::Y, f * 6.0 + unit as f64);
+        let scale = instance.scale as f64 * core.sqrt() * (1.0 - f);
+        let mesh = &model.lods[if fall > 0.0 { 1 } else { 0 }];
+        let rot = rotation.mul(&(instance.rotation * spin).to_mat3());
+        let linear = rot.scale(scale);
+        let offset = position - camera.pos;
+        draws.push(Draw {
+            mesh,
+            indices: &mesh.indices,
+            local_offset: Vec3::ZERO,
+            model: DMat4::from_affine(&linear, offset).to_f32(),
+            normal: rot.to_f32(),
+            material: Material::Prop(PropStyle {
+                kind: PropKind::Chunk,
+                scale: scale as f32,
+                planet: (body_pos - camera.pos).as_vec3(),
+                occluder: (body.radius * core) as f32,
+                disc,
+                seed: unit,
+                heat: fall.max(0.25 * smoothstep(0.0, 12.0, age)),
+            }),
+            bounds_center: (offset + linear.mul_vec(mesh.bounds_center.as_dvec3())).as_vec3(),
+            bounds_radius: mesh.bounds_radius * scale as f32,
+            tag: 1,
+        });
+    }
+}
+
 /// La cola de polvo de Pira: sale del lado de noche, lejos de la estrella,
 /// y se curva hacia atras en la orbita.
 /// Faro en este frame, visto desde `camera`.
@@ -3134,6 +3205,18 @@ fn faro_frame<'a>(
         beam_gain: (faro::BEAM_GAIN * state.radio) as f32,
         wind_source: (star - camera).as_vec3(),
         wind_reference: (center - star).length() as f32,
+        shock: faro_shock(body, t, flare),
+        fireball: faro::fireball_at(&state).map(|(reach, light)| {
+            let (m, e1, e2) = faro::magnetic_frame();
+            let (azimuth, width) = faro::FIREBALL_SECTOR;
+            shaders::faro::Fireball {
+                reach: reach as f32,
+                light: light as f32,
+                axis: crust.rotate(m).as_vec3(),
+                toward: crust.rotate(e1 * azimuth.cos() + e2 * azimuth.sin()).as_vec3(),
+                width: width as f32,
+            }
+        }),
         // Con la camara metida en la bruma, todo el cielo se tenia de morado:
         // se apaga al acercarse.
         halo_gain: (faro::HALO_GAIN * (1.0 + 0.5 * state.storm + 3.0 * state.fireball)) as f32
@@ -3143,6 +3226,25 @@ fn faro_frame<'a>(
         derived: Default::default(),
     }
     .prepared()
+}
+
+/// La onda de choque de la gran llamarada de Faro en `t`, si esta saliendo:
+/// su radio y su brillo (`faro::shock_at`) y el marco magnetico del momento
+/// del pico (no gira con la estrella).
+fn faro_shock(body: &crate::scene::Body, t: f64, flare: Option<f64>) -> Option<shaders::faro::Shock> {
+    let spike = flare? + faro::WIND_UP;
+    let age = t - spike;
+    let (reach, light) = faro::shock_at(age)?;
+    let at_spike = faro::crust_at(body, spike, flare);
+    let (m, e1, e2) = faro::magnetic_frame();
+    Some(shaders::faro::Shock {
+        radius: (reach * faro::RADIUS) as f32,
+        light: light as f32,
+        cool: (age / faro::SHOCK_LIFE) as f32,
+        axis: at_spike.rotate(m).as_vec3(),
+        e1: at_spike.rotate(e1).as_vec3(),
+        e2: at_spike.rotate(e2).as_vec3(),
+    })
 }
 
 fn pira_tail(system: &System, t: f64, camera: DVec3, light: Vec3) -> Option<shaders::Tail> {
@@ -3439,7 +3541,7 @@ fn prop_draws<'a>(
     cull_view: &View,
     pixel_angle: f64,
     light_radius: f64,
-    melting: Option<usize>,
+    melting: Option<(usize, f32)>,
     draws: &mut Vec<Draw<'a>>,
 ) -> PropStats {
     let mut stats = PropStats::default();
@@ -3448,8 +3550,13 @@ fn prop_draws<'a>(
     let (star_pos, star_radius) = (star.position(t), light_radius);
     for (index, (body, set)) in system.bodies.iter().zip(&system.props).enumerate() {
         let Some(field) = &body.surface else { continue };
-        // Lo que hay sobre Pira cae primero cuando Gargantua la deshace.
-        if set.instances.is_empty() || body.hidden || melting == Some(index) {
+        if set.instances.is_empty() || body.hidden {
+            continue;
+        }
+        // Cuando Gargantua deshace a Pira, lo que estaba sobre ella se hunde
+        // primero y sus pedazos caen en el agujero uno por uno.
+        if let Some((pira, age)) = melting.filter(|&(pira, _)| pira == index) {
+            falling_chunks(system, pira, set, t, age, camera, star_pos, light_radius, draws);
             continue;
         }
         let quat = body.rotation(t);
@@ -3521,9 +3628,15 @@ fn prop_draws<'a>(
                         planet: center.as_vec3(),
                         // La esfera que hace sombra pasa por el suelo de este objeto:
                         // el terreno de alrededor tapa la estrella a esa altura.
-                        occluder: instance.position.length() as f32,
+                        // Los pedazos de Pira flotan: los tapa el planeta.
+                        occluder: if instance.kind == PropKind::Chunk {
+                            body.radius as f32
+                        } else {
+                            instance.position.length() as f32
+                        },
                         disc,
                         seed: (hash_u32(pick.index as u32 ^ if sinks { 0x5EED } else { 0xC40B }) >> 8) as f32 / 16_777_216.0,
+                        heat: 0.0,
                     }),
                     bounds_center: (offset + linear.mul_vec(mesh.bounds_center.as_dvec3()))
                         .as_vec3(),

@@ -64,15 +64,20 @@ superficie o escapa, ninguno da vueltas.
 ## La superficie ([shaders/faro.rs](src/shaders/faro.rs))
 
 - **La corteza que se rompe**: el campo de un magnetar estresa su corteza
-  hasta romperla (Thompson y Duncan 1995). La superficie es una red de placas
-  de un azul índigo casi negro con grietas que brillan, a dos escalas (ruido
-  de Worley con el dominio deformado por un ruido de gradiente): violeta
-  rosado con el centro casi blanco, azules en unas regiones y rosa
-  anaranjado en otras más calientes (otros dos ruidos de baja frecuencia),
-  con un resplandor azul pegado a cada grieta; laten cada placa a su ritmo y
-  algunos puntos destellan. El borde brilla como una
-  atmósfera porque ahí la luz sale rasante (el ángulo de emisión que da la
-  lente). **Es color falso**: a millones de kelvin el visible está en la cola
+  hasta romperla (Thompson y Duncan 1995). La superficie es una red de
+  fracturas que brillan sobre placas índigo y violeta oscuro, nubladas:
+  las grandes son los bordes de celdas de Worley en un dominio muy deformado
+  por tres ruidos de gradiente (una red conectada de placas irregulares, no
+  un panal), con un grosor que cambia a lo largo; en unas regiones la corteza
+  está más rota y tiene fracturas chicas (otra escala de celdas), y junto a
+  las grandes salen venas como ramas (las líneas donde un ruido cruza el
+  cero). Las grietas son rosa magenta con el centro casi blanco, azules en
+  unas regiones y rosa anaranjado en otras más calientes, con un nudo naranja
+  donde se cruzan una grande y una chica, un resplandor violeta pegado y un
+  latido por placa; hacia la orilla se vuelven azul eléctrico. El borde
+  brilla como una atmósfera porque ahí la luz sale rasante (el ángulo de
+  emisión que da la lente), pero solo en la orilla: `(1 − cos α)⁶`, porque
+  la lente deja ver más de medio disco y casi todo sale algo rasante. **Es color falso**: a millones de kelvin el visible está en la cola
   de Rayleigh-Jeans (hν ≪ kT), donde el color ya no cambia con la
   temperatura, y el ojo vería un blanco azulado parejo. El brillo de las
   grietas sí sigue a la temperatura de abajo.
@@ -99,10 +104,12 @@ superficie o escapa, ninguno da vueltas.
   hacia afuera, medida en radios aparentes desde el borde que da la lente
   (el ángulo más grande al que un rayo todavía toca la superficie, por
   bisección sobre la tabla de geodésicas), así se ve igual de cerca que de
-  lejos. Los dos polos de donde salen los haces se encienden con un destello
-  blanco azulado (el de atrás se apaga). Solo cubre lo de alrededor: una cola
-  ancha lavaba todo el disco. Es de adorno, como en las ilustraciones de
-  magnetares; lo mismo que las chispas de la magnetosfera.
+  lejos. La franja celeste se deshilacha en hebras que salen de la estrella
+  y corren hacia afuera (la tabla de las hebras de los haces, por el ángulo
+  alrededor de la estrella en la pantalla). Los dos polos de donde salen los
+  haces se encienden con un destello blanco azulado (el de atrás se apaga).
+  Solo cubre lo de alrededor: una cola ancha lavaba todo el disco. Es de
+  adorno, como en las ilustraciones de magnetares.
 
 ## La magnetosfera torcida ([scene/magnetosphere.rs](src/scene/magnetosphere.rs))
 
@@ -140,12 +147,11 @@ torsión Δφ = 2 √(C / (p (1 + p))) ∫₀¹ F^(1/p) / (1 − μ²) dμ
   su tono, azul eléctrico, violeta o magenta, y su carga: pocas brillan
   fuerte y muchas apenas se ven. El brillo va y viene a lo largo (de 1.5 a 4
   hebras por línea que corren despacio), es mayor a un par de radios que
-  pegado a la superficie y se apaga lejos (e^−(r−2.5)/3), así los lóbulos
-  quedan cerca de la estrella y se deshacen en la bruma. Lo que pasa por
-  delante del disco brilla la cuarta parte: si no, los pies de cientos de
-  líneas lo cubrían de un velo blanco. Encima suben 260 **chispas**,
-  partículas de dos pixeles que se encienden y se apagan sobre los arcos
-  cerrados.
+  pegado a la superficie y se apaga lejos (e^−((r−2.2)/1.8)^1.4), así los
+  dos lóbulos quedan cerca de la estrella, como en la referencia, y no
+  cruzan toda la pantalla. Casi todas son azules (el tono sale de u^1.7).
+  Lo que pasa por delante del disco brilla la cuarta parte: si no, los pies
+  de cientos de líneas lo cubrían de un velo blanco.
 - Cada línea es un **hilo de luz** ([render/glow.rs](src/render/glow.rs)):
   segmentos que se suman a la imagen con un núcleo de 0.7 px y un halo
   suave de 3.4 px, probados contra la profundidad, en el mismo pase por tiles
@@ -173,6 +179,15 @@ torsión Δφ = 2 √(C / (p (1 + p))) ∫₀¹ F^(1/p) / (1 − μ²) dμ
   de emisión. Las hebras del chorro salen de una tabla de ruido periódico
   (azimut por logaritmo de la altura) que corre hacia afuera: evaluar Perlin
   en cada muestra costaba decenas de milisegundos.
+- **Las columnas de las chispas, vistas de lado**: el plasma de cada chispa
+  sube en una columna a lo largo del haz (Deshpande y Rankin 1999 vieron las
+  20 de PSR B0943+10), así que de lado el chorro se ve hecho de rayas
+  paralelas. Por cada tramo del rayo se busca dónde pasa más cerca del eje,
+  a cuántos anchos del cono exterior va de un lado y desde qué azimut se
+  mira; una tabla de ruido (azimut de la vista por desplazamiento) dice
+  cuántas columnas tiene enfrente. Alrededor del cono, la luz del haz que el
+  viento dispersa (una gaussiana de 1.15 veces el cono exterior) lo hace ver
+  como un reflector y no como un láser.
 - **Por qué se ven**: la radio no se ve, pero los haces iluminan el viento de
   la supergigante, cuya densidad baja como 1/d² desde ella; el flujo del haz
   baja como 1/r² desde Faro. La luz que llega es ∫ perfil(θ) n(x) / r² a lo
@@ -213,19 +228,36 @@ torsión Δφ = 2 √(C / (p (1 + p))) ∫₀¹ F^(1/p) / (1 − μ²) dμ
      La forma que se dibuja (`shape`) es aparte de la torsión física que
      muestra el panel, que sí cae de golpe a 0.3 rad.
   4. La onda de choque: el plasma que la llamarada expulsa por el ecuador
-     magnético (el plasmoide de las simulaciones de Parfrey et al.). Es una
-     cáscara de 9000 partículas en puntos de Fibonacci, más densa en el
-     ecuador y con grumos, que sale rápido y se frena barriendo el viento,
+     magnético (el plasmoide de las simulaciones de Parfrey et al.), que
+     sale rápido y se frena barriendo el viento,
      `R = 1 + 70 (1 − e^(−t/1.2))` radios, y se enfría de blanco azulado a
-     violeta hasta disolverse en 3.5 s. Las que se ven grandes (junto a la
-     cámara) se apagan con `(1 + s²)⁻²`: si no, cada una sería una mancha
-     redonda en vez de una cáscara fina. Al salir también dobla la imagen
-     con la misma onda en pantalla que la onda gravitacional.
+     azul violeta hasta disolverse en 3.5 s. Se dibuja en el shader como una
+     cáscara delgada (el 1.6 % de su radio, con una estela tenue detrás) que
+     no gira con la estrella: cada rayo la corta en a lo más dos tramos
+     (donde `r_in² < q² + x² < r_out²`, con `q` la distancia del rayo al
+     centro) y brilla el largo de cada tramo por la densidad en su punto
+     medio, que es mayor en el ecuador magnético del momento del pico y
+     tiene filamentos (las líneas donde un fBm cruza el cero, en una tabla
+     sobre la esfera). De frente casi no se ve y de canto el rayo la cruza
+     de largo, así que se ve como un anillo nítido que crece. Con la cámara
+     adentro no hay canto y se apaga, salvo al pasar junto a ella. Al salir
+     también dobla la imagen con la misma onda en pantalla que la onda
+     gravitacional. (Antes eran 9000 partículas: de cerca se veía como una
+     nube de polvo.)
   5. La bola de fuego: pares a más de 10⁹ K atrapados en las líneas cerradas
-     junto a la estrella (Thompson y Duncan 1995). Gira con la estrella (la
-     cola pulsa con el periodo) y se evapora capa por capa con
-     L = L₀(1 − t/t_evap)³, t_evap = 380 s (Feroci et al. 2001). En los
-     primeros 40 s brilla además una corona.
+     junto a la estrella (Thompson y Duncan 1995), en el sector donde se
+     rompió la magnetosfera. Gira con la estrella (la cola pulsa con el
+     periodo) y se evapora capa por capa con L = L₀(1 − t/t_evap)³,
+     t_evap = 380 s (Feroci et al. 2001): la línea más alta que todavía tiene
+     plasma baja de 3.7 a 1.3 radios como la raíz cúbica de la luz. En los
+     primeros 40 s brilla además una corona. Se ve como un arco de 44 lazos
+     (las líneas cerradas de su sector, casi un dipolo) cargados de plasma
+     que va y viene, blancos azulados los bajos (los más calientes) y
+     violeta los altos, como los lazos de la corona del Sol, con un
+     resplandor tenue debajo: un volumen que se marcha en 18 pasos dentro
+     de la esfera de la línea más alta y tiene plasma donde
+     `L = r / sin² θ` (la cima de la línea dipolar que pasa por ahí) es
+     menor que esa cima.
   6. El giro se frena de golpe (antiglitch, ΔP/P = 10⁻⁴, como en SGR 1900+14):
      el panel muestra el periodo nuevo.
   7. La radio se apaga y vuelve después de un minuto, como en PSR J1119−6127
@@ -266,6 +298,7 @@ gran llamarada.
 - Beloborodov y Thompson 2007, ApJ 657, 967: la descarga.
 - Camilo et al. 2007, ApJ 666, L93: radio de 1E 1547.0−5408.
 - Contopoulos et al. 2024, arXiv:2404.05408: la ecuación del púlsar.
+- Deshpande y Rankin 1999, ApJ 524, 1008: las columnas de las 20 chispas de PSR B0943+10.
 - Feroci et al. 2001, ApJ 549, 1021: la cola de la gran llamarada.
 - Göğüş et al. 1999, ApJ 526, L93: estadística de los estallidos.
 - Greenstein y Hartke 1983, ApJ 271, 283: temperatura de la superficie.
@@ -277,6 +310,56 @@ gran llamarada.
 - Thompson y Duncan 1995, MNRAS 275, 255: la bola de fuego.
 - Thompson, Lyutikov y Kulkarni 2002, ApJ 574, 332: la magnetosfera torcida.
 - Woods et al. 1999, ApJ 524, L55: el antiglitch de SGR 1900+14.
+
+# Pira se despedaza
+
+La estrella está tan cerca que Pira queda adentro de su límite de Roche para
+un cuerpo rígido: la marea partió su corteza en continentes que se separan,
+y entre ellos se ve el magma del interior. Es lo que se cree que le pasa a
+WD 1145+017 b, un cuerpo que se desintegra frente a su estrella; la cola de
+polvo es la de K2-22b.
+
+- **El relieve** ([terrain/shapes.rs](src/terrain/shapes.rs) `PiraField`):
+  un Voronoi sobre la esfera con 20 centros (dos puestos a mano para el
+  lugar y los demás de una espiral de Fibonacci con desorden, a más de 37°
+  entre sí). La placa de un punto es la del centro con mayor producto punto;
+  antes de buscarla, el punto se mueve con dos escalas de ruido y los bordes
+  salen desgarrados. La distancia angular al borde entre las dos placas más
+  cercanas es `g ≈ (d₁ − d₂) / |c₁ − c₂|`. Cada placa tiene su relieve
+  (crestas, lomas y detalle), su altura y su inclinación (`dir · tilt`):
+  parecen pedazos sueltos y no un solo suelo. Donde `g` es menor que el
+  ancho del abismo (que cambia a lo largo del borde: grietas angostas y
+  abismos anchos, más anchos del lado de la estrella), la orilla se levanta
+  un poco (la placa se dobla al romperse) y cae en una pared casi vertical
+  hasta el magma, 26 unidades abajo. Como es un campo de alturas más, la
+  colisión, el LOD, los faldones y el culling por horizonte siguen igual (el
+  rango que declara llega hasta el fondo). Una prueba revisa que el lugar
+  quede en una placa con un abismo adelante.
+- **El shader** ([shaders/pira.rs](src/shaders/pira.rs)): el relieve le da
+  cuánto se ha bajado cada punto hacia el fondo (0 en la placa, 1 en el
+  magma). Las placas son basalto oscuro con grietas que brillan poco; las
+  paredes, la misma roca iluminada desde abajo (más cerca del magma, más luz
+  y al rojo junto al fondo); las **cascadas de lava** son rayas de un ruido
+  de la dirección (no cambia al bajar, así que en la pared quedan
+  verticales) con pulsos `sin(r k + t w)` que corren hacia abajo; y el
+  **magma** son celdas de convección (Worley sobre un ruido que fluye) con
+  las costuras más calientes. Todo lo que brilla late con la estrella.
+- **Los pedazos** (`PropKind::Chunk`, `props::pira_debris`): losas con la
+  cara de arriba casi plana (era suelo) y la de abajo desgarrada en puntas.
+  110 flotan sobre los abismos, entre las placas y el magma, y 380 forman un
+  cinturón de escombros en grumos, de 1.45 a 2.4 radios. Su shader refleja
+  la luz del magma en las caras que miran al planeta (más fuerte cerca del
+  núcleo) y enciende venas en la roca desgarrada; el planeta les hace sombra
+  como a todo.
+- **El abismo** (el lugar de N): dos de las placas están puestas para que
+  un abismo ancho pase 31 unidades adelante del lugar, hacia la estrella; la
+  cámara llega sobre la orilla mirando hacia el fondo, y los géiseres quedan
+  detrás, en la misma placa (nunca sobre un abismo).
+- **Cuando Gargantúa se la come**: el vapor que hierve encima ya no llena
+  los abismos (abajo de la superficie se desvanece) y los pedazos se sueltan
+  uno por uno, primero los del cinturón: cada uno cae hacia el agujero en
+  una curva que se adelanta en la órbita, dando vueltas, calentándose y
+  achicándose hasta desaparecer.
 
 # La versión chapina (V)
 
@@ -1718,7 +1801,7 @@ cara a la estrella.
 ### Las identidades
 | Planeta | Rasgo central |
 | --- | --- |
-| Pira | Corteza negra en placas con lava de cuerpo negro entre ellas, grietas que laten, acoplamiento de marea, una cola de polvo que la estrella le arranca y un campo de géiseres. |
+| Pira | La marea la despedaza: continentes que se separan sobre un núcleo de magma, cascadas de lava, pedazos de corteza flotando y un cinturón de escombros; acoplamiento de marea, una cola de polvo que la estrella le arranca y un campo de géiseres (ver «Pira se despedaza»). |
 | Jardín | Arterias que laten con la estrella, poros, capilares; la superficie respira (desplazamiento en el vertex shader). |
 | Vigía | Gigante gaseoso morado con un vórtice que gira y una tormenta en forma de ojo, de gas rosa, que sigue a la nave; la pupila late. Anillos delgados de polvo. |
 | Párpado | La luna de Vigía: cristal y lagos espejo donde se refleja el ojo. |
@@ -1733,10 +1816,11 @@ su color HDR. Algunos ejemplos de técnica:
   superficie con un remolino de Rodrigues, fuego con dos capas de *domain
   warping*, una pupila que late, el borde encendido con las mismas llamas que
   siguen en la corona del cielo y las llamaradas del estertor.
-- **Lava** ([pira.rs](src/shaders/pira.rs)): placas de Voronoi; el color de la
-  lava sale de la ley de Planck (temperatura → color de cuerpo negro). Las
-  grietas más delgadas que un pixel se ensanchan y bajan su brillo en la
-  misma proporción.
+- **Pira** ([pira.rs](src/shaders/pira.rs)): según qué tan abajo está el
+  punto (un atributo del relieve), placa, pared o magma. El color de todo lo
+  que brilla sale de la ley de Planck (temperatura → color de cuerpo negro).
+  Las grietas más delgadas que un pixel se ensanchan y bajan su brillo en la
+  misma proporción. Ver «Pira se despedaza».
 - **Jardín** ([jardin.rs](src/shaders/jardin.rs)): las arterias son las
   líneas donde un ruido cruza un valor; cuando un pixel cubre más que la
   línea, se dibuja su brillo promedio en vez de parpadear.
