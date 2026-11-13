@@ -3,8 +3,8 @@
 //! # Modelos
 //! Todos generados con codigo (`MeshBuilder`), cada uno en tres niveles de
 //! detalle: ojos de carne (Argos), hongos, corales y rocas (Jardin),
-//! espinas de obsidiana y geiseres (Pira) y cristales (Parpado). Los de la
-//! version chapina se arman en `chapin/`.
+//! espinas de obsidiana, geiseres y pedazos de corteza sueltos (Pira) y
+//! cristales (Parpado). Los de la version chapina se arman en `chapin/`.
 //!
 //! # Distribucion
 //! Cada cara del cubo-esfera se divide en una grilla; cada celda propone un
@@ -48,6 +48,9 @@ pub enum PropKind {
     Boulder,
     Vent,
     Crystal,
+    /// Un pedazo de la corteza de Pira que se solto: flota sobre los abismos
+    /// o da vueltas en el cinturon de escombros.
+    Chunk,
     // Version chapina (cada uno en su planeta, en `chapin/`).
     /// El Arco de Santa Catalina y las casas de Antigua (Fuego).
     Arco,
@@ -74,7 +77,7 @@ pub enum PropKind {
 }
 
 impl PropKind {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Eye,
         Self::Mushroom,
         Self::Coral,
@@ -82,6 +85,7 @@ impl PropKind {
         Self::Boulder,
         Self::Vent,
         Self::Crystal,
+        Self::Chunk,
         Self::Arco,
         Self::Casa,
         Self::Templo,
@@ -109,7 +113,7 @@ impl PropKind {
     /// tamano: desde la orbita solo ensuciarian.
     pub fn visibility(self) -> f32 {
         match self {
-            Self::Boulder => 1.0,
+            Self::Boulder | Self::Chunk => 1.0,
             Self::Arco | Self::Templo | Self::Torre | Self::Edificio | Self::Rascacielos | Self::Camioneta | Self::Iglesia => 1.0,
             Self::Marimba => 1.0,
             Self::Eye | Self::Casa | Self::Ceiba | Self::Lancha | Self::Puesto => 0.75,
@@ -252,7 +256,8 @@ pub(crate) fn clear_site(instances: &mut Vec<Instance>, radius: f64, normal: DVe
     instances.retain(|p| (p.position.normalize() - normal).length() * radius > clear);
 }
 
-/// Los geiseres de Pira: una docena de bocas de lava alrededor de un claro.
+/// Los geiseres de Pira: una docena de bocas de lava en la placa del lugar,
+/// detras de el (adelante se abre el abismo), nunca sobre un abismo.
 pub fn vent_field(
     instances: &mut Vec<Instance>,
     radius: f64,
@@ -261,21 +266,30 @@ pub fn vent_field(
     frame: (DVec3, DVec3, DVec3),
 ) {
     clear_site(instances, radius, frame.0, 110.0);
-    for k in 0..12u32 {
+    let mut placed = 0;
+    for k in 0..60u32 {
+        if placed == 12 {
+            break;
+        }
         let h = hash_u32(seed ^ k.wrapping_mul(0x9E37) ^ 0x6E15);
         let angle = unit(h) as f64 * std::f64::consts::TAU;
-        let distance = 22.0 + 70.0 * unit(hash_u32(h)) as f64;
-        instances.push(at_site(
+        let distance = 14.0 + 50.0 * unit(hash_u32(h)) as f64;
+        let vent = at_site(
             radius,
             field,
             frame,
             PropKind::Vent,
             angle.cos() * distance,
-            angle.sin() * distance + 40.0,
+            angle.sin() * distance - 15.0,
             0.9 + 0.8 * unit(hash_u32(h ^ 3)),
             unit(hash_u32(h ^ 5)) as f64 * std::f64::consts::TAU,
             0.4,
-        ));
+        );
+        if field.sample(vent.position.normalize().as_vec3()).attrs.z > 0.01 {
+            continue;
+        }
+        instances.push(vent);
+        placed += 1;
     }
 }
 
@@ -539,6 +553,96 @@ fn boulder(detail: usize) -> Mesh {
     mesh
 }
 
+/// Un pedazo de corteza de Pira: una losa con la cara de arriba casi plana
+/// (era suelo) y la de abajo desgarrada en puntas, que el shader enciende
+/// con la luz del magma. El color `x` marca la roca desgarrada.
+fn chunk(detail: usize) -> Mesh {
+    let mut mesh = super::icosphere([1, 2, 3][detail]);
+    mesh.tangents = vec![super::NO_TANGENT; mesh.positions.len()];
+    let noise = Perlin::new(0xC4C4);
+    mesh.deform(|p| {
+        let mut q = Vec3::new(p.x * 1.7, p.y * 0.85, p.z * 1.35);
+        // Arriba, la corteza: casi plana.
+        if q.y > 0.18 {
+            q.y = 0.18 + (q.y - 0.18) * 0.22;
+        }
+        // Abajo, la roca que se arranco: colgando en puntas.
+        if q.y < 0.0 {
+            q.y *= 1.25 + 1.1 * (noise.fbm(p * 2.3, 3) * 0.5 + 0.5);
+        }
+        q * (1.0 + 0.16 * noise.fbm(p * 2.1 + Vec3::splat(3.0), 4))
+    });
+    mesh.colors = mesh
+        .positions
+        .iter()
+        .map(|p| Vec3::new(smoothstep(0.12, -0.15, p.y), 0.0, 0.0))
+        .collect();
+    mesh
+}
+
+/// Pedazos de Pira que flotan sobre sus abismos y que dan vueltas en su
+/// cinturon de escombros.
+const PIRA_FLOATING: usize = 110;
+const PIRA_BELT: usize = 380;
+
+/// Una direccion al azar sobre la esfera (uniforme) con dos numeros.
+fn sphere_point(a: f32, b: f32) -> DVec3 {
+    let z = 2.0 * a as f64 - 1.0;
+    let ring = (1.0 - z * z).max(0.0).sqrt();
+    let phi = b as f64 * std::f64::consts::TAU;
+    DVec3::new(ring * phi.cos(), z, ring * phi.sin())
+}
+
+/// Los pedazos que la marea le arranco a Pira. Unos flotan sobre los
+/// abismos, entre las placas y el magma (o un poco arriba de la orilla), y
+/// los demas forman un cinturon de escombros en su ecuador, de 1.45 a 2.4
+/// radios. Todos giran en cualquier angulo: no estan parados sobre nada.
+pub fn pira_debris(instances: &mut Vec<Instance>, radius: f64, field: &dyn HeightField, seed: u32) {
+    let tumble = |h: u32| {
+        let axis = sphere_point(unit(hash_u32(h ^ 0x51)), unit(hash_u32(h ^ 0x52)));
+        DQuat::from_axis_angle(axis, unit(hash_u32(h ^ 0x53)) as f64 * std::f64::consts::TAU)
+    };
+    let depth = crate::terrain::shapes::PIRA_CORE_DEPTH as f64;
+    let mut floating = 0;
+    for k in 0..6000u32 {
+        if floating >= PIRA_FLOATING {
+            break;
+        }
+        let h = hash_u32(seed ^ k.wrapping_mul(0x632B_E5AB) ^ 0xDEB1);
+        let dir = sphere_point(unit(h), unit(hash_u32(h)));
+        if field.sample(dir.as_vec3()).attrs.z < 0.9 {
+            continue;
+        }
+        let size = unit(hash_u32(h ^ 3));
+        let hover = -depth * 0.85 + (depth + 8.0) * unit(hash_u32(h ^ 4)) as f64;
+        instances.push(Instance {
+            kind: PropKind::Chunk,
+            position: dir * (radius + hover),
+            rotation: tumble(h),
+            scale: 1.2 + 3.6 * size * size,
+        });
+        floating += 1;
+    }
+    for k in 0..PIRA_BELT as u32 {
+        let h = hash_u32(seed ^ k.wrapping_mul(0x9E37_79B9) ^ 0xBE17);
+        // En grumos: unas partes del anillo tienen mas que otras.
+        let angle = (k as f64 + 0.8 * unit(h) as f64) / PIRA_BELT as f64 * std::f64::consts::TAU;
+        let clump = (angle * 3.0 + 1.3).sin() * 0.5 + 0.5;
+        if unit(hash_u32(h ^ 9)) > 0.35 + 0.65 * clump as f32 {
+            continue;
+        }
+        let r = radius * (1.45 + 0.95 * unit(hash_u32(h ^ 1)) as f64);
+        let y = radius * 0.07 * (unit(hash_u32(h ^ 2)) as f64 * 2.0 - 1.0);
+        let size = unit(hash_u32(h ^ 3));
+        instances.push(Instance {
+            kind: PropKind::Chunk,
+            position: DVec3::new(angle.cos() * r, y, angle.sin() * r),
+            rotation: tumble(h),
+            scale: 0.5 + 2.8 * size * size * size,
+        });
+    }
+}
+
 fn spikes(detail: usize) -> Mesh {
     let mut b = MeshBuilder::new();
     b.color(STONE);
@@ -592,6 +696,7 @@ pub fn build_models() -> Vec<PropModel> {
                 PropKind::Boulder => boulder(detail),
                 PropKind::Vent => vent(detail),
                 PropKind::Crystal => crystal(detail),
+                PropKind::Chunk => chunk(detail),
                 chapin => crate::chapin::mesh(chapin, detail),
             };
             let mut lods = [make(2), make(1), make(0)];
@@ -983,7 +1088,7 @@ pub fn rules_for(planet: &str) -> Vec<Scatter> {
                 },
             },
         ],
-        // En la roca enfriada, lejos del mar de lava.
+        // En las placas, lejos de los abismos y del lado de noche.
         "Pira" => vec![Scatter {
             kind: PropKind::Spike,
             cells: 30,
@@ -991,7 +1096,7 @@ pub fn rules_for(planet: &str) -> Vec<Scatter> {
             sink: 0.5,
             upright: true,
             accept: |density, s, _| {
-                (1.0 - s.attrs.x) * (1.0 - 0.6 * s.attrs.y) * smoothstep(0.45, 0.68, density) * 0.6
+                smoothstep(0.02, 0.0, s.attrs.z) * (1.0 - 0.6 * s.attrs.y) * smoothstep(0.45, 0.68, density) * 0.6
             },
         }],
         // Cristales en las crestas y junto al agua, nunca en ella.

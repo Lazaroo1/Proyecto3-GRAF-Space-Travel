@@ -153,29 +153,117 @@ impl HeightField for ArgosField {
     }
 }
 
-/// Maximo suave: como `a.max(b)` pero sin el quiebre donde se cruzan.
-#[inline]
-fn smooth_max(a: f32, b: f32, k: f32) -> f32 {
-    let h = (0.5 + 0.5 * (a - b) / k).clamp(0.0, 1.0);
-    b + (a - b) * h + k * h * (1.0 - h)
-}
-
-/// Pira: la estrella la esta devorando. Tiene acoplamiento de marea, asi
-/// que siempre le da la misma cara (el lado -X del planeta): de ese lado la
-/// roca se derrite y los valles son mares de lava; del otro, la costra se
-/// enfria pero sigue agrietada.
+/// Pira se esta despedazando: la marea de la estrella (esta mas adentro de
+/// su limite de Roche para un cuerpo rigido) partio su corteza en
+/// continentes que se separan, y entre ellos se abren abismos hasta el magma
+/// del interior. Es lo que se cree que le pasa a WD 1145+017 b, un cuerpo
+/// que se desintegra frente a su estrella.
 ///
-/// Atributos: `x` fundido (mar de lava), `y` calor (cercania a la cara de la
-/// estrella), `z` crestas.
+/// - **Placas**: un Voronoi sobre la esfera (la placa de un punto es el
+///   centro mas cercano: el de mayor producto punto), con los bordes
+///   desgarrados por un ruido que mueve el punto antes de buscar su placa.
+///   Cada placa tiene su relieve, su altura y su inclinacion: parecen pedazos
+///   sueltos, no un solo suelo.
+/// - **Abismos**: a la distancia angular `g` del borde entre las dos placas
+///   mas cercanas, `g ~ (d1 - d2) / |c1 - c2|` (con `d` los productos punto y
+///   `c` los centros). Donde `g` es menor que el ancho del abismo, que cambia
+///   a lo largo del borde (grietas angostas y abismos anchos), el suelo cae
+///   en una pared casi vertical hasta el magma, `CORE_DEPTH` mas abajo. Antes
+///   de caer, la orilla se levanta un poco: la placa se dobla al romperse.
+/// - **El lugar** (`SITE`): dos de las placas se ponen a proposito para que
+///   un abismo pase frente a el.
+///
+/// Atributos: `x` magma (1 en el fondo), `y` lado dia, `z` cuanto se ha
+/// bajado hacia el fondo (0 en la placa, 1 en el magma: las paredes brillan
+/// mas abajo).
 pub struct PiraField {
     noise: Perlin,
+    plates: Vec<Plate>,
+    /// El punto del borde que pasa frente al lugar: ahi el abismo es ancho.
+    gorge: Vec3,
 }
+
+/// Una placa: el centro de su celda, cuanto sube o baja entera y su
+/// inclinacion (un vector perpendicular al centro: la altura cambia con
+/// `dir . tilt`).
+#[derive(Clone, Copy, Debug)]
+struct Plate {
+    center: Vec3,
+    lift: f32,
+    tilt: Vec3,
+}
+
+/// Profundidad del magma bajo el radio del planeta (unidades del mundo).
+pub const PIRA_CORE_DEPTH: f32 = 26.0;
+/// La normal del lugar de Pira, en su espacio: cerca del terminador (el lado
+/// de la estrella es -X, por la marea), mirando hacia ella.
+pub const PIRA_SITE: Vec3 = Vec3::new(-0.42, 0.1, -0.9);
+/// Placas: las del lugar mas las del resto de la esfera.
+const PIRA_PLATES: usize = 20;
 
 impl PiraField {
     pub fn new(seed: u32) -> Self {
+        let site = PIRA_SITE.normalize();
+        // Hacia la estrella sobre la superficie, desde el lugar.
+        let toward = (Vec3::new(-1.0, 0.0, 0.0) - site * -site.x).normalize();
+        let along = |angle: f32| site * angle.cos() + toward * angle.sin();
+        let unit = |h: u32| (h >> 8) as f32 / 16_777_216.0;
+        // El lugar queda en su placa y el borde con la siguiente pasa unos
+        // 0.28 rad (31 unidades) adelante, hacia la estrella.
+        let mut centers = vec![along(-0.3), along(0.86)];
+        // Las demas, repartidas en la esfera (Fibonacci con desorden), lejos
+        // de esas dos.
+        let golden = std::f32::consts::PI * (3.0 - 5f32.sqrt());
+        let total = 36;
+        for k in 0..total {
+            let h = hash_u32(seed ^ (k as u32).wrapping_mul(0x9E37_79B9));
+            let y = 1.0 - 2.0 * (k as f32 + 0.25 + 0.5 * unit(h)) / total as f32;
+            let ring = (1.0 - y * y).max(0.0).sqrt();
+            let a = golden * k as f32 + 0.6 * unit(hash_u32(h));
+            let c = Vec3::new(ring * a.cos(), y, ring * a.sin());
+            if centers.iter().all(|&o: &Vec3| o.dot(c) < 0.8) && centers.len() < PIRA_PLATES {
+                centers.push(c);
+            }
+        }
+        let plates = centers
+            .iter()
+            .enumerate()
+            .map(|(k, &center)| {
+                let h = hash_u32(seed ^ 0x9A7E ^ (k as u32).wrapping_mul(0x85EB_CA6B));
+                let helper = if center.y.abs() < 0.9 { Vec3::Y } else { Vec3::X };
+                let a = helper.cross(center).normalize();
+                let b = center.cross(a);
+                let angle = unit(h) * std::f32::consts::TAU;
+                Plate {
+                    center,
+                    lift: -2.0 + 6.0 * unit(hash_u32(h)),
+                    tilt: (a * angle.cos() + b * angle.sin()) * (4.0 + 8.0 * unit(hash_u32(h ^ 7))),
+                }
+            })
+            .collect();
         Self {
             noise: Perlin::new(seed),
+            plates,
+            gorge: along(0.28),
         }
+    }
+
+    /// La placa de `dir` (ya movido) y la distancia angular al borde con la
+    /// siguiente.
+    fn plate_at(&self, dir: Vec3) -> (&Plate, f32) {
+        let (mut first, mut second) = ((f32::MIN, 0usize), (f32::MIN, 0usize));
+        for (k, plate) in self.plates.iter().enumerate() {
+            let d = plate.center.dot(dir);
+            if d > first.0 {
+                second = first;
+                first = (d, k);
+            } else if d > second.0 {
+                second = (d, k);
+            }
+        }
+        let (a, b) = (&self.plates[first.1], &self.plates[second.1]);
+        let gap = (first.0 - second.0) / (a.center - b.center).length().max(1e-4);
+        (a, gap)
     }
 }
 
@@ -183,24 +271,46 @@ impl HeightField for PiraField {
     fn sample(&self, dir: Vec3) -> TerrainSample {
         let n = &self.noise;
         let heat = smoothstep(-0.25, 0.9, -dir.x);
+        // Bordes desgarrados: dos escalas de ruido mueven el punto.
+        let warp = Vec3::new(
+            n.noise(dir * 2.4 + Vec3::new(3.1, 0.0, -1.2)),
+            n.noise(dir * 2.4 + Vec3::new(-4.4, 2.2, 0.7)),
+            n.noise(dir * 2.4 + Vec3::new(0.9, -3.7, 5.1)),
+        ) * 0.15
+            + Vec3::new(
+                n.noise(dir * 9.0 + Vec3::new(7.7, 1.1, 0.0)),
+                n.noise(dir * 9.0 + Vec3::new(-2.0, 6.6, 3.3)),
+                n.noise(dir * 9.0 + Vec3::new(5.5, -5.5, 1.9)),
+            ) * 0.03;
+        let (plate, gap) = self.plate_at((dir + warp).normalize());
+        // El relieve de la placa: crestas, lomas y detalle, con su altura y
+        // su inclinacion.
         let ridges = n.ridged(dir * 2.6 + Vec3::new(2.3, -1.1, 4.7), 5);
         let base = n.fbm(dir * 1.6 + Vec3::new(-6.1, 3.3, 0.4), 4);
         let detail = n.fbm(dir * 14.0 + Vec3::new(0.7, 8.2, -3.9), 2);
-        let rock = base * 4.0 + ridges * ridges * 9.0 + detail * 0.8;
-        // El mar de lava sube del lado de la estrella y es plano: lo que queda
-        // por debajo de su nivel se cubre.
-        let lava_level = -1.5 + 6.0 * heat;
-        let molten = smoothstep(lava_level + 0.5, lava_level - 0.3, rock);
+        let rock = base * 3.0 + ridges * ridges * 6.0 + detail * 0.8 + plate.lift + plate.tilt.dot(dir);
+        // El ancho del abismo cambia a lo largo del borde: grietas angostas
+        // y abismos anchos, mas anchos del lado de la estrella.
+        let wide = smoothstep(-0.35, 0.55, n.noise(dir * 1.3 + Vec3::new(1.7, 9.1, -2.4)));
+        let width = 0.035 + 0.11 * wide + 0.025 * heat + 0.06 * smoothstep(0.97, 0.998, dir.dot(self.gorge));
+        // La orilla se levanta antes de caer y despues la pared baja casi
+        // vertical hasta el magma.
+        let lip = smoothstep(width * 2.4, width * 1.05, gap) * smoothstep(width * 0.82, width * 1.05, gap) * 1.6;
+        let fall = smoothstep(width, width * 0.72, gap);
+        let floor = -PIRA_CORE_DEPTH + 0.9 * n.noise(dir * 7.0 + Vec3::new(4.0, 4.0, -8.0));
+        let height = (rock + lip) * (1.0 - fall) + floor * fall;
+        let molten = smoothstep(0.82, 0.97, fall);
         TerrainSample {
-            height: smooth_max(rock, lava_level, 0.6),
-            attrs: Vec3::new(molten, heat, ridges),
+            height,
+            attrs: Vec3::new(molten, heat, fall),
         }
     }
 
     fn height_range(&self) -> (f32, f32) {
-        // La lava rellena todo lo que queda bajo su nivel minimo (-1.5); el
-        // maximo suave puede pasarse del mayor por `k / 4`.
-        (-1.6, 4.0 + 9.0 + 0.8 + 0.2)
+        // El fondo con sus olas; arriba, el relieve (3 + 6 + 0.8), la placa
+        // mas alta (4), su inclinacion (12) y el labio. (Frente al lugar el
+        // abismo es mas ancho: ahi se ve el magma desde la orilla.)
+        (-PIRA_CORE_DEPTH - 1.0, 3.0 + 6.0 + 0.8 + 4.0 + 12.0 + 1.6)
     }
 }
 
@@ -301,6 +411,22 @@ mod tests {
                 );
                 assert_eq!(s.height, b.sample(dir).height);
             }
+        }
+    }
+
+    /// Pira esta partida: hay placas y abismos con magma, y el lugar queda
+    /// sobre una placa con un abismo adelante, hacia la estrella.
+    #[test]
+    fn pira_is_broken_into_plates_and_its_site_overlooks_an_abyss() {
+        for seed in [7, crate::config::NOISE_SEED ^ 0x9124] {
+            let field = PiraField::new(seed);
+            let site = PIRA_SITE.normalize();
+            let toward = (Vec3::new(-1.0, 0.0, 0.0) + site * site.x).normalize();
+            assert!(field.sample(site).attrs.z < 0.01, "semilla {seed}: el lugar cae en un abismo");
+            let mut ahead = (1..70).map(|k| k as f32 / 110.0).map(|a| site * a.cos() + toward * a.sin());
+            assert!(ahead.any(|d| field.sample(d).attrs.x > 0.9), "semilla {seed}: no hay abismo adelante");
+            let molten = directions().filter(|&d| field.sample(d).attrs.x > 0.5).count();
+            assert!(molten > 4000 / 25 && molten < 4000 / 3, "semilla {seed}: {molten} de 4000 en el magma");
         }
     }
 

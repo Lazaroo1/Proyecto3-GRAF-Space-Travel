@@ -60,6 +60,10 @@ impl System {
             };
             place(&mut instances, body.radius, field, planet_seed, frame);
         }
+        // Lo que la marea le arranco a Pira.
+        if version == Version::Ocaso && body.name == "Pira" {
+            props::pira_debris(&mut instances, body.radius, field, planet_seed);
+        }
         PropSet::new(instances, &self.prop_models)
     }
 

@@ -311,6 +311,56 @@ gran llamarada.
 - Thompson, Lyutikov y Kulkarni 2002, ApJ 574, 332: la magnetosfera torcida.
 - Woods et al. 1999, ApJ 524, L55: el antiglitch de SGR 1900+14.
 
+# Pira se despedaza
+
+La estrella está tan cerca que Pira queda adentro de su límite de Roche para
+un cuerpo rígido: la marea partió su corteza en continentes que se separan,
+y entre ellos se ve el magma del interior. Es lo que se cree que le pasa a
+WD 1145+017 b, un cuerpo que se desintegra frente a su estrella; la cola de
+polvo es la de K2-22b.
+
+- **El relieve** ([terrain/shapes.rs](src/terrain/shapes.rs) `PiraField`):
+  un Voronoi sobre la esfera con 20 centros (dos puestos a mano para el
+  lugar y los demás de una espiral de Fibonacci con desorden, a más de 37°
+  entre sí). La placa de un punto es la del centro con mayor producto punto;
+  antes de buscarla, el punto se mueve con dos escalas de ruido y los bordes
+  salen desgarrados. La distancia angular al borde entre las dos placas más
+  cercanas es `g ≈ (d₁ − d₂) / |c₁ − c₂|`. Cada placa tiene su relieve
+  (crestas, lomas y detalle), su altura y su inclinación (`dir · tilt`):
+  parecen pedazos sueltos y no un solo suelo. Donde `g` es menor que el
+  ancho del abismo (que cambia a lo largo del borde: grietas angostas y
+  abismos anchos, más anchos del lado de la estrella), la orilla se levanta
+  un poco (la placa se dobla al romperse) y cae en una pared casi vertical
+  hasta el magma, 26 unidades abajo. Como es un campo de alturas más, la
+  colisión, el LOD, los faldones y el culling por horizonte siguen igual (el
+  rango que declara llega hasta el fondo). Una prueba revisa que el lugar
+  quede en una placa con un abismo adelante.
+- **El shader** ([shaders/pira.rs](src/shaders/pira.rs)): el relieve le da
+  cuánto se ha bajado cada punto hacia el fondo (0 en la placa, 1 en el
+  magma). Las placas son basalto oscuro con grietas que brillan poco; las
+  paredes, la misma roca iluminada desde abajo (más cerca del magma, más luz
+  y al rojo junto al fondo); las **cascadas de lava** son rayas de un ruido
+  de la dirección (no cambia al bajar, así que en la pared quedan
+  verticales) con pulsos `sin(r k + t w)` que corren hacia abajo; y el
+  **magma** son celdas de convección (Worley sobre un ruido que fluye) con
+  las costuras más calientes. Todo lo que brilla late con la estrella.
+- **Los pedazos** (`PropKind::Chunk`, `props::pira_debris`): losas con la
+  cara de arriba casi plana (era suelo) y la de abajo desgarrada en puntas.
+  110 flotan sobre los abismos, entre las placas y el magma, y 380 forman un
+  cinturón de escombros en grumos, de 1.45 a 2.4 radios. Su shader refleja
+  la luz del magma en las caras que miran al planeta (más fuerte cerca del
+  núcleo) y enciende venas en la roca desgarrada; el planeta les hace sombra
+  como a todo.
+- **El abismo** (el lugar de N): dos de las placas están puestas para que
+  un abismo ancho pase 31 unidades adelante del lugar, hacia la estrella; la
+  cámara llega sobre la orilla mirando hacia el fondo, y los géiseres quedan
+  detrás, en la misma placa (nunca sobre un abismo).
+- **Cuando Gargantúa se la come**: el vapor que hierve encima ya no llena
+  los abismos (abajo de la superficie se desvanece) y los pedazos se sueltan
+  uno por uno, primero los del cinturón: cada uno cae hacia el agujero en
+  una curva que se adelanta en la órbita, dando vueltas, calentándose y
+  achicándose hasta desaparecer.
+
 # La versión chapina (V)
 
 - **Un cambio de piel, no otra escena** ([scene/system.rs](src/scene/system.rs)
@@ -1751,7 +1801,7 @@ cara a la estrella.
 ### Las identidades
 | Planeta | Rasgo central |
 | --- | --- |
-| Pira | Corteza negra en placas con lava de cuerpo negro entre ellas, grietas que laten, acoplamiento de marea, una cola de polvo que la estrella le arranca y un campo de géiseres. |
+| Pira | La marea la despedaza: continentes que se separan sobre un núcleo de magma, cascadas de lava, pedazos de corteza flotando y un cinturón de escombros; acoplamiento de marea, una cola de polvo que la estrella le arranca y un campo de géiseres (ver «Pira se despedaza»). |
 | Jardín | Arterias que laten con la estrella, poros, capilares; la superficie respira (desplazamiento en el vertex shader). |
 | Vigía | Gigante gaseoso morado con un vórtice que gira y una tormenta en forma de ojo, de gas rosa, que sigue a la nave; la pupila late. Anillos delgados de polvo. |
 | Párpado | La luna de Vigía: cristal y lagos espejo donde se refleja el ojo. |
@@ -1766,10 +1816,11 @@ su color HDR. Algunos ejemplos de técnica:
   superficie con un remolino de Rodrigues, fuego con dos capas de *domain
   warping*, una pupila que late, el borde encendido con las mismas llamas que
   siguen en la corona del cielo y las llamaradas del estertor.
-- **Lava** ([pira.rs](src/shaders/pira.rs)): placas de Voronoi; el color de la
-  lava sale de la ley de Planck (temperatura → color de cuerpo negro). Las
-  grietas más delgadas que un pixel se ensanchan y bajan su brillo en la
-  misma proporción.
+- **Pira** ([pira.rs](src/shaders/pira.rs)): según qué tan abajo está el
+  punto (un atributo del relieve), placa, pared o magma. El color de todo lo
+  que brilla sale de la ley de Planck (temperatura → color de cuerpo negro).
+  Las grietas más delgadas que un pixel se ensanchan y bajan su brillo en la
+  misma proporción. Ver «Pira se despedaza».
 - **Jardín** ([jardin.rs](src/shaders/jardin.rs)): las arterias son las
   líneas donde un ruido cruza un valor; cuando un pixel cubre más que la
   línea, se dibuja su brillo promedio en vez de parpadear.
